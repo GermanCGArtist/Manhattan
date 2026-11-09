@@ -20,7 +20,9 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 APPDATA = os.environ.get("APPDATA", os.path.expanduser(r"~\AppData\Roaming"))
 MODRINTH = os.path.join(APPDATA, "ModrinthApp")
 META = os.path.join(MODRINTH, "meta")
-PROFILE = os.path.join(MODRINTH, "profiles", "Manhatten Testing")   # sic: the profile is spelled this way
+PROFILE = os.environ.get("MANHATTAN_PROFILE") or os.path.join(MODRINTH, "profiles", "Manhatten Testing")   # sic: the profile is spelled this way
+# (a parallel worker has its own game dir under tmp/ingame/ and its own bridge port; see run_tests.py --workers)
+WORKER = bool(os.environ.get("MANHATTAN_PROFILE"))
 AFK_MODS = os.path.join(MODRINTH, "profiles", "26.1.1 AFK", "mods")
 VERSION = "26.1.1-0.20.1"   # Modrinth's id for Minecraft 26.1.1 + Fabric Loader 0.20.1
 FABRIC_API = "fabric-api-0.145.4+26.1.1.jar"
@@ -29,7 +31,11 @@ USERNAME = "ManhattanTest"
 WORLD = "manhattan-test"
 
 # Never installed into the testing profile (the old separate addons are part of baritonequeue now).
-FORBIDDEN = ("survivalkit", "buildtools", "loadchest")
+FORBIDDEN = ("survivalkit", "buildtools", "loadchest", "litematica-printer")
+
+# Litematica + malilib for the schematic tests: copied (read only) from the profile the user builds in, if it is there.
+LITEMATICA_SRC = os.path.join(MODRINTH, "profiles", "Bestes_projekt_1.26.0", "mods")
+LITEMATICA_JARS = ("litematica-fabric-", "malilib-fabric-")
 
 # Settings that make an unattended client behave (no pause when unfocused, no sound, no first-start screens).
 OPTIONS = {
@@ -39,6 +45,7 @@ OPTIONS = {
     "renderDistance": "6",
     "simulationDistance": "5",
     "maxFps": "60",
+    "enableVsync": "false",
     "narrator": "0",
     "tutorialStep": "none",
     "joinedFirstServer": "true",
@@ -97,12 +104,16 @@ def install():
         "baritonequeue-%s.jar" % ver: os.path.join(REPO, "build", "libs", "baritonequeue-%s.jar" % ver),
         "manhattan-testbridge-%s.jar" % ver: os.path.join(REPO, "build", "libs", "manhattan-testbridge-%s.jar" % ver),
     }
+    if os.path.isdir(LITEMATICA_SRC):
+        for f in sorted(os.listdir(LITEMATICA_SRC)):
+            if f.lower().startswith(LITEMATICA_JARS) and f.endswith(".jar"):
+                wanted[f] = os.path.join(LITEMATICA_SRC, f)
     for name, src in wanted.items():
         if not src or not os.path.isfile(src):
             raise RuntimeError("missing %s (looked for %s). Build first: build.bat" % (name, src))
     for f in os.listdir(mods):
         low = f.lower()
-        stale = (low.startswith(("baritonequeue-", "manhattan-testbridge-", "fabric-api-")) and f not in wanted) \
+        stale = (low.startswith(("baritonequeue-", "manhattan-testbridge-", "fabric-api-", "litematica-fabric-", "malilib-fabric-")) and f not in wanted) \
             or low.startswith(FORBIDDEN)
         if stale and low.endswith(".jar"):
             os.remove(os.path.join(mods, f))
@@ -136,6 +147,9 @@ def _sha1(p):
 
 
 def _write_options():
+    opts = dict(OPTIONS)
+    if WORKER:   # several clients at once: keep the GPU and CPU load low
+        opts.update({"renderDistance": "4", "simulationDistance": "5", "maxFps": "30", "graphicsMode": "0"})
     path = os.path.join(PROFILE, "options.txt")
     lines = []
     if os.path.exists(path):
@@ -144,10 +158,10 @@ def _write_options():
     seen = set()
     for i, line in enumerate(lines):
         k = line.split(":", 1)[0]
-        if k in OPTIONS:
-            lines[i] = "%s:%s" % (k, OPTIONS[k])
+        if k in opts:
+            lines[i] = "%s:%s" % (k, opts[k])
             seen.add(k)
-    lines += ["%s:%s" % (k, v) for k, v in OPTIONS.items() if k not in seen]
+    lines += ["%s:%s" % (k, v) for k, v in opts.items() if k not in seen]
     with open(path, "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(lines) + "\n")
 
@@ -223,12 +237,12 @@ def launch():
         shutil.copytree(src_nat, natives)
 
     log_cfg = os.path.join(META, "log_configs", v["logging"]["client"]["file"]["id"])
-    args = [_java(), "-Xms1G", "-Xmx4G",
+    args = [_java(), "-Xms512M", "-Xmx" + os.environ.get("MANHATTAN_XMX", "4G"),
             "--sun-misc-unsafe-memory-access=allow", "--enable-native-access=ALL-UNNAMED",
             "-Djava.library.path=" + natives, "-Djna.tmpdir=" + natives,
             "-Dorg.lwjgl.system.SharedLibraryExtractPath=" + natives, "-Dio.netty.native.workdir=" + natives,
             "-Dminecraft.launcher.brand=manhattan-tests", "-Dminecraft.launcher.version=1",
-            "-Dmanhattan.testbridge.port=%d" % PORT,
+            "-Dmanhattan.testbridge.port=%d" % PORT, "-Dmanhattan.tests=true",
             "-DFabricMcEmu= net.minecraft.client.main.Main "]
     if os.path.isfile(log_cfg):
         args.append("-Dlog4j.configurationFile=" + log_cfg)
@@ -236,11 +250,15 @@ def launch():
              "--username", USERNAME, "--version", VERSION, "--gameDir", PROFILE,
              "--assetsDir", os.path.join(META, "assets"), "--assetIndex", v["assetIndex"]["id"],
              "--uuid", _offline_uuid(USERNAME), "--accessToken", "0", "--clientId", "0", "--xuid", "0",
-             "--userType", "legacy", "--versionType", "release", "--width", "1280", "--height", "720"]
+             "--userType", "legacy", "--versionType", "release", "--width", "854" if WORKER else "1280", "--height", "480" if WORKER else "720"]
     os.makedirs(os.path.join(PROFILE, "logs"), exist_ok=True)
     out = open(os.path.join(PROFILE, "logs", "testbridge-stdout.txt"), "w", encoding="utf-8")
     flags = 0x00000200 | 0x00000008   # CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS
-    proc = subprocess.Popen(args, cwd=PROFILE, stdout=out, stderr=subprocess.STDOUT, creationflags=flags)
+    # the window is shown without being activated (SW_SHOWNOACTIVATE): no focus, no mouse grab, whatever else the user is doing
+    si = subprocess.STARTUPINFO()
+    si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    si.wShowWindow = 4
+    proc = subprocess.Popen(args, cwd=PROFILE, stdout=out, stderr=subprocess.STDOUT, creationflags=flags, startupinfo=si)
     log("launched Minecraft (pid %d) on profile 'Manhatten Testing'" % proc.pid)
     return proc
 

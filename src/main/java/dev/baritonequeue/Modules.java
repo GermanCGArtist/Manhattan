@@ -19,7 +19,7 @@ final class Modules {
     record Failure(String why) {}
 
     static boolean busy() {
-        return dev.survivalkit.Api.busy() || dev.buildtools.Api.busy() || dev.loadchest.LoadChestMod.unloading();
+        return dev.survivalkit.Api.busy() || dev.buildtools.Api.busy() || dev.loadchest.LoadChestMod.unloading() || QueueMod.schem.working();
     }
 
     // ------------------------------------------------------------------ option("group.name", value)

@@ -34,6 +34,33 @@ import static dev.baritonequeue.Values.toNum;
 final class GameBuiltins {
     private GameBuiltins() {}
 
+    /** {selection or null, mode} from schem_*(n, "mode") in any order. */
+    private static String[] schemArgs(List<Object> a, String fn, int line, String defaultMode) {
+        String sel = null, mode = defaultMode;
+        for (Object o : a) {
+            if (o == null) continue;
+            String s = o instanceof Double d ? String.valueOf((int) Math.floor(d)) : str(o);
+            if (Schem.Mode.of(s) != null) mode = s.toLowerCase();
+            else if (s.equalsIgnoreCase("all") || s.matches("[0-9]+")) sel = s;
+            else throw error(fn + ": '" + s + "' is neither a placement number, \"all\", nor a mode (add, fix, exact).", line);
+        }
+        return new String[]{sel, mode};
+    }
+
+    private static void schem() {
+        String g = "schem";
+        def(g, "schem_list", 0, 0, "schem_list()", "list the Litematica placements in chat; returns how many there are", (in, a, l) -> (double) SchemCmd.list());
+        def(g, "schem_materials", 0, 2, "schem_materials([n | \"all\"] [, mode])", "print the items still needed for the placement (minus what is built); returns how many items the inventory lacks", (in, a, l) -> {
+            String[] sm = schemArgs(a, "schem_materials()", l, "fix");
+            return (double) SchemCmd.materials(sm[0], Schem.Mode.of(sm[1]));
+        });
+        def(g, "schem_check", 0, 2, "schem_check([n | \"all\"] [, mode])", "print what differs between the schematic and the world; returns the blocks that still need work", (in, a, l) -> {
+            String[] sm = schemArgs(a, "schem_check()", l, "fix");
+            return (double) SchemCmd.check(sm[0], Schem.Mode.of(sm[1]));
+        });
+        def(g, "schem_stop", 0, 0, "schem_stop()", "stop the running schematic build", (in, a, l) -> (double) SchemCmd.stop());
+    }
+
     private static LocalPlayer player(int line) {
         LocalPlayer p = Minecraft.getInstance().player;
         if (p == null) throw error("Not in a world.", line);
@@ -141,6 +168,7 @@ final class GameBuiltins {
         areas();
         helpers();
         settings();
+        schem();
     }
 
     // ------------------------------------------------------------------ what the player and the world look like
@@ -291,6 +319,21 @@ final class GameBuiltins {
                 }
                 Util.msg("Another round: " + Values.num(left) + " water left.");
             }
+        });
+        def(g, "schem_build", 0, 2, "schem_build([n | \"all\"] [, \"add\" | \"fix\" | \"exact\"])", "build the Litematica placement n (or all enabled ones) with Baritone's builder, phase by phase (clear, full blocks, shaped, attached, redstone, power); add = only fill empty spots, fix = also replace wrong blocks, exact = also dig out schematic air; waits; returns the blocks still wrong (0 = done)", (in, a, l) -> {
+            String[] sm = schemArgs(a, "schem_build()", l, "add");
+            Object r = in.await(() -> new Actions.Feature(
+                    () -> {
+                        String[] err = new String[1];
+                        var pls = SchemCmd.select(sm[0], err);
+                        if (pls == null) return err[0];
+                        return QueueMod.schem.begin(pls, Schem.Mode.of(sm[1]));
+                    },
+                    QueueMod.schem::working,
+                    QueueMod.schem::cancel,
+                    () -> QueueMod.schem.failure() != null ? new Modules.Failure(QueueMod.schem.failure()) : (Object) QueueMod.schem.result())
+                    .resumable(QueueMod.schem::suspendRun, QueueMod.schem::carryOn), "schem_build", l);
+            return r instanceof Double d ? d : 0.0;
         });
         def(g, "clear_area", 0, 0, "clear_area()", "mine out the selection from the top, 3 layers per pass, everything in reach at each stop, picking up drops on the way; returns the blocks left (finish those with #sel ca)", (in, a, l) ->
                 in.await(() -> new Actions.Feature(

@@ -23,6 +23,7 @@ public class QueueMod implements ClientModInitializer {
     static final Runner runner = new Runner();
     static final ChestProcess chest = new ChestProcess();
     static final ClearProcess clear = new ClearProcess();
+    static final SchemProcess schem = new SchemProcess();
     static KeyMapping open;
     private boolean registered = false;
     private int noPlayer, areaTick;
@@ -36,6 +37,7 @@ public class QueueMod implements ClientModInitializer {
         KeyMapping.Category category = KeyMapping.Category.register(Identifier.fromNamespaceAndPath("baritonequeue", "main"));
         open = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.baritonequeue.open", 74 /* GLFW_KEY_J */, category));
 
+        ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> SchemCmd.register(dispatcher));
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
                 dispatcher.register(ClientCommands.literal("queue")
                         .executes(ctx -> list())
@@ -246,6 +248,7 @@ public class QueueMod implements ClientModInitializer {
             }
         }
         clear.tick();
+        schem.tick();
         if (PauseWatch.paused) return;   // #pause: the script holds still
         try {
             runner.tick();

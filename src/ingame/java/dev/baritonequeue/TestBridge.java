@@ -63,6 +63,8 @@ public class TestBridge implements ClientModInitializer {
         captureChat(mc);
         // an unfocused window must not pause the test world
         if (mc.screen instanceof PauseScreen && mc.level != null) mc.setScreen(null);
+        // a test game never keeps the user's mouse: let go whenever the game grabbed it (this jar exists only in test profiles)
+        if (mc.mouseHandler.isMouseGrabbed()) mc.mouseHandler.releaseMouse();
     }
 
     /** Copies every new chat line (also the client-only ones mods print) into {@link #chat}. */
@@ -161,6 +163,20 @@ public class TestBridge implements ClientModInitializer {
                 StringBuilder b = new StringBuilder();
                 for (String c : copy) b.append(b.isEmpty() ? "" : ",").append(q(c));
                 return ok("\"next\":" + (Math.min(from, chat.size()) + copy.size()) + ",\"lines\":[" + b + "]");
+            }
+            case "blockstate": {
+                BlockPos p = new BlockPos(Integer.parseInt(a[0]), Integer.parseInt(a[1]), Integer.parseInt(a[2]));
+                var server = mc.getSingleplayerServer();
+                if (server == null) return err("no single-player world");
+                String st = server.submit(() -> {
+                    ServerLevel lvl = server.overworld();
+                    if (mc.player != null) {
+                        ServerLevel own = server.getLevel(mc.player.level().dimension());
+                        if (own != null) lvl = own;
+                    }
+                    return lvl.getBlockState(p).toString();
+                }).get(20, TimeUnit.SECONDS);
+                return ok("\"state\":" + q(st));
             }
             case "block": {
                 BlockPos p = new BlockPos(Integer.parseInt(a[0]), Integer.parseInt(a[1]), Integer.parseInt(a[2]));

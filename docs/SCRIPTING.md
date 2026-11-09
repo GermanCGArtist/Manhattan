@@ -112,6 +112,27 @@ The ones marked **waits** take time in the world: the script waits until they ar
 | `protect("name" [, corner1, corner2])` | safe area: Baritone never breaks or places there (no corners = the selection) |
 | `unprotect("name")` | |
 
+**Litematica schematics** (2.5.0): builds your Litematica placements with Baritone's own builder (never the Litematica printer).
+
+| function | |
+|---|---|
+| `schem_list()` | lists the placements in chat; returns how many |
+| `schem_build([n \| "all"] [, "add" \| "fix" \| "exact"])` | waits; builds placement n (or all enabled ones; with only one enabled you can leave n out). Returns the blocks still wrong (0 = done) |
+| `schem_materials([n \| "all"] [, mode])` | prints the items still needed (minus what is built) against the inventory; returns how many items are missing |
+| `schem_check([n \| "all"] [, mode])` | prints the diff: correct, missing, wrong, to dig out, with examples; returns the blocks that still need work |
+| `schem_stop()` | stops the running build |
+
+The same as chat commands: `/schem list`, `/schem build [n|all] [add|fix|exact]`, `/schem materials [n|all] [mode]`, `/schem check [n|all] [mode]`, `/schem stop`.
+A script line `/schem build 1 add` works too (the script waits while it builds).
+
+* **add** (default for build): schematic air is ignored; blocks that are already there are left alone; only empty or replaceable spots (air, water, grass ...) are filled.
+* **fix**: schematic air is ignored; wrong blocks are broken and replaced.
+* **exact**: like fix, and schematic air is dug out first (its own phase, top-down), for example to build into a hill.
+* Phases, each one a Baritone builder run, bottom-up layer by layer: clear (exact only) → full blocks → shaped (stairs, slabs, fences, panes ...) → attached (torches, doors, signs, carpets, plants ...) → redstone (dust, repeaters, pistons ...) → power sources (levers, buttons, plates, redstone torches). Fluids are not built yet; they are listed in the report.
+* The material list counts what is still missing: a double slab is 2 slabs, a door or bed 1 item, redstone dust is `redstone`, water or lava a (reusable) bucket.
+* Blocks inside safe areas (`protect`) are never built or dug.
+* Placements come from the running Litematica (found by reflection; the mod also works without it) or, failing that, from Litematica's own file in `config/litematica/`. Position, rotation, mirror, enabled state and sub-regions are used; where placements overlap, the later one in the list wins (air never overwrites a block).
+
 How `fill_water` works (2.1.0): a **wet cell** is anything holding water that is not solid, so plain water, seagrass, kelp and bubble columns all count. A cell is only filled when **no wet cell is left below it in its column**. Kelp is broken first.
 
 It looks through the **whole selection** for the nearest cell it can do next. After a bed trip, a meal or a fight it walks back by itself. From dry ground (or water 1 deep, head dry) it reaches about 3 blocks down.

@@ -2,6 +2,16 @@
 
 Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
 
+## 2.5.0 – build Litematica placements with Baritone (step 1) (2026-11-09)
+- `/schem list | build [n|all] [add|fix|exact] | materials | check | stop` and the script functions `schem_list()`,
+  `schem_build()`, `schem_materials()`, `schem_check()`, `schem_stop()`. See [SCRIPTING.md](SCRIPTING.md).
+- The placement (position, rotation, mirror, sub-regions, enabled) is read from the running Litematica by reflection
+  (the mod still loads without it), else from Litematica's per-world file. The `.litematic` is read by the mod itself.
+- The placement is wrapped in our own `ISchematic` and handed to Baritone's builder, one phase per run (clear,
+  full, shaped, attached, redstone, power), bottom-up per layer. Fluids are listed, not built yet. Safe areas are left out.
+- New in-game tests `schem_list`, `schem_add`, `schem_fix`, `schem_exact`; the test profile gets Litematica and
+  malilib (copied from the Bestes_projekt profile) and never the Litematica printer.
+
 ## 2.4.2 – dump() keeps only the wanted tools (2026-11-09)
 - `dump()` kept everything that can wear out and all food. Bows, armour and tools from the mobs `defend()` killed,
   spare shovels and rotten flesh piled up, and the hotbar was never emptied: on the AFK run a dump trip carried only
