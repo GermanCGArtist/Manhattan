@@ -274,11 +274,14 @@ final class Schem {
         final Plan plan;
         final Mode mode;
         final Phase phase;
+        /** Items not in the inventory right now; their blocks are left out (skip mode). null = all or nothing. */
+        final java.util.function.Supplier<java.util.Set<Item>> missing;
 
-        Wrapper(Plan plan, Mode mode, Phase phase) {
+        Wrapper(Plan plan, Mode mode, Phase phase, java.util.function.Supplier<java.util.Set<Item>> missing) {
             this.plan = plan;
             this.mode = mode;
             this.phase = phase;
+            this.missing = missing;
         }
 
         @Override
@@ -287,7 +290,12 @@ final class Schem {
             if (d == null || plan.excluded.get(plan.idx(x, y, z))) return false;
             if (phase == Phase.CLEAR || phase == Phase.ORIENTED) return false;   // our own placer does these
             if (d.isAir() || phaseOf(d) != phase) return false;
-            return mode != Mode.ADD || norm(current).equals(d) || replaceable(current);
+            if (!(mode != Mode.ADD || norm(current).equals(d) || replaceable(current))) return false;
+            if (missing != null && !norm(current).equals(d)) {
+                Object[] cost = cost(d);
+                if (cost != null && missing.get().contains((Item) cost[0])) return false;   // no item for it: build the rest
+            }
+            return true;
         }
 
         @Override

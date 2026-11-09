@@ -117,13 +117,13 @@ The ones marked **waits** take time in the world: the script waits until they ar
 | function | |
 |---|---|
 | `schem_list()` | lists the placements in chat; returns how many |
-| `schem_build([n \| "all"] [, "add" \| "fix" \| "exact"])` | waits; builds placement n (or all enabled ones; with only one enabled you can leave n out). Returns the blocks still wrong (0 = done) |
+| `schem_build([n \| "all"] [, "add" \| "fix" \| "exact"] [, "skip" \| "strict"])` | waits; builds placement n (or all enabled ones; with only one enabled you can leave n out). **skip** (default): blocks you carry no item for are left out and the rest is built; **strict**: the phase stops as soon as an item is missing. Returns the blocks still wrong (0 = done) |
 | `schem_materials([n \| "all"] [, mode])` | prints the items still needed (minus what is built) against the inventory; returns how many items are missing |
 | `schem_needed([n \| "all"] [, mode])` | the items still needed (minus what is built, not minus the inventory) as a map item → count, e.g. `{stone: 120, oak_stairs: 8}`; use it to fetch from chests |
 | `schem_check([n \| "all"] [, mode])` | prints the diff: correct, missing, wrong, to dig out, with examples; returns the blocks that still need work |
 | `schem_stop()` | stops the running build |
 
-The same as chat commands: `/schem list`, `/schem build [n|all] [add|fix|exact]`, `/schem materials [n|all] [mode]`, `/schem check [n|all] [mode]`, `/schem stop`.
+The same as chat commands: `/schem list`, `/schem build [n|all] [add|fix|exact] [skip|strict]`, `/schem materials [n|all] [mode]`, `/schem check [n|all] [mode]`, `/schem stop`.
 A script line `/schem build 1 add` works too (the script waits while it builds).
 
 * **add** (default for build): schematic air is ignored; blocks that are already there are left alone; only empty or replaceable spots (air, water, grass ...) are filled.

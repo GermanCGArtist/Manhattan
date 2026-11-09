@@ -38,10 +38,13 @@ end
 #acceptableThrowawayItems {scaffold_item}
 
 // Take what the build still needs (minus what is built and what you carry), as far as it fits.
+// Items no chest has are remembered and not looked for again; their blocks are left out (schem_build skips them).
+let unavailable = []
 func fetch()
   let need = schem_needed(placement, mode)
   let seen = null
   for item in keys(need)
+    if contains(unavailable, item) then continue end
     for c in chests
       if count(item) >= need[item] or full then break end
       seen = chest_contents(c)
@@ -53,7 +56,10 @@ func fetch()
         end
       end
     end
-    if count(item) < need[item] and not full then
+    if count(item) == 0 and not full then
+      push(unavailable, item)
+      print("No {item} in the chests: those {need[item]} blocks are left out.")
+    elif count(item) < need[item] and not full then
       print("Not enough {item} in the chests: have {count(item)}, need {need[item]}")
     end
   end
@@ -65,17 +71,21 @@ let stuck = 0
 loop
   take_upto(scaffold_chest, scaffold_item, scaffold_amount)
   fetch()
-  now_left = schem_build(placement, mode)
+  now_left = schem_build(placement, mode, "skip")   // "strict" instead: stop when an item is missing
   if now_left == 0 then break end
   if now_left == left then
     stuck += 1
-    if stuck >= 2 then stop("Stuck: {now_left} blocks still wrong. /schem check shows which.") end
+    if stuck >= 2 then break end   // nothing more can be built with what the chests hold
   else
     stuck = 0
   end
   left = now_left
 end
 
+if now_left > 0 then
+  print("Built what the chests allow; {now_left} blocks are left out.")
+  if len(unavailable) > 0 then print("Missing in the chests: {join(unavailable, ', ')}") end
+end
 schem_check(placement, mode)
 collect_scaffold()
 print("Schematic built.")

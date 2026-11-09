@@ -13,7 +13,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * /schem list | build [n|all] [add|fix|exact] | materials [n|all] [mode] | check [n|all] [mode] | stop
+ * /schem list | build [n|all] [add|fix|exact] [skip|strict] | materials [n|all] [mode] | check [n|all] [mode] | stop
  * and the same things as script functions (schem_list(), schem_build(...) ...), which call the methods here.
  */
 final class SchemCmd {
@@ -139,12 +139,14 @@ final class SchemCmd {
     private static String[] words(String args) {
         String sel = null;
         String mode = null;
+        String missing = "skip";
         for (String w : args.trim().split("\\s+")) {
             if (w.isEmpty()) continue;
             if (Mode.of(w) != null) mode = w;
+            else if (w.equalsIgnoreCase("skip") || w.equalsIgnoreCase("strict")) missing = w.toLowerCase();
             else sel = w;
         }
-        return new String[]{sel, mode};
+        return new String[]{sel, mode, missing};
     }
 
     private static int run(String verb, String args, Mode defaultMode) {
@@ -155,6 +157,7 @@ final class SchemCmd {
                 String[] err = new String[1];
                 List<SchemSource.Placement> pls = select(w[0], err);
                 if (pls == null) { Util.msg(err[0]); return 0; }
+                QueueMod.schem.skipMissing(!"strict".equals(w[2]));
                 String e = QueueMod.schem.begin(pls, mode);
                 if (e != null && !e.isEmpty()) Util.msg(e);
                 return e == null || e.isEmpty() ? 1 : 0;
@@ -167,7 +170,7 @@ final class SchemCmd {
 
     static void register(CommandDispatcher<FabricClientCommandSource> d) {
         d.register(ClientCommands.literal("schem")
-                .executes(c -> { Util.msg("/schem list | build [n|all] [add|fix|exact] | materials [n|all] [mode] | check [n|all] [mode] | stop"); return 1; })
+                .executes(c -> { Util.msg("/schem list | build [n|all] [add|fix|exact] [skip|strict] | materials [n|all] [mode] | check [n|all] [mode] | stop"); return 1; })
                 .then(ClientCommands.literal("list").executes(c -> list() > 0 ? 1 : 0))
                 .then(ClientCommands.literal("stop").executes(c -> stop()))
                 .then(verb("build", Mode.ADD))

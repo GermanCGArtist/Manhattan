@@ -157,7 +157,44 @@ final class SchemProcess {
             placer.begin(plan, mode, ph);
             return;
         }
-        Util.baritone().getBuilderProcess().build("schem " + plan.name + " " + ph.name().toLowerCase(), new Schem.Wrapper(plan, mode, ph), plan.min);
+        neededItems.clear();
+        neededItems.addAll(c.items.keySet());
+        refreshMissing();
+        restarts = 0;
+        Util.baritone().getBuilderProcess().build("schem " + plan.name + " " + ph.name().toLowerCase(),
+                new Schem.Wrapper(plan, mode, ph, skipMissing ? () -> missingNow : null), plan.min);
+    }
+
+    // ------------------------------------------------------------------ skip blocks without items
+
+    /** true: blocks whose item is not in the inventory are left out and the rest is built; false: all or nothing. */
+    private boolean skipMissing = true;
+    private final java.util.Set<net.minecraft.world.item.Item> neededItems = new java.util.HashSet<>();
+    private volatile java.util.Set<net.minecraft.world.item.Item> missingNow = java.util.Set.of();
+    private int restarts;
+
+    void skipMissing(boolean v) { skipMissing = v; }
+
+    /** Cheap: only the items this phase needs are looked up in the inventory. Returns true when the set changed. */
+    private boolean refreshMissing() {
+        java.util.Set<net.minecraft.world.item.Item> m = new java.util.HashSet<>();
+        for (var it : neededItems) if (Schem.have(it) == 0) m.add(it);
+        if (m.equals(missingNow)) return false;
+        missingNow = m;
+        return true;
+    }
+
+    /** "stone x5, gravel x3" for the blocks of this phase left out for want of items. */
+    private String skippedText(Phase ph) {
+        if (!skipMissing) return "";
+        Schem.Counts c = Schem.count(plan, mode, Minecraft.getInstance().level);
+        StringBuilder sb = new StringBuilder();
+        for (var e : c.items.entrySet()) {
+            if (Schem.have(e.getKey()) > 0) continue;
+            if (sb.length() > 0) sb.append(", ");
+            sb.append(Schem.itemName(e.getKey())).append(" x").append(e.getValue());
+        }
+        return sb.toString();
     }
 
     void tick() {
@@ -179,8 +216,18 @@ final class SchemProcess {
             }
             return;
         }
+        boolean itemsChanged = skipMissing && refreshMissing();
         if (b.isPaused()) {
             Util.baritone().getPathingBehavior().cancelEverything();
+            // an item just ran out: start the phase again without those blocks (a few times at most)
+            if (skipMissing && (itemsChanged || restarts == 0) && restarts < 5) {
+                restarts++;
+                int r = restarts;
+                since = 0;
+                startPhase();
+                restarts = r;
+                return;
+            }
             endPhase(ph, "the builder gave up (missing materials, or blocks it cannot reach)");
             return;
         }
@@ -204,6 +251,10 @@ final class SchemProcess {
     private void endPhase(Phase ph, String why) {
         Schem.Counts c = Schem.count(plan, mode, Minecraft.getInstance().level);
         int left = c.todoByPhase.getOrDefault(ph, 0);
+        if (left > 0 && why == null && skipMissing) {
+            String sk = skippedText(ph);
+            if (!sk.isEmpty()) why = "skipped, no items: " + sk;
+        }
         phaseResult.put(ph, left == 0 ? "done" : left + " left" + (why != null ? " (" + why + ")" : ""));
         if (left > 0) stuck.add(ph.label + ": " + left + " left" + (why != null ? " - " + why : ""));
         Util.msg("Phase " + ph.label + ": " + phaseResult.get(ph) + ".");

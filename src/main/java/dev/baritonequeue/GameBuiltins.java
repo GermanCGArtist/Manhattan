@@ -34,17 +34,18 @@ import static dev.baritonequeue.Values.toNum;
 final class GameBuiltins {
     private GameBuiltins() {}
 
-    /** {selection or null, mode} from schem_*(n, "mode") in any order. */
+    /** {selection or null, mode, "skip"|"strict"} from schem_*(n, "mode", "strict") in any order. */
     private static String[] schemArgs(List<Object> a, String fn, int line, String defaultMode) {
-        String sel = null, mode = defaultMode;
+        String sel = null, mode = defaultMode, missing = "skip";
         for (Object o : a) {
             if (o == null) continue;
             String s = o instanceof Double d ? String.valueOf((int) Math.floor(d)) : str(o);
             if (Schem.Mode.of(s) != null) mode = s.toLowerCase();
             else if (s.equalsIgnoreCase("all") || s.matches("[0-9]+")) sel = s;
-            else throw error(fn + ": '" + s + "' is neither a placement number, \"all\", nor a mode (add, fix, exact).", line);
+            else if (s.equalsIgnoreCase("skip") || s.equalsIgnoreCase("strict")) missing = s.toLowerCase();
+            else throw error(fn + ": '" + s + "' is neither a placement number, \"all\", a mode (add, fix, exact), nor \"skip\" / \"strict\".", line);
         }
-        return new String[]{sel, mode};
+        return new String[]{sel, mode, missing};
     }
 
     private static void schem() {
@@ -332,8 +333,9 @@ final class GameBuiltins {
                 Util.msg("Another round: " + Values.num(left) + " water left.");
             }
         });
-        def(g, "schem_build", 0, 2, "schem_build([n | \"all\"] [, \"add\" | \"fix\" | \"exact\"])", "build the Litematica placement n (or all enabled ones) with Baritone's builder, phase by phase (clear, full blocks, shaped, attached, redstone, power); add = only fill empty spots, fix = also replace wrong blocks, exact = also dig out schematic air; waits; returns the blocks still wrong (0 = done)", (in, a, l) -> {
+        def(g, "schem_build", 0, 3, "schem_build([n | \"all\"] [, \"add\" | \"fix\" | \"exact\"] [, \"skip\" | \"strict\"])", "build the Litematica placement n (or all enabled ones) with Baritone's builder, phase by phase (clear, full blocks, shaped, attached, redstone, power); add = only fill empty spots, fix = also replace wrong blocks, exact = also dig out schematic air; skip (default) = blocks you have no item for are left out and the rest is built, strict = stop when an item is missing; waits; returns the blocks still wrong (0 = done)", (in, a, l) -> {
             String[] sm = schemArgs(a, "schem_build()", l, "add");
+            QueueMod.schem.skipMissing(!"strict".equals(sm[2]));
             Object r = in.await(() -> new Actions.Feature(
                     () -> {
                         String[] err = new String[1];
