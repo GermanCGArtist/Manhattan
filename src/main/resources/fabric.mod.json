@@ -2,8 +2,9 @@
   "schemaVersion": 1,
   "id": "baritonequeue",
   "version": "${version}",
-  "name": "Baritone Script (Baritone addon)",
-  "description": "A script language for Baritone: variables, loops, functions, 'on' handlers, # lines for Baritone commands, and built-in helpers that used to be the SurvivalKit, BuildTools and LoadChest addons (eat, sleep, restock, water fill, scaffolding, chests).",
+  "name": "Manhattan (Baritone Script)",
+  "description": "A script language for Baritone: variables, loops, functions, 'on' handlers, # lines for Baritone commands, and built-in helpers for fighting, eating, sleeping, restocking, filling water, clearing areas, safe areas and chests.",
+  "contact": { "sources": "https://github.com/GermanCGArtist/Manhattan" },
   "license": "MIT",
   "environment": "client",
   "entrypoints": {

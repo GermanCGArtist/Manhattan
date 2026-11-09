@@ -59,7 +59,7 @@ final class QueueScreen extends Screen {
     private int[] colors = new int[0];
 
     QueueScreen() {
-        super(Component.literal("Baritone script"));
+        super(Component.literal("Manhattan script"));
         if (!pickReturn) Suggest.target = Places.target();   // like /setblock: what the crosshair was on
     }
 

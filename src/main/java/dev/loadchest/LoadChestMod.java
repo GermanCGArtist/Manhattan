@@ -54,7 +54,7 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Baritone addon: /loadchest
+ * Manhattan's chest helper (formerly the LoadChest addon): unload() and pickup() in the script, /loadchest by hand.
  *
  * Walks to a chest (saved, given by coordinates, or nearest), opens it and deposits items.
  * What stays in the inventory is controlled by:

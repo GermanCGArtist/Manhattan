@@ -14,7 +14,7 @@ import static dev.survivalkit.Config.cfg;
  * you healthy again (eating and fighting are allowed meanwhile), waits until no monster is near, then runs the same
  * command again. Three deaths within ten minutes and it stops trying.
  *
- * With the Baritone Queue addon running a list, the list itself resumes its current step: the two talk through
+ * While a script runs, the script itself resumes its current step: the two talk through
  * system properties ("baritonequeue.active" -> this stays out of the way, "survivalkit.recovering" while we wait,
  * "survivalkit.safe" when it is time to go on).
  */

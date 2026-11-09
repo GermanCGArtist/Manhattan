@@ -1,8 +1,8 @@
-# Baritone Script 2.0 – the script language
+# Manhattan – the script language
 
 Open the editor with **J**. **Run** starts the script, **Test** checks it without running it, **Stop** ends it, **Skip** ends the action that runs now and carries on, **Pick block** lets you aim at a block and put its position into the script.
 
-SurvivalKit, BuildTools and LoadChest are built into this mod now. Their jars are not installed any more. Everything they did is a script function (below), and their old chat commands (`/survival …`, `/buildtools …`, `/loadchest …`) still work too.
+The helpers that used to be the SurvivalKit, BuildTools and LoadChest addons are built in. Everything they did is a script function (below); their chat commands (`/survival …`, `/buildtools …`, `/loadchest …`) still work for doing things by hand. None of them acts on its own unless the script switches it on.
 
 ## Lines
 
@@ -143,7 +143,7 @@ Deeper cells are done in **dive mode** (on by default; switch it off with `optio
 
 The helpers no longer act by themselves (since 2.0.1). To have them act while a script runs, put this near the top of the script: `enable("eat", "sleep", "defence")`. The names are eat, sleep, defence, restock, escape, drain, scaffold, pickup and autoempty; `enable()` alone means all of them. They are switched off again when the script ends. `disable(...)` keeps some from acting. Respawn, resume after death and reconnect stay on.
 
-**Options** (all settings of the old addons, saved like before):
+**Options** (every setting of the built-in helpers, saved in their json files):
 
 ```
 option("survival.eatBelow", 10)

@@ -31,7 +31,28 @@ processResources {
 
 tasks.withType(JavaCompile).configureEach {
     options.release = 25
+    options.compilerArgs += ['-Xlint:unchecked']   // (Mojang marks hasChunkAt / blocksMotion deprecated as "internal"; vanilla uses them too)
 }
+
+// Offline checks, no Minecraft needed: the language tests (src/test) and a parse check of every script in scripts/.
+// Both run with "build" (via check); on their own: gradlew langTest / gradlew parseScripts
+tasks.register('langTest', JavaExec) {
+    group = 'verification'
+    description = 'Runs the script language through the real parser and interpreter.'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.baritonequeue.LangTest'
+}
+tasks.register('parseScripts', JavaExec) {
+    group = 'verification'
+    description = 'Checks that every scripts/*.txt parses.'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.baritonequeue.ParseFile'
+    def scripts = fileTree('scripts') { include '*.txt' }
+    inputs.files scripts
+    argumentProviders.add({ scripts.files.collect { it.absolutePath } } as CommandLineArgumentProvider)
+}
+tasks.named('check') { dependsOn 'langTest', 'parseScripts' }
+tasks.named('test') { failOnNoDiscoveredTests = false }   // the tests above are plain programs, not JUnit
 
 java {
     sourceCompatibility = JavaVersion.VERSION_25

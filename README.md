@@ -27,10 +27,10 @@ fill_water("dirt", dirt_chest)
   of the block you look at (chests, beds).
 - Language guide: [docs/SCRIPTING.md](docs/SCRIPTING.md)
 - Example: [scripts/water-job.txt](scripts/water-job.txt) (fill an area's water bottom-up, then mine two areas)
-- Change notes: [docs/NOTES.md](docs/NOTES.md)
+- Changes per version: [docs/CHANGELOG.md](docs/CHANGELOG.md); how the code is built: [docs/DESIGN.md](docs/DESIGN.md)
 
 ## Build
-Needs JDK 25. `build.bat` uses a portable JDK in `tools\jdk-25*` if present, otherwise `JAVA_HOME`.
+Needs JDK 25. `build.bat` builds the jar and runs the offline language tests; it uses a portable JDK in `tools\jdk-25*` if present, otherwise `JAVA_HOME`.
 The Baritone API jar goes in `libs\` (`baritone-api-fabric-1.18.0.jar`, not in git).
 
 ```

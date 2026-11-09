@@ -66,7 +66,7 @@ final class Util {
                 || b.getFollowProcess().isActive() || b.getCustomGoalProcess().isActive();
     }
 
-    /** Tells the Baritone Queue addon (if installed) to stop running its list. */
+    /** Tells the running script to stop. */
     static void haltQueue(String why) {
         System.setProperty("baritonequeue.halt", why);
     }

@@ -23,13 +23,14 @@ import java.util.function.Predicate;
 import static dev.survivalkit.Config.cfg;
 
 /**
- * Baritone addon that keeps a long-running task alive:
- *   eat      - eats when hungry
- *   defence  - fights hostile mobs that get close
- *   sleep    - sleeps through the night in a saved bed
- *   restock  - refills food/tools/torches/... from a supply chest
- * Every feature is a temporary Baritone process, so the running task (#mine, #farm, #build, #sel ca, ...) is paused
- * and then continues by itself.
+ * Manhattan's survival helpers (formerly the SurvivalKit addon), started from the script:
+ *   eat      - eat(): eats until full
+ *   defence  - defend(): fights hostile mobs that get close (getters mobs, mobs_near)
+ *   sleep    - sleep(): sleeps through the night in the saved bed (getter bed_time)
+ *   restock  - restock(): refills food and tools from the supply chest, worn tools to the return chest (restock_needed)
+ *   recovery - respawn, resume and reconnect, so the running script comes back after a death or a disconnect
+ * Every feature is a temporary Baritone process, so the running task (#mine, #build, #sel ca, ...) is paused and then
+ * continues by itself. None of them acts on its own unless switched on with option(...) or enable(...).
  */
 public class SurvivalKitMod implements ClientModInitializer {
 

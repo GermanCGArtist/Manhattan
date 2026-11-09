@@ -11,9 +11,14 @@ import net.minecraft.client.Minecraft;
 import static dev.buildtools.Config.cfg;
 
 /**
- * Baritone addon that helps its builder:
- *   drain - plugs/removes flowing water that makes #build / #sel ca pause, then resumes the builder
- *   fill  - fills the #sel selection with water using buckets (after sealing the open sides)
+ * Manhattan's building helpers (formerly the BuildTools addon), started from the script:
+ *   drain      - drain(): plugs flowing water that makes #build / #sel ca pause, then resumes the builder
+ *   fill       - flood(): fills the #sel selection with water using buckets (after sealing the open sides)
+ *   terminator - fill_water(): fills the water in the selection with blocks, from the bottom up (dives if needed)
+ *   scaffold   - collect_scaffold(): picks the scaffolding blocks back up
+ *   escape     - gets out of holes Baritone got stuck in
+ *   safe areas - protect(): no breaking or placing inside (RegionRules, Guard)
+ * The /buildtools command stays for checking and changing things by hand.
  */
 public class BuildToolsMod implements ClientModInitializer {
 
