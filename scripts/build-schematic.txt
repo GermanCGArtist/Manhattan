@@ -8,21 +8,31 @@ let scaffold_chest = pos(-668, 73, 206)
 let scaffold_item = "dirt"   // what lies in the scaffold chest (dirt, cobblestone, netherrack ...)
 let scaffold_amount = 128
 
-// every chest/barrel in the material area -667 73 206 .. -664 72 204
+// the material chests: corners of the area (one block wider is searched too)
+let area_a = pos(-667, 73, 206)
+let area_b = pos(-664, 72, 204)
+
+// fetch the scaffold first: that walks to the chests, so they are loaded
+take_upto(scaffold_chest, scaffold_item, scaffold_amount)
+
+// every chest/barrel in the area
 let chests = []
 let p = null
-let b = ""
-for x in range(-667, -663)
-  for y in range(72, 74)
-    for z in range(204, 207)
+let b = null
+for x in range(min(area_a.x, area_b.x) - 1, max(area_a.x, area_b.x) + 2)
+  for y in range(min(area_a.y, area_b.y) - 1, max(area_a.y, area_b.y) + 2)
+    for z in range(min(area_a.z, area_b.z) - 1, max(area_a.z, area_b.z) + 2)
       p = pos(x, y, z)
       b = block(p)
-      if contains(b, "chest") or contains(b, "barrel") then push(chests, p) end
+      if b != null and p != scaffold_chest and b != "ender_chest" and (contains(b, "chest") or b == "barrel") then push(chests, p) end
     end
   end
 end
 print("{len(chests)} material chests found")
-if len(chests) == 0 then stop("No chests in the material area.") end
+if len(chests) == 0 then
+  print("Blocks at the corners: {block(area_a)}, {block(area_b)}. Are the chest positions right?")
+  stop("No chests in the material area.")
+end
 
 // Baritone may only use the scaffold item to bridge and pillar
 #acceptableThrowawayItems {scaffold_item}

@@ -79,6 +79,12 @@ public final class Api {
         return Scaffold.count();
     }
 
+    /**
+     * Set by the schematic builder: true when a throwaway block placed at this spot is NOT part of the schematic being
+     * built, so it is scaffolding and is recorded even while Baritone's builder runs. null = no schematic build.
+     */
+    public static volatile java.util.function.BiPredicate<net.minecraft.core.BlockPos, net.minecraft.world.level.block.Block> scaffoldOutsideSchematic;
+
     public static void forgetScaffold() {
         Scaffold.spots().clear();
     }

@@ -44,6 +44,17 @@ final class SchemProcess {
     private int oldStart;
     private Boolean breakBefore;
 
+    {
+        // throwaway blocks Baritone places where the schematic wants something else are scaffolding: let buildtools
+        // record them, so collect_scaffold() can take them down after the build
+        dev.buildtools.Api.scaffoldOutsideSchematic = (pos, block) -> {
+            Plan p = plan;
+            if (!working || p == null) return false;
+            var want = p.at(pos.getX() - p.min.getX(), pos.getY() - p.min.getY(), pos.getZ() - p.min.getZ());
+            return want == null || want.getBlock() != block;
+        };
+    }
+
     boolean working() { return working; }
 
     String failure() { return failure; }

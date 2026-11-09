@@ -37,9 +37,12 @@ final class Scaffold {
             if (!(player.getItemInHand(hand).getItem() instanceof BlockItem bi)) return InteractionResult.PASS;
             if (!BaritoneAPI.getSettings().acceptableThrowawayItems.value.contains(bi)) return InteractionResult.PASS;
             if (!Util.baritone().getInputOverrideHandler().isInputForcedDown(Input.CLICK_RIGHT)) return InteractionResult.PASS;   // you, not Baritone
-            if (Util.baritone().getBuilderProcess().isActive() && !clearingStep()) return InteractionResult.PASS;   // the builder may be building
             BlockPos clicked = hit.getBlockPos();
             BlockPos placed = level.getBlockState(clicked).canBeReplaced() ? clicked : clicked.relative(hit.getDirection());
+            if (Util.baritone().getBuilderProcess().isActive() && !clearingStep()) {   // the builder may be building
+                var outside = Api.scaffoldOutsideSchematic;   // a schematic build knows which blocks are wanted
+                if (outside == null || !outside.test(placed, bi.getBlock())) return InteractionResult.PASS;
+            }
             if (spots.size() < MAX) spots.put(placed.immutable(), bi.getBlock());
             return InteractionResult.PASS;
         });
