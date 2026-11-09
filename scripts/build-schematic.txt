@@ -1,0 +1,71 @@
+// Build a Litematica placement, fetching the materials from chests.
+// Place the schematic with Litematica first; /schem list shows the placement numbers.
+
+let placement = 1            // number from /schem list
+let mode = "add"             // add = only fill air, fix = also replace wrong blocks, exact = also dig out (into a hill)
+
+let scaffold_chest = pos(-668, 73, 206)
+let scaffold_item = "dirt"   // what lies in the scaffold chest (dirt, cobblestone, netherrack ...)
+let scaffold_amount = 128
+
+// every chest/barrel in the material area -667 73 206 .. -664 72 204
+let chests = []
+let p = null
+let b = ""
+for x in range(-667, -663)
+  for y in range(72, 74)
+    for z in range(204, 207)
+      p = pos(x, y, z)
+      b = block(p)
+      if contains(b, "chest") or contains(b, "barrel") then push(chests, p) end
+    end
+  end
+end
+print("{len(chests)} material chests found")
+if len(chests) == 0 then stop("No chests in the material area.") end
+
+// Baritone may only use the scaffold item to bridge and pillar
+#acceptableThrowawayItems {scaffold_item}
+
+// Take what the build still needs (minus what is built and what you carry), as far as it fits.
+func fetch()
+  let need = schem_needed(placement, mode)
+  let seen = null
+  for item in keys(need)
+    for c in chests
+      if count(item) >= need[item] or full then break end
+      seen = chest_contents(c)
+      if seen == null or contains(keys(seen), item) then
+        try
+          take_upto(c, item, need[item])
+        catch err
+          // that chest has none (left): try the next one
+        end
+      end
+    end
+    if count(item) < need[item] and not full then
+      print("Not enough {item} in the chests: have {count(item)}, need {need[item]}")
+    end
+  end
+end
+
+let left = -1
+let now_left = 0
+let stuck = 0
+loop
+  take_upto(scaffold_chest, scaffold_item, scaffold_amount)
+  fetch()
+  now_left = schem_build(placement, mode)
+  if now_left == 0 then break end
+  if now_left == left then
+    stuck += 1
+    if stuck >= 2 then stop("Stuck: {now_left} blocks still wrong. /schem check shows which.") end
+  else
+    stuck = 0
+  end
+  left = now_left
+end
+
+schem_check(placement, mode)
+collect_scaffold()
+print("Schematic built.")

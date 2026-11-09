@@ -54,6 +54,18 @@ final class GameBuiltins {
             String[] sm = schemArgs(a, "schem_materials()", l, "fix");
             return (double) SchemCmd.materials(sm[0], Schem.Mode.of(sm[1]));
         });
+        def(g, "schem_needed", 0, 2, "schem_needed([n | \"all\"] [, mode])", "the items the placement still needs (minus what is built, not minus the inventory): a map item -> count", (in, a, l) -> {
+            String[] sm = schemArgs(a, "schem_needed()", l, "fix");
+            String[] err = new String[1];
+            var pls = SchemCmd.select(sm[0], err);
+            if (pls == null) throw error(err[0], l);
+            Schem.Plan plan = Schem.plan(pls, err);
+            if (plan == null) throw error(err[0], l);
+            Schem.Counts c = Schem.count(plan, Schem.Mode.of(sm[1]), level(l));
+            Map<Object, Object> out = Values.newMap();
+            c.items.forEach((it, n) -> out.put(Schem.itemName(it), (double) n));
+            return out;
+        });
         def(g, "schem_check", 0, 2, "schem_check([n | \"all\"] [, mode])", "print what differs between the schematic and the world; returns the blocks that still need work", (in, a, l) -> {
             String[] sm = schemArgs(a, "schem_check()", l, "fix");
             return (double) SchemCmd.check(sm[0], Schem.Mode.of(sm[1]));
