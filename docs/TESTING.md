@@ -51,6 +51,7 @@ Nothing to do by hand: there is **no Microsoft login**. The test starts the game
 | `dump` | junk in the inventory (a worse second diamond shovel, an iron shovel, a bow, a leather chestplate, rotten flesh, cobblestone in the hotbar) plus bread and a golden apple; with `want("diamond_shovel", 1)`, `dump()` must leave exactly one diamond shovel, the bread and the golden apple |
 | `hotbar_tools` | the hotbar full of cobblestone and bread in slot 9, a diamond pickaxe and shovel in the main inventory; with both on the want-list they must end up in the hotbar, the bread stays |
 | `air` | shut in a water-filled stone box with a one-block lid; the air guard must break out before drowning (fails on a "drowned" chat line) |
+| `clear_wet` | a 7×5 dirt layer with water beside one end; the three dirt blocks touching the water stay, the report says "next to water" and `clear_area()` returns 0 |
 
 Before each world test the area around (100, -60, 100) is reset: dirt/grass ground, air above, all entities
 except the player killed, survival mode, empty inventory, noon. The world rules are set once: no daylight cycle,

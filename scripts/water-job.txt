@@ -59,12 +59,11 @@ end
 on full
   dump(dump_chest)
 end
-#buildInLayers true       // only for #sel ca below
-#layerOrder true
 for name in ["2", "3"]
   area(name)
-  if clear_area() > 0 then
-    #sel ca               // what clear_area left (next to water, odd corners)
+  let left = clear_area()   // blocks next to the water stay, so nothing floods
+  if left > 0 then
+    print("{left} blocks in area {name} could not be reached.")
   end
   dump(dump_chest)
 end

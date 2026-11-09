@@ -244,7 +244,25 @@ def test_air(t):
     return "came up for air (health %.0f, air %d)" % (st["health"], st["air"])
 
 
-TESTS = [("smoke", test_smoke), ("fill_water", test_fill_water), ("eat", test_eat), ("defend", test_defend), ("clear_resume", test_clear_resume), ("dump", test_dump), ("hotbar_tools", test_hotbar_tools), ("air", test_air)]
+def test_clear_wet(t):
+    """Blocks next to water are left alone, named in chat and not counted in what clear_area() returns."""
+    reset_area(t)
+    t.cmd("/fill 102 -60 92 108 -60 96 dirt", "/fill 109 -60 91 110 -59 97 stone", "/fill 109 -60 93 109 -59 95 water",
+          "/give @s diamond_shovel 1")
+    t.run("clear-wet.txt")
+    line = t.wait_chat("TEST cleared", 120)
+    done = next((l for l in t.lines() if "clear_area done" in l), "")
+    if "left=0" not in line:
+        raise Fail("clear_area counted the wet blocks: " + line + " / " + done)
+    if "next to water" not in done:
+        raise Fail("no 'next to water' in the report: " + done)
+    wet = [z for z in (93, 94, 95) if "dirt" in t.block((108, -60, z))]
+    if len(wet) != 3:
+        raise Fail("the blocks next to the water were broken: %s" % done)
+    return done.split("] ", 1)[-1][:100]
+
+
+TESTS = [("smoke", test_smoke), ("fill_water", test_fill_water), ("eat", test_eat), ("defend", test_defend), ("clear_resume", test_clear_resume), ("dump", test_dump), ("hotbar_tools", test_hotbar_tools), ("air", test_air), ("clear_wet", test_clear_wet)]
 
 
 # ------------------------------------------------------------------ main

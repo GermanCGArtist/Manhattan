@@ -538,7 +538,7 @@ final class ClearProcess implements IBaritoneProcess {
     }
 
     private PathingCommand finish(Level level) {
-        int left = 0;
+        int left = 0, wet = 0, guarded = 0;
         outer:
         for (int[] b : boxes) {
             for (int x = b[0]; x <= b[3]; x++) {
@@ -547,24 +547,29 @@ final class ClearProcess implements IBaritoneProcess {
                         BlockPos pos = new BlockPos(x, y, z);
                         if (!level.hasChunkAt(pos)) continue;
                         BlockState s = level.getBlockState(pos);
-                        if (!s.isAir() && s.getFluidState().isEmpty() && s.getDestroySpeed(level, pos) >= 0) left++;
+                        if (s.isAir() || !s.getFluidState().isEmpty() || s.getDestroySpeed(level, pos) < 0) continue;
+                        left++;
+                        if (protectedOrForbidden(s, pos)) guarded++;
+                        else if (nextToFluid(level, pos)) wet++;
                         if (left > 200_000) break outer;
                     }
                 }
             }
         }
-        result = left;
+        int open = left - wet - guarded;
+        result = open;   // what is still worth another go; the wet and protected ones never are
         working = false;
         end();
         int total = Math.max(1, tBreak + tWalk + tTravel + tPick + tOther);
         long secs = (System.currentTimeMillis() - started) / 1000;
         Util.msg("clear_area done: " + broken + " blocks broken in " + Estimate.duration(secs * 20) + ", " + left + " left"
-                + (nearFluid > 0 ? " (" + nearFluid + " next to water or lava were left alone)" : "") + ".");
+                + (left == 0 ? "." : ": " + wet + " next to water or lava (left alone so nothing floods)"
+                + (guarded > 0 ? ", " + guarded + " protected" : "") + ", " + open + " it could not get at."));
         Util.msg("Time: breaking " + pct(tBreak, total) + ", walking " + pct(tWalk, total) + ", Baritone paths " + pct(tTravel, total)
                 + ", picking up " + pct(tPick, total) + ", planning " + pct(tOther, total) + "."
                 + (resumes > 0 ? " Paused " + resumes + " times for other things (eating, fights, bed, chests): "
                         + Estimate.duration(Math.max(0, secs * 20 - workTicks)) + " of it." : ""));
-        report("done, left=" + left);
+        report("done, left=" + left + " wet=" + wet + " protected=" + guarded + " open=" + open);
         return pause();
     }
 

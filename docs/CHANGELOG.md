@@ -2,6 +2,13 @@
 
 Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
 
+## 2.4.4 – clear_area says why blocks are left (2026-11-09)
+- `clear_area` returned every block left, so `if clear_area() > 0 then #sel ca end` handed the blocks next to the
+  water to Baritone, whose builder will not break them either: on the AFK run it walked back and forth for 15 min.
+  It now returns only the blocks it could not get at, and the chat line splits the rest: "415 left: 400 next to
+  water or lava (left alone so nothing floods), 15 it could not get at."
+- `scripts/water-job.txt` no longer runs `#sel ca` after `clear_area`.
+
 ## 2.4.3 – air guard, tools in the hotbar, Baritone giving up (2026-11-09)
 - Drowned on the AFK run: `#sel ca` after `clear_area` dug at the blocks next to the water that `clear_area` leaves
   alone on purpose, and Baritone got stuck under water. New always-on air guard (script or not, before fights and
