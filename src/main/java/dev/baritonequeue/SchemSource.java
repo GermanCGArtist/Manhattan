@@ -60,6 +60,11 @@ final class SchemSource {
         throw new NoSuchMethodException(o.getClass().getName() + "." + name + "()");
     }
 
+    private static boolean has(Object o, String name) {
+        for (Method m : o.getClass().getMethods()) if (m.getName().equals(name) && m.getParameterCount() == 0) return true;
+        return false;
+    }
+
     private static List<Placement> fromLitematica() throws Exception {
         Class<?> dm = Class.forName("fi.dy.masa.litematica.data.DataManager");
         Object mgr = dm.getMethod("getSchematicPlacementManager").invoke(null);
@@ -71,13 +76,13 @@ final class SchemSource {
             Path file = fileObj instanceof Path pp ? pp : fileObj instanceof File ff ? ff.toPath() : null;
             if (file == null) continue;
             List<Sub> subs = new ArrayList<>();
-            Object sp = call(p, "getSubRegionPlacements");
-            if (sp instanceof Map<?, ?> m) {
-                for (Map.Entry<?, ?> e : m.entrySet()) {
-                    Object s = e.getValue();
-                    subs.add(new Sub(String.valueOf(e.getKey()), (BlockPos) call(s, "getPos"), (Rotation) call(s, "getRotation"),
-                            (Mirror) call(s, "getMirror"), (Boolean) call(s, "isEnabled")));
-                }
+            // newer Litematica (0.27.x): getAllSubRegionsPlacements() -> Collection; older: getSubRegionPlacements() -> Map
+            Collection<?> regions;
+            if (has(p, "getAllSubRegionsPlacements")) regions = (Collection<?>) call(p, "getAllSubRegionsPlacements");
+            else regions = ((Map<?, ?>) call(p, "getSubRegionPlacements")).values();
+            for (Object s : regions) {
+                subs.add(new Sub(String.valueOf(call(s, "getName")), (BlockPos) call(s, "getPos"), (Rotation) call(s, "getRotation"),
+                        (Mirror) call(s, "getMirror"), (Boolean) call(s, "isEnabled")));
             }
             out.add(new Placement(String.valueOf(call(p, "getName")), file, (BlockPos) call(p, "getOrigin"), (Rotation) call(p, "getRotation"),
                     (Mirror) call(p, "getMirror"), (Boolean) call(p, "isEnabled"), subs, "live"));
