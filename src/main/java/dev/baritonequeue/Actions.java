@@ -272,6 +272,8 @@ final class Actions {
         private final Runnable stopper;
         private final Supplier<Object> resultOf;
         private int since;
+        private Runnable pauser;            // set: an interruption pauses it instead of cancelling it ...
+        private Supplier<String> resumer;   // ... and this carries on where it was (same answers as starter)
 
         Feature(Supplier<String> starter, BooleanSupplier busy, Runnable stopper, Supplier<Object> resultOf) {
             this.starter = starter;
@@ -285,9 +287,19 @@ final class Actions {
             return this;
         }
 
+        /** An "on" block or a respawn pauses it; afterwards it carries on where it was instead of starting over. */
+        Feature resumable(Runnable pauser, Supplier<String> resumer) {
+            this.pauser = pauser;
+            this.resumer = resumer;
+            return this;
+        }
+
         void start() {
             since = 0;
-            String err = starter.get();
+            begin(starter.get());
+        }
+
+        private void begin(String err) {
             if (err == null) return;
             if (err.isEmpty()) finish(false);   // nothing to do right now (not night, no water ...): not an error
             else fail(err);
@@ -305,6 +317,21 @@ final class Actions {
         @Override
         void cancel() {
             if (stopper != null) stopper.run();
+        }
+
+        @Override
+        void suspend() {
+            if (pauser != null) pauser.run();
+            else cancel();
+        }
+
+        @Override
+        void resume() {
+            if (resumer == null) { super.resume(); return; }
+            done = false;
+            ticks = 0;
+            since = 0;
+            begin(resumer.get());
         }
 
         @Override

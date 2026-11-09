@@ -298,6 +298,7 @@ final class GameBuiltins {
                         QueueMod.clear::working,
                         QueueMod.clear::cancel,
                         () -> QueueMod.clear.failure() != null ? new Modules.Failure(QueueMod.clear.failure()) : (Object) QueueMod.clear.result())
+                        .resumable(QueueMod.clear::suspendRun, QueueMod.clear::carryOn)
                         .withEstimate(Estimate.solid()), "clear_area", l));
         def(g, "drain", 0, 0, "drain()", "remove the flowing water that blocks the builder (selection, or 8 blocks around you)", (in, a, l) ->
                 in.await(() -> new Actions.Feature(dev.buildtools.Api::drainNow, dev.buildtools.Api::draining, dev.buildtools.Api::stopDraining, () -> true), "drain", l));

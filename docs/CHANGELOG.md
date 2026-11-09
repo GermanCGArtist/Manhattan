@@ -2,6 +2,18 @@
 
 Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
 
+## 2.4.1 – clear_area carries on instead of starting over (2026-11-09)
+- An `on` block (eating, a fight, the bed, the dump chest) used to restart `clear_area` from the first stop of the
+  first lane, forgetting what it had given up on: on the AFK run that was 128 restarts in under 5 hours, each walking
+  back towards old leftovers and often ending in failed Baritone searches. Now it pauses and carries on at the same
+  stop ("Carrying on clearing at stop N of M"); a different selection still starts fresh.
+- The 45 s travel timeout only counts while Baritone gets no closer, so a long walk back from the bed is not cut short.
+- Breaking: the game's 5-tick pause between two blocks counts down while it turns to the next block (about 13% faster
+  breaking in the test: 10.4 → 9.0 ticks per dirt block with a diamond shovel).
+- Every 5 minutes of work a line goes into the game log: `[Queue] clear_area progress: broken=… ticks break=… walk=…
+  travel=… pick=… resumes=… travelFails=…`; the chat report at the end also says how long it was paused.
+- New in-game test `clear_resume`.
+
 ## 2.4.0 – housekeeping (2026-11-09)
 - The project is now **Manhattan** (github.com/GermanCGArtist/Manhattan). Mod id and jar name stay `baritonequeue`,
   so saved scripts and configs carry over. Shown names: "Manhattan (Baritone Script)" in the mod list, "Manhattan"

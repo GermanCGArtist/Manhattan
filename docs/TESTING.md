@@ -20,7 +20,8 @@ PASS  smoke         0.6s  script printed, editor opened
 PASS  fill_water   14.8s  18 cells filled bottom-up, 18 dirt used
 PASS  eat          20.5s  ate food=20, 6 bread left
 PASS  defend        5.1s  zombie killed (defended)
-4 passed, 0 failed   (game log: ...\profiles\Manhatten Testing\logs\latest.log)
+PASS  clear_resume 156.8s  strip cleared, resumed once eating was done (...)
+5 passed, 0 failed   (game log: ...\profiles\Manhatten Testing\logs\latest.log)
 ```
 
 Options (passed through to `tests/ingame/run_tests.py`):
@@ -46,6 +47,7 @@ Nothing to do by hand: there is **no Microsoft login**. The test starts the game
 | `fill_water` | a 3×3 pool, 2 deep, next to the player; `fill_water("dirt")` returns 0, every cell is dry afterwards, dirt came out of the inventory, and **no top cell was filled while the cell under it was still wet** (checked twice a second while it runs) |
 | `eat` | `on food < 14 … eat()`: a hunger effect drains the food bar, the handler fires and bread is eaten |
 | `defend` | `on mobs > 0 … defend()`: at night a zombie is summoned 4 blocks away; the handler fires and kills it |
+| `clear_resume` | a 7×21×2 strip of dirt; `clear_area()` is interrupted by `on food < 14 … eat()` and must carry on ("Carrying on clearing"), not start from the top again; afterwards the strip is empty and it returns 0 |
 
 Before each world test the area around (100, -60, 100) is reset: dirt/grass ground, air above, all entities
 except the player killed, survival mode, empty inventory, noon. The world rules are set once: no daylight cycle,

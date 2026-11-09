@@ -162,7 +162,36 @@ def test_defend(t):
     return "zombie killed (%s)" % line.split("TEST ", 1)[1]
 
 
-TESTS = [("smoke", test_smoke), ("fill_water", test_fill_water), ("eat", test_eat), ("defend", test_defend)]
+def test_clear_resume(t):
+    """clear_area() is interrupted by eat() and carries on at the same stop instead of starting over."""
+    reset_area(t)
+    t.cmd("/fill 102 -60 92 108 -59 112 dirt", "/give @s diamond_shovel 1", "/give @s bread 8")
+    t.run("clear-resume.txt")
+    t.wait_chat("TEST clear armed", 10)
+    t.wait_chat("Clearing the area from the top", 10)
+    time.sleep(4)   # let it break a few blocks first
+    t.cmd("/effect give @s minecraft:hunger 60 50 true")
+    t.b.wait(lambda: t.state()["food"] < 14, 60, what="food < 14")
+    t.cmd("/effect clear @s minecraft:hunger")
+    t.wait_chat("TEST ate", 40)
+    line = t.wait_chat("TEST cleared", 240)
+    lines = t.lines()
+    starts = sum("Clearing the area from the top" in l for l in lines)
+    resumed = [l for l in lines if "Carrying on clearing" in l]
+    if not resumed:
+        raise Fail("no 'Carrying on clearing' after eating: it did not resume (%s)" % line)
+    if starts != 1:
+        raise Fail("clear_area started from the top %d times (should be once)" % starts)
+    solid = [(x, y, z) for x in range(102, 109) for y in (-60, -59) for z in range(92, 113)
+             if "air" not in t.block((x, y, z))]
+    if solid:
+        raise Fail("%d blocks left in the strip, e.g. %s (%s)" % (len(solid), solid[:5], line))
+    if "left=0" not in line:
+        raise Fail("clear_area did not return 0: " + line)
+    return "strip cleared, resumed once eating was done (%s)" % resumed[0].split("] ", 1)[-1][:80]
+
+
+TESTS = [("smoke", test_smoke), ("fill_water", test_fill_water), ("eat", test_eat), ("defend", test_defend), ("clear_resume", test_clear_resume)]
 
 
 # ------------------------------------------------------------------ main

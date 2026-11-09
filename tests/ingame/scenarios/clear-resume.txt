@@ -1,0 +1,9 @@
+// clear_resume: clear_area is interrupted by eating and carries on where it was (run_tests.py builds the strip)
+select(pos(102, -60, 92), pos(108, -59, 112))
+on food < 14
+  eat()
+  print("TEST ate food={food}")
+end
+print("TEST clear armed")
+let left = clear_area()
+print("TEST cleared left={left}")

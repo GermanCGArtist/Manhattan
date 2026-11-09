@@ -36,14 +36,24 @@ import java.util.Set;
  * dig while this runs). Drops near the lane are picked up on the way. Blocks next to water or lava are left alone, so
  * nothing floods; protected areas and Baritone's do-not-break list are respected. What is left at the end can be
  * finished with #sel ca. At the end it says where the time went.
+ *
+ * An "on" block (eating, a fight, a trip to the bed or the dump chest) only pauses it: afterwards it walks back to the
+ * stop it was at and carries on, keeping the blocks it already gave up on. Every 5 minutes of work it writes where the
+ * time went so far into the game log ("[Queue] clear_area progress").
  */
 final class ClearProcess implements IBaritoneProcess {
     private static final int LANE = 6, STEP = 3, PASS = 3;
     private static final int TRAVEL_TIMEOUT = 20 * 45, WALK_STUCK = 30, BREAK_TIMEOUT = 20 * 8, PICK_TIMEOUT = 20 * 3;
+    private static final int REPORT_EVERY = 20 * 60 * 5;
 
     private enum State { NEXT, TRAVEL, WALK, WORK, PICK }
 
     private boolean working;
+    private boolean paused;          // suspended by an "on" block: carryOn() goes on from here
+    private List<int[]> pausedBoxes;
+    private int resumes, travelFails;
+    private double travelBest;       // closest Baritone has got to the stop it travels to
+    private long workTicks;
     private State state = State.NEXT;
     private final List<int[]> boxes = new ArrayList<>();
     private int yTop, yBottom, feetY;
@@ -83,6 +93,7 @@ final class ClearProcess implements IBaritoneProcess {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.level == null) return "Not in a world.";
         if (working) return "clear_area is already running.";
+        paused = false;
         boxes.clear();
         boxes.addAll(Areas.read());
         if (boxes.isEmpty()) return "Select the area first: area(\"name\") or select(corner1, corner2).";
@@ -94,7 +105,8 @@ final class ClearProcess implements IBaritoneProcess {
         planPass(mc.level);
         skipped.clear();
         ignoredItems.clear();
-        broken = tBreak = tWalk = tTravel = tPick = tOther = nearFluid = 0;
+        broken = tBreak = tWalk = tTravel = tPick = tOther = nearFluid = resumes = travelFails = 0;
+        workTicks = 0;
         started = System.currentTimeMillis();
         failure = null;
         state = State.NEXT;
@@ -108,9 +120,40 @@ final class ClearProcess implements IBaritoneProcess {
     }
 
     void cancel() {
+        paused = false;
         if (!working) return;
         working = false;
         end();
+    }
+
+    /** An "on" block takes over: stop moving and breaking, but keep the plan, the stop and what was given up on. */
+    void suspendRun() {
+        if (!working) { paused = false; return; }
+        working = false;
+        end();
+        paused = true;
+        pausedBoxes = new ArrayList<>(boxes);
+    }
+
+    /** After the "on" block: on from the same stop (or from scratch if the selection changed meanwhile). */
+    String carryOn() {
+        Minecraft mc = Minecraft.getInstance();
+        if (!paused || mc.player == null || mc.level == null) return begin();
+        List<int[]> now = Areas.read();
+        boolean same = now.size() == pausedBoxes.size();
+        for (int i = 0; same && i < now.size(); i++) same = java.util.Arrays.equals(now.get(i), pausedBoxes.get(i));
+        if (!same) { paused = false; return begin(); }
+        paused = false;
+        failure = null;
+        state = State.NEXT;
+        breaking = null;
+        item = null;
+        resumes++;
+        breakBefore = dev.buildtools.Api.setOwnBreak(true);
+        working = true;
+        Util.msg("Carrying on clearing at stop " + Math.min(stop + 1, stops.size()) + " of " + stops.size()
+                + " (layer y " + feetY + ", " + broken + " blocks so far).");
+        return null;
     }
 
     private void end() {
@@ -262,6 +305,24 @@ final class ClearProcess implements IBaritoneProcess {
         mc.gameMode.handleContainerInput(p.inventoryMenu.containerId, best, target, ContainerInput.SWAP, p);
     }
 
+    private static java.lang.reflect.Field delayField;
+    private static boolean delayLooked;
+
+    /** The game's own pause before the next block can be started (5 ticks after each block in survival), or 0. */
+    private static int destroyDelay(Minecraft mc) {
+        try {
+            if (!delayLooked) {
+                delayLooked = true;
+                delayField = mc.gameMode.getClass().getDeclaredField("destroyDelay");
+                delayField.setAccessible(true);
+            }
+            return delayField == null ? 0 : delayField.getInt(mc.gameMode);
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            delayField = null;
+            return 0;
+        }
+    }
+
     // ------------------------------------------------------------------ steering
 
     private void hold(boolean forward) {
@@ -357,6 +418,7 @@ final class ClearProcess implements IBaritoneProcess {
         Level level = mc.level;
         if (p == null || level == null || mc.gameMode == null) return pause();
         stateTicks++;
+        if (++workTicks % REPORT_EVERY == 0) report("progress");
 
         // a block being broken that takes several ticks
         if (breaking != null) {
@@ -380,7 +442,12 @@ final class ClearProcess implements IBaritoneProcess {
                 BlockPos b = hit.getBlockPos();
                 BlockState s = level.getBlockState(b);
                 equipFor(mc, p, s);
-                if (!aim(p, hit.getLocation())) return pause();
+                if (!aim(p, hit.getLocation())) {
+                    // still turning: the game's pause between two blocks counts down meanwhile, as it does for a
+                    // player who keeps the button held while moving the mouse (nothing is sent while it counts)
+                    if (destroyDelay(mc) > 0) mc.gameMode.continueDestroyBlock(b, hit.getDirection());
+                    return pause();
+                }
                 if (s.getDestroyProgress(p, level, b) >= 1.0f) {   // breaks at once: one per tick
                     mc.gameMode.startDestroyBlock(b, hit.getDirection());
                     p.swing(InteractionHand.MAIN_HAND);
@@ -418,7 +485,10 @@ final class ClearProcess implements IBaritoneProcess {
                 tTravel++;
                 releaseKeys();
                 if (p.blockPosition().equals(target)) { state = State.WORK; stateTicks = 0; return pause(); }
-                if (calcFailed || stateTicks > TRAVEL_TIMEOUT) { state = State.NEXT; stop++; return pause(); }
+                // the timeout counts only while it gets no closer: the way back from the bed may take minutes
+                double d = Math.sqrt(p.blockPosition().distSqr(target));
+                if (d < travelBest - 1) { travelBest = d; stateTicks = 0; }
+                if (calcFailed || stateTicks > TRAVEL_TIMEOUT) { travelFails++; state = State.NEXT; stop++; return pause(); }
                 return new PathingCommand(new GoalBlock(target), PathingCommandType.SET_GOAL_AND_PATH);
             }
             default -> { }
@@ -450,6 +520,7 @@ final class ClearProcess implements IBaritoneProcess {
             return pause();
         }
         state = State.TRAVEL;
+        travelBest = Double.MAX_VALUE;
         return new PathingCommand(new GoalBlock(target), PathingCommandType.SET_GOAL_AND_PATH);
     }
 
@@ -490,10 +561,19 @@ final class ClearProcess implements IBaritoneProcess {
         Util.msg("clear_area done: " + broken + " blocks broken in " + Estimate.duration(secs * 20) + ", " + left + " left"
                 + (nearFluid > 0 ? " (" + nearFluid + " next to water or lava were left alone)" : "") + ".");
         Util.msg("Time: breaking " + pct(tBreak, total) + ", walking " + pct(tWalk, total) + ", Baritone paths " + pct(tTravel, total)
-                + ", picking up " + pct(tPick, total) + ", planning " + pct(tOther, total) + ".");
-        System.out.println("[Queue] clear_area: broken=" + broken + " left=" + left + " ticks break=" + tBreak + " walk=" + tWalk
-                + " travel=" + tTravel + " pick=" + tPick + " other=" + tOther + " secs=" + secs);
+                + ", picking up " + pct(tPick, total) + ", planning " + pct(tOther, total) + "."
+                + (resumes > 0 ? " Paused " + resumes + " times for other things (eating, fights, bed, chests): "
+                        + Estimate.duration(Math.max(0, secs * 20 - workTicks)) + " of it." : ""));
+        report("done, left=" + left);
         return pause();
+    }
+
+    /** One line in the game log: what it has done so far and where the time went (ticks it was in control). */
+    private void report(String what) {
+        long secs = (System.currentTimeMillis() - started) / 1000;
+        System.out.println("[Queue] clear_area " + what + ": broken=" + broken + " stop=" + Math.min(stop + 1, stops.size()) + "/" + stops.size()
+                + " y=" + feetY + " ticks break=" + tBreak + " walk=" + tWalk + " travel=" + tTravel + " pick=" + tPick + " other=" + tOther
+                + " working=" + workTicks / 20 + "s total=" + secs + "s resumes=" + resumes + " travelFails=" + travelFails);
     }
 
     private static String pct(int part, int total) {
