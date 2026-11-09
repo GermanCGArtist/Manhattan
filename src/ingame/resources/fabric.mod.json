@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "manhattan_testbridge",
+  "version": "${version}",
+  "name": "Manhattan Test Bridge",
+  "description": "Test only: lets tests/ingame drive the game over a local socket (127.0.0.1:25599). Never install it in a profile you play with.",
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": ["dev.baritonequeue.TestBridge"]
+  },
+  "depends": {
+    "fabricloader": ">=0.19.3",
+    "fabric-api": "*",
+    "minecraft": "~26.1.1",
+    "baritonequeue": "*"
+  }
+}

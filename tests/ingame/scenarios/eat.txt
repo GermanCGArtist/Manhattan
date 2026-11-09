@@ -1,0 +1,7 @@
+// eat: the handler fires when food drops below 14 (run_tests.py gives bread and a hunger effect)
+on food < 14
+  eat()
+  print("TEST ate food={food}")
+end
+print("TEST eat armed")
+wait 90

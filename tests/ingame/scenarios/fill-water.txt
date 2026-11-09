@@ -1,0 +1,6 @@
+// fill_water: a 3x3 pool, 2 deep (y -62..-61), set up by run_tests.py at x 103..105, z 99..101
+#sel clear
+#sel pos1 103 -62 99
+#sel pos2 105 -61 101
+let left = fill_water("dirt")
+print("TEST fill_water left={left}")

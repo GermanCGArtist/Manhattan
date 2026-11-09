@@ -41,4 +41,7 @@ install.bat
 `install.bat` copies `build\libs\baritonequeue-<version>.jar` into the "26.1.1 AFK" Modrinth profile and moves older
 copies (and the old addon jars) to `mods-disabled`. It refuses while that profile is running.
 
+In-game tests (start the game on the "Manhatten Testing" profile, run scripts, check the world, close it):
+`tests\ingameun.bat`. See [docs/TESTING.md](docs/TESTING.md).
+
 Requires Fabric Loader, Fabric API and Baritone (API build 1.18.0) for 26.1.1.

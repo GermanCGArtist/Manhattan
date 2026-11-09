@@ -1,0 +1,4 @@
+// smoke: the script language runs at all
+let n = 1 + 2
+let names = ["a", "b"]
+print("TEST smoke n={n} names={len(names)}")

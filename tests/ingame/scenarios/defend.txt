@@ -1,0 +1,7 @@
+// defend: the handler fires when a zombie comes near (run_tests.py summons one at night)
+on mobs > 0
+  defend()
+  print("TEST defended")
+end
+print("TEST defend armed")
+wait 90

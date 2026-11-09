@@ -20,6 +20,29 @@ dependencies {
     implementation name: "baritone-api-fabric-${project.baritone_version}"
 }
 
+// The test bridge for tests/ingame: its own jar (build/libs/manhattan-testbridge-<version>.jar), only ever
+// installed into the "Manhatten Testing" profile. Same package as the mod, so it can start scripts directly.
+sourceSets {
+    ingame {
+        compileClasspath += sourceSets.main.compileClasspath + sourceSets.main.output
+        runtimeClasspath += sourceSets.main.runtimeClasspath + sourceSets.main.output
+    }
+}
+processIngameResources {
+    def version = project.version
+    inputs.property "version", version
+    filesMatching("fabric.mod.json") {
+        expand "version": version
+    }
+}
+tasks.register('testBridgeJar', Jar) {
+    group = 'build'
+    description = 'Builds the test-only bridge mod for tests/ingame.'
+    archiveBaseName = 'manhattan-testbridge'
+    from sourceSets.ingame.output
+}
+tasks.named('assemble') { dependsOn 'testBridgeJar' }
+
 processResources {
     def version = project.version
     inputs.property "version", version
