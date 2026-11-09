@@ -228,6 +228,7 @@ public class QueueMod implements ClientModInitializer {
         }
         noPlayer = 0;
         if (++areaTick % 20 == 0 && registered) Areas.remember();
+        HotbarTools.tick(mc);
         if (!registered) {
             if (!cfg.helpersManual) helpersManual();
             PauseWatch.register(Util.baritone());

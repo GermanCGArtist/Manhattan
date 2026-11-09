@@ -115,7 +115,7 @@ final class Actions {
         private static final int IDLE_DONE = 40;
 
         final String command;
-        private int sinceStart, idle, noProgress, still, kicks;
+        private int sinceStart, idle, noProgress, still, kicks, builderPaused;
         private double ax, ay, az;
         private boolean anchored;
 
@@ -129,6 +129,7 @@ final class Actions {
             idle = 0;
             noProgress = 0;
             still = 0;
+            builderPaused = 0;
             anchored = false;
             if (!execute(command)) fail("Baritone did not accept '#" + command + "' (check the spelling).");
         }
@@ -146,6 +147,15 @@ final class Actions {
             if (++sinceStart < START_WAIT) return;
             if (Util.baritoneBusy()) {
                 idle = 0;
+                // "#sel ca" / "#build" that hit something it cannot do ("Unable to do it. Pausing") waits forever
+                builderPaused = Util.baritone().getBuilderProcess().isPaused() ? builderPaused + 1 : 0;
+                if (builderPaused > 20 * 10) {
+                    Util.warn("queue", "Baritone gave up on '#" + command + "' (\"Unable to do it\" - usually water or "
+                            + "lava in the way), so I cancelled it and go on with the script.");
+                    Util.baritone().getPathingBehavior().cancelEverything();
+                    finish(false);
+                    return;
+                }
                 if (stuck()) {
                     Util.warn("queue", "'#" + command + "' made no progress for " + cfg.stallMinutes
                             + " min (Baritone keeps searching and cannot get anywhere), so I stopped it and go on. "

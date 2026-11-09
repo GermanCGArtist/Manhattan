@@ -2,6 +2,19 @@
 
 Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
 
+## 2.4.3 – air guard, tools in the hotbar, Baritone giving up (2026-11-09)
+- Drowned on the AFK run: `#sel ca` after `clear_area` dug at the blocks next to the water that `clear_area` leaves
+  alone on purpose, and Baritone got stuck under water. New always-on air guard (script or not, before fights and
+  everything else): with less than half the air left under water it swims up to open water in the same pool, breaks
+  the block over the head when closed in (with the best hotbar tool), waits for the air to fill, then swims to dry
+  land. The water fill's own dives are left alone.
+- A Baritone build (`#sel ca`, `#build`) that pauses itself ("Unable to do it. Pausing, resume to resume") is
+  cancelled after 10 s and the script goes on; it used to wait there for good.
+- While a script runs, the want-list tools always sit in the hotbar (Baritone only uses tools from the hotbar): once
+  a second one that is only in the main inventory is swapped into an empty slot, else over blocks or other things -
+  never over food, another wanted tool, the selected slot or a slot `hotbar()` pinned.
+- New in-game tests `hotbar_tools` and `air`.
+
 ## 2.4.2 – dump() keeps only the wanted tools (2026-11-09)
 - `dump()` kept everything that can wear out and all food. Bows, armour and tools from the mobs `defend()` killed,
   spare shovels and rotten flesh piled up, and the hotbar was never emptied: on the AFK run a dump trip carried only

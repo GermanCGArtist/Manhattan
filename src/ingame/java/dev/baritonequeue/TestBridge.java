@@ -238,6 +238,14 @@ public class TestBridge implements ClientModInitializer {
             b.append(",\"x\":").append(p.getX()).append(",\"y\":").append(p.getY()).append(",\"z\":").append(p.getZ());
             b.append(",\"health\":").append(p.getHealth());
             b.append(",\"food\":").append(p.getFoodData().getFoodLevel());
+            b.append(",\"air\":").append(p.getAirSupply());
+            b.append(",\"underWater\":").append(p.isUnderWater());
+            StringBuilder hb = new StringBuilder();
+            for (int i = 0; i < 9; i++) {
+                ItemStack st = p.getInventory().getItem(i);
+                hb.append(i == 0 ? "" : ",").append(q(st.isEmpty() ? "" : BuiltInRegistries.ITEM.getKey(st.getItem()).getPath()));
+            }
+            b.append(",\"hotbar\":[").append(hb).append("]");
             b.append(",\"gamemode\":").append(q(mc.gameMode == null ? "" : mc.gameMode.getPlayerMode().getName()));
             b.append(",\"dimension\":").append(q(mc.level.dimension().toString()));
             b.append(",\"time\":").append(mc.level.getOverworldClockTime());

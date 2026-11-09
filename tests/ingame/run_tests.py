@@ -210,7 +210,41 @@ def test_dump(t):
     return "kept 1 diamond shovel, bread and the golden apple; junk and the hotbar's cobblestone went into the chest"
 
 
-TESTS = [("smoke", test_smoke), ("fill_water", test_fill_water), ("eat", test_eat), ("defend", test_defend), ("clear_resume", test_clear_resume), ("dump", test_dump)]
+def test_hotbar_tools(t):
+    """Wanted tools that only sit in the main inventory are moved into the hotbar (not over food or pinned slots)."""
+    reset_area(t)
+    t.cmd(*["/item replace entity @s hotbar.%d with cobblestone 64" % i for i in range(8)],
+          "/item replace entity @s hotbar.8 with bread 8",
+          "/give @s diamond_pickaxe 1", "/give @s diamond_shovel 1")
+    t.run("hotbar-tools.txt")
+    t.wait_chat("TEST hotbar done", 30)
+    hb = t.state()["hotbar"]
+    missing = [x for x in ("diamond_pickaxe", "diamond_shovel") if x not in hb]
+    if missing:
+        raise Fail("not in the hotbar: %s (hotbar %s)" % (missing, hb))
+    if hb[8] != "bread":
+        raise Fail("the food slot was taken: hotbar %s" % hb)
+    return "pickaxe and shovel moved into the hotbar, bread stayed in slot 9 (%s)" % hb
+
+
+def test_air(t):
+    """Shut in under water (a stone lid one block over the water): the air guard breaks out before drowning."""
+    reset_area(t)
+    t.cmd("/fill 102 -62 98 106 -54 102 stone", "/fill 103 -62 99 105 -55 101 water",
+          "/fill 103 -54 99 105 -54 101 stone",   # the lid: water right up to it, no air pocket
+          "/give @s diamond_pickaxe 1", "/tp @s 104 -60 100")
+    t.run("air.txt")
+    t.wait_chat("TEST air armed", 10)
+    t.wait_chat("Running out of air", 40)
+    t.b.wait(lambda: (lambda s: s if not s["underWater"] else None)(t.state()), 40, what="the head above water")
+    st = t.state()
+    t.b("stopscript")
+    if any("drowned" in l or " died" in l for l in t.lines()) or st["health"] <= 0:
+        raise Fail("drowned (%s)" % [l for l in t.lines() if "air" in l.lower() or "drown" in l][-4:])
+    return "came up for air (health %.0f, air %d)" % (st["health"], st["air"])
+
+
+TESTS = [("smoke", test_smoke), ("fill_water", test_fill_water), ("eat", test_eat), ("defend", test_defend), ("clear_resume", test_clear_resume), ("dump", test_dump), ("hotbar_tools", test_hotbar_tools), ("air", test_air)]
 
 
 # ------------------------------------------------------------------ main

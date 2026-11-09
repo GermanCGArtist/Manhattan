@@ -455,6 +455,7 @@ final class GameBuiltins {
             if (slot < 1 || slot > 9) throw error("A hotbar slot is 1 to 9.", l);
             LocalPlayer p = player(l);
             String want = str(a.get(1)).toLowerCase();
+            HotbarTools.pinned.put(slot - 1, want);   // wanted tools moving into the hotbar leave this slot alone
             var inv = p.getInventory();
             if (matchesItem(inv.getItem(slot - 1), want)) return true;   // already there
             int from = -1;

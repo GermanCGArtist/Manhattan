@@ -1,0 +1,4 @@
+// air: closed in under water, the air guard swims up / breaks out before drowning
+print("TEST air armed")
+wait 45
+print("TEST air done")
