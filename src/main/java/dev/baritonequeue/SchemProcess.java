@@ -38,7 +38,7 @@ final class SchemProcess {
 
     // Baritone settings we change while building, put back afterwards
     private int lastPlaced;
-    private boolean oldLayers, oldOrder, oldBreak, oldAbove, oldDir, changed, retried;
+    private boolean oldLayers, oldOrder, oldBreak, oldAbove, oldDir, oldInventory, changed, retried;
     private java.util.List<String> oldIgnore;
     private java.util.Map<net.minecraft.world.level.block.Block, java.util.List<net.minecraft.world.level.block.Block>> oldSubs;
     private int oldStart;
@@ -108,6 +108,8 @@ final class SchemProcess {
         oldDir = s.buildIgnoreDirection.value;
         oldSubs = s.buildSubstitutes.value;
         oldIgnore = s.buildIgnoreProperties.value;
+        oldInventory = s.allowInventory.value;
+        s.allowInventory.value = true;   // else the builder only uses what is in the hotbar
         var ign = new java.util.ArrayList<>(oldIgnore);
         for (String n : new String[]{"shape", "north", "east", "south", "west", "up", "down", "power", "waterlogged"}) if (!ign.contains(n)) ign.add(n);
         s.buildIgnoreProperties.value = ign;
@@ -135,6 +137,7 @@ final class SchemProcess {
         s.buildIgnoreDirection.value = oldDir;
         s.buildSubstitutes.value = oldSubs;
         s.buildIgnoreProperties.value = oldIgnore;
+        s.allowInventory.value = oldInventory;
         if (breakBefore != null) dev.buildtools.Api.setOwnBreak(breakBefore);
         breakBefore = null;
         changed = false;
