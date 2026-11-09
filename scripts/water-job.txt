@@ -1,0 +1,71 @@
+// Water job: fill area 1 with dirt from the bottom up, then mine areas 2 and 3.
+// Everything the bot does is decided here; no helper acts on its own.
+
+// --- places (Pick block in the editor fills in positions)
+let dirt_chest   = pos(1794, 74, -840)
+let dump_chest   = pos(1787, 74, -837)
+let tool_chest   = pos(1787, 74, -841)
+let return_chest = pos(1789, 74, -841)
+let bed          = pos(1791, 74, -839)
+
+// the base: Baritone never breaks or places blocks in here (same name = the old box is replaced)
+protect("protect_01", pos(1797, 68, -844), pos(1779, 80, -832))
+
+option("survival.supply", tool_chest)        // restock() takes from here (want-list: /survival want ... or want("item", n))
+option("survival.returnChest", return_chest) // worn-out tools go here
+option("survival.bed", bed)
+option("survival.respawn", true)             // after a death: respawn, get healthy, carry on with this script
+option("survival.resume", true)
+option("survival.reconnect", true)
+option("survival.bedLead", 5)                 // seconds of slack on the way to bed (less waiting at the bed)
+set("allowBreak", true)                      // Baritone may dig its way out of holes (the safe area at the base stays protected)
+set("allowPlace", false)                     // but never bridges over the water being filled
+
+// --- tools: what restock() keeps with you, and when a tool counts as worn out
+set("itemSaver", true)            // never use a tool down to nothing
+set("itemSaverThreshold", 50)     // worn out at 50 durability left: it goes to the return chest, a fresh one comes from the tool chest
+want("diamond_sword", 1)
+want("diamond_pickaxe", 1)
+want("diamond_axe", 1)
+want("diamond_shovel", 1)
+want("diamond_hoe", 1)
+want("food", 16)
+hotbar(9, "food")                 // food in the last hotbar slot
+
+// --- whenever one of these becomes true, it is done first, then the script carries on.
+// Higher up wins: a fight interrupts eating, sleeping and restocking; eating interrupts sleeping and restocking.
+on mobs > 0
+  defend()
+end
+on food < 14
+  eat()
+end
+on bed_time
+  sleep()
+end
+on restock_needed
+  restock()
+  hotbar(9, "food")
+end
+
+// --- 1. fill area 1; keeps going and fetches dirt until it cannot get anything more done
+area("1")
+let left = fill_water("dirt", dirt_chest)
+if left > 0 then
+  print("{left} water cells in area 1 could not be reached; going on with mining.")
+end
+
+// --- 2. mine areas 2 and 3; a full inventory goes into the dump chest
+on full
+  dump(dump_chest)
+end
+#buildInLayers true       // only for #sel ca below
+#layerOrder true
+for name in ["2", "3"]
+  area(name)
+  if clear_area() > 0 then
+    #sel ca               // what clear_area left (next to water, odd corners)
+  end
+  dump(dump_chest)
+end
+print("All done.")
