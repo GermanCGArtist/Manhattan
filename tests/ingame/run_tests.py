@@ -321,10 +321,10 @@ def test_schem_add(t):
     reset_area(t)
     schem_supplies(t)
     wrong_at = (109, -60, 109)
-    t.cmd("/setblock %d %d %d diamond_block" % wrong_at, "/setblock 110 -59 110 dirt")   # a wrong floor block, a block inside the air
+    t.cmd("/setblock %d %d %d diamond_block" % wrong_at, "/setblock 109 -59 110 dirt")   # a wrong floor block, a block inside the air
     line = schem_run(t, "schem-add.txt")
-    bad = schem_wrong(t, ignore=[wrong_at, (110, -59, 110)])
-    keep = t.block(wrong_at), t.block((110, -59, 110))
+    bad = schem_wrong(t, ignore=[wrong_at, (109, -59, 110)])
+    keep = t.block(wrong_at), t.block((109, -59, 110))
     report = schem_report(t)
     if bad:
         raise Fail("add mode: %d positions differ, e.g. %s (%s) %s" % (len(bad), bad[:6], line, report))
@@ -337,13 +337,13 @@ def test_schem_fix(t):
     """fix: a wrong block is broken and replaced; schematic air is still ignored."""
     reset_area(t)
     schem_supplies(t)
-    t.cmd("/setblock 109 -60 109 diamond_block", "/setblock 110 -59 110 dirt")
+    t.cmd("/setblock 109 -60 109 diamond_block", "/setblock 109 -59 110 dirt")
     line = schem_run(t, "schem-fix.txt")
-    bad = schem_wrong(t, ignore=[(110, -59, 110)])
+    bad = schem_wrong(t, ignore=[(109, -59, 110)])
     report = schem_report(t)
     if bad:
         raise Fail("fix mode: %d positions differ, e.g. %s (%s) %s" % (len(bad), bad[:6], line, report))
-    if "dirt" not in t.block((110, -59, 110)):
+    if "dirt" not in t.block((109, -59, 110)):
         raise Fail("fix mode dug schematic air (that is exact mode's job)")
     return "wrong block replaced; air left (%s); %s" % (line.split("TEST ", 1)[-1], "; ".join(report[:2]))
 
@@ -363,9 +363,27 @@ def test_schem_exact(t):
         raise Fail("exact mode dug outside the schematic: (106 -59 106) is %s" % outside)
     return "dug into the hill and built (%s); %s" % (line.split("TEST ", 1)[-1], "; ".join(report[:2]))
 
+def test_schem_fix_wrong(t):
+    """fix: wrong blocks sitting exactly where the schematic wants redstone, a stair, a wall torch, a log and a slab are
+    broken and the right block is placed (also a stair that stands there with the wrong facing)."""
+    reset_area(t)
+    schem_supplies(t)
+    t.cmd("/setblock 110 -59 110 dirt",                                   # redstone dust spot
+          "/setblock 108 -59 108 cobblestone",                           # stair spot, other block
+          "/setblock 112 -59 108 oak_stairs[facing=south,half=top]",     # stair spot, same block, wrong facing and half
+          "/setblock 110 -58 109 cobblestone",                           # wall torch spot
+          "/setblock 111 -58 108 stone",                                 # log spot
+          "/setblock 112 -58 108 oak_slab[type=top]")                    # slab spot, wrong type
+    line = schem_run(t, "schem-fix.txt")
+    bad = schem_wrong(t)
+    report = schem_report(t)
+    if bad:
+        raise Fail("fix mode left %d positions wrong, e.g. %s (%s) %s" % (len(bad), bad[:6], line, report))
+    return "six wrong blocks on redstone/stair/torch/log/slab spots all replaced (%s); %s" % (line.split("TEST ", 1)[-1], "; ".join(report[:1]))
+
 
 TESTS = [("smoke", test_smoke), ("fill_water", test_fill_water), ("eat", test_eat), ("defend", test_defend), ("clear_resume", test_clear_resume), ("dump", test_dump),
-         ("schem_list", test_schem_list), ("schem_add", test_schem_add), ("schem_fix", test_schem_fix), ("schem_exact", test_schem_exact)]
+         ("schem_list", test_schem_list), ("schem_add", test_schem_add), ("schem_fix", test_schem_fix), ("schem_fix_wrong", test_schem_fix_wrong), ("schem_exact", test_schem_exact)]
 
 
 # ------------------------------------------------------------------ main
@@ -392,7 +410,7 @@ def enter_world(b):
 
 TEST_TIMEOUT = 420          # seconds; a test that takes longer fails and its game is restarted
 RAM_PER_CLIENT_GB = 3.0
-LONG_FIRST = ["clear_resume", "schem_exact", "schem_fix", "fill_water", "schem_add"]   # start the slow ones first
+LONG_FIRST = ["clear_resume", "schem_exact", "schem_fix_wrong", "schem_fix", "fill_water", "schem_add"]   # start the slow ones first
 
 
 def free_ram_gb():

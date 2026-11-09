@@ -18,6 +18,17 @@ def title(h):
     return b.value
 
 
+def owner(h):
+    """'TEST' when the window belongs to a game started by the harness (game dir under tmp\ingame), else the exe name."""
+    import subprocess
+    pid = wintypes.DWORD()
+    u.GetWindowThreadProcessId(h, ctypes.byref(pid))
+    r = subprocess.run(["powershell", "-NoProfile", "-Command",
+                        "(Get-CimInstance Win32_Process -Filter 'ProcessId=%d').CommandLine" % pid.value], capture_output=True, text=True)
+    cl = (r.stdout or "").lower()
+    return "TEST-GAME" if "tmp\ingame" in cl else "other pid %d" % pid.value
+
+
 def main(seconds, out):
     end = time.time() + seconds
     last, changes, mc_front, cursor, moves = None, 0, 0, None, 0

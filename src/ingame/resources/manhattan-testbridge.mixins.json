@@ -1,0 +1,7 @@
+{
+  "required": true,
+  "package": "dev.baritonequeue.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": ["WindowNoFocusMixin"],
+  "injectors": { "defaultRequire": 1 }
+}
