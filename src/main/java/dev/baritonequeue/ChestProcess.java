@@ -237,16 +237,12 @@ final class ChestProcess implements IBaritoneProcess {
             }
             case DUMP -> {
                 JsonObject keepFile = loadChestConfig();
-                boolean hotbar = keepFile != null && keepFile.has("includeHotbar") && keepFile.get("includeHotbar").getAsBoolean();
-                Map<String, Integer> keepLeft = new HashMap<>();   // rule -> stacks' worth still to keep
                 JsonObject rules = keepFile != null && keepFile.has("keep") && keepFile.get("keep").isJsonObject() ? keepFile.getAsJsonObject("keep") : new JsonObject();
-                for (Slot s : h.slots) {
+                boolean[] keep = keepPlan(p, rules);
+                for (Slot s : h.slots) {   // the hotbar too: mob drops land there first and would stay for good
                     if (!mine(s, p)) continue;
                     int inv = s.getContainerSlot();
-                    ItemStack st = s.getItem();
-                    if (st.isEmpty() || inv < 0 || inv >= 36) continue;
-                    if (inv < 9 && !hotbar) continue;
-                    if (keep(st, rules, keepLeft)) continue;
+                    if (s.getItem().isEmpty() || inv < 0 || inv >= 36 || keep[inv]) continue;
                     todo.add(s.index);
                 }
             }
@@ -254,14 +250,92 @@ final class ChestProcess implements IBaritoneProcess {
         return null;
     }
 
-    /** Tools, armour, food and buckets always stay; so does what the LoadChest keep rules protect (whole stacks). */
-    private static boolean keep(ItemStack st, JsonObject rules, Map<String, Integer> keepLeft) {
-        if (st.isDamageableItem() || st.has(DataComponents.FOOD)) return true;
-        String path = BuiltInRegistries.ITEM.getKey(st.getItem()).getPath();
-        if (path.endsWith("bucket")) return true;
+    /** Food a mob drops or that makes you sick: never kept by a dump. */
+    private static final java.util.Set<String> JUNK_FOOD = java.util.Set.of(
+            "rotten_flesh", "spider_eye", "poisonous_potato", "pufferfish", "chicken");
+
+    private static final String[] KINDS = {"pickaxe", "shovel", "axe", "hoe", "sword", "crossbow", "bow", "shears",
+            "fishing_rod", "trident", "mace", "shield", "helmet", "chestplate", "leggings", "boots", "flint_and_steel",
+            "brush", "elytra", "spear"};
+
+    /** The kind of a tool or armour piece: "diamond_shovel" -> "shovel". */
+    static String kind(String path) {
+        for (String k : KINDS) if (path.equals(k) || path.endsWith("_" + k)) return k;
+        return path;
+    }
+
+    private static String pathOf(ItemStack st) {
+        return BuiltInRegistries.ITEM.getKey(st.getItem()).getPath();
+    }
+
+    /**
+     * Which inventory slots (0-35) a dump leaves alone. Tools and armour: what the want-list asks for (best first, up
+     * to its count); with an empty want-list, the best one of each kind (armour only when that slot is not worn). Food
+     * unless it is junk (rotten flesh, spider eyes ...). Buckets. And what the LoadChest keep rules protect. Everything
+     * else goes - spare tools, mob drops (bows, armour, swords) and the hotbar's leftovers included.
+     */
+    static boolean[] keepPlan(LocalPlayer p, JsonObject rules) {
+        boolean[] keep = new boolean[36];
+        Map<String, Integer> keepLeft = new HashMap<>();   // keep rule -> items still to keep
+        java.util.List<Integer> gear = new java.util.ArrayList<>();
+        for (int i = 0; i < 36; i++) {
+            ItemStack st = p.getInventory().getItem(i);
+            if (st.isEmpty()) continue;
+            String path = pathOf(st);
+            if (st.isDamageableItem()) gear.add(i);
+            else if (st.has(DataComponents.FOOD) && !JUNK_FOOD.contains(path)) keep[i] = true;
+            else if (path.endsWith("bucket")) keep[i] = true;
+            else keep[i] = ruleKeeps(st, rules, keepLeft);
+        }
+        // best (most uses left) first; worn-out ones last, so a spare fresh tool wins over them
+        gear.sort(java.util.Comparator.comparingInt((Integer i) -> {
+            ItemStack st = p.getInventory().getItem(i);
+            return dev.survivalkit.Api.worn(st) ? 1 : 0;
+        }).thenComparingInt(i -> {
+            ItemStack st = p.getInventory().getItem(i);
+            return -(st.getMaxDamage() - st.getDamageValue());
+        }));
+        Map<String, Integer> wantLeft = new HashMap<>(dev.survivalkit.Api.wantList());
+        boolean noWants = wantLeft.isEmpty();
+        java.util.Set<String> keptKinds = new java.util.HashSet<>();
+        for (int i : gear) {
+            ItemStack st = p.getInventory().getItem(i);
+            String kind = kind(pathOf(st));
+            boolean k = false;
+            for (Map.Entry<String, Integer> e : wantLeft.entrySet()) {
+                if (e.getValue() > 0 && dev.survivalkit.Api.wantMatches(st, e.getKey())) {
+                    e.setValue(e.getValue() - st.getCount());
+                    k = true;
+                    break;
+                }
+            }
+            if (!k && noWants && !keptKinds.contains(kind) && !wearing(p, kind)) {
+                keptKinds.add(kind);   // no want-list: keep the best one of each kind
+                k = true;
+            }
+            keep[i] = k || ruleKeeps(st, rules, keepLeft);
+        }
+        return keep;
+    }
+
+    /** Whether the player already wears armour of this kind. */
+    private static boolean wearing(LocalPlayer p, String kind) {
+        net.minecraft.world.entity.EquipmentSlot slot = switch (kind) {
+            case "helmet" -> net.minecraft.world.entity.EquipmentSlot.HEAD;
+            case "chestplate", "elytra" -> net.minecraft.world.entity.EquipmentSlot.CHEST;
+            case "leggings" -> net.minecraft.world.entity.EquipmentSlot.LEGS;
+            case "boots" -> net.minecraft.world.entity.EquipmentSlot.FEET;
+            default -> null;
+        };
+        return slot != null && !p.getItemBySlot(slot).isEmpty();
+    }
+
+    /** What the LoadChest keep rules protect ("dirt": 128 keeps 128 dirt, "_pickaxe": -1 keeps every pickaxe). */
+    private static boolean ruleKeeps(ItemStack st, JsonObject rules, Map<String, Integer> keepLeft) {
+        String path = pathOf(st);
         for (Map.Entry<String, JsonElement> e : rules.entrySet()) {
             String key = e.getKey().toLowerCase();
-            boolean hit = key.equals("@food") ? st.has(DataComponents.FOOD) : key.startsWith("_") ? path.endsWith(key) || path.contains(key) : path.equals(key) || path.contains(key);
+            boolean hit = key.equals("@food") ? st.has(DataComponents.FOOD) && !JUNK_FOOD.contains(path) : key.startsWith("_") ? path.endsWith(key) || path.contains(key) : path.equals(key) || path.contains(key);
             if (!hit) continue;
             int count = e.getValue().getAsInt();
             if (count < 0) return true;   // keep all of it
@@ -290,7 +364,7 @@ final class ChestProcess implements IBaritoneProcess {
         return switch (op.kind) {
             case GET -> "Already carrying enough " + ChestOp.name(op.item) + ", nothing taken.";
             case PUT -> "No " + ChestOp.name(op.item) + " in the inventory, nothing put in.";
-            case DUMP -> "Nothing to put in (everything is tools, food or kept).";
+            case DUMP -> "Nothing to put in (everything is wanted tools, food or kept).";
         };
     }
 

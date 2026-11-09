@@ -111,6 +111,16 @@ public final class Api {
         return cfg.want;
     }
 
+    /** Whether the stack fits a want-list rule ("diamond_shovel", "@food", "diamond_pickaxe efficiency:5"). */
+    public static boolean wantMatches(net.minecraft.world.item.ItemStack st, String rule) {
+        return WantRule.of(rule).matches(st);
+    }
+
+    /** Whether a tool is at the item-saver limit (restock hands it in). */
+    public static boolean worn(net.minecraft.world.item.ItemStack st) {
+        return Util.nearlyBroken(st);
+    }
+
     /** A work item rule (/survival workitem ...); returns an error text or null. */
     public static String workItem(String rule) {
         return WorkItems.add(rule);

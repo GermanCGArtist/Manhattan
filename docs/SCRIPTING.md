@@ -95,7 +95,7 @@ The ones marked **waits** take time in the world: the script waits until they ar
 | `take(chest, "dirt" [, n \| "all"])` | waits; takes one stack, n, or all; returns how many |
 | `take_upto(chest, "dirt", 512)` | waits; tops up until you carry 512 |
 | `put(chest, "dirt" [, n])` | waits; puts in all of it (or n) |
-| `dump(chest)` | waits; everything except tools, armour, food, buckets and the `keep` rules |
+| `dump(chest)` | waits; everything (hotbar included) except the tools and armour the want-list asks for (best first; with no want-list, the best one of each kind), food (not rotten flesh, spider eyes, raw chicken ...), buckets and the `keep` rules |
 | `unload([chest] [, "filter"])` | waits; LoadChest's trip: nearest or saved chest, its keep rules |
 | `find_item("diamond")` | chests that held it when last opened: list of `{pos, count}` |
 | `chest_contents(chest)` | what it held when last opened: map item → count |

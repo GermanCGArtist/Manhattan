@@ -48,6 +48,7 @@ Nothing to do by hand: there is **no Microsoft login**. The test starts the game
 | `eat` | `on food < 14 … eat()`: a hunger effect drains the food bar, the handler fires and bread is eaten |
 | `defend` | `on mobs > 0 … defend()`: at night a zombie is summoned 4 blocks away; the handler fires and kills it |
 | `clear_resume` | a 7×21×2 strip of dirt; `clear_area()` is interrupted by `on food < 14 … eat()` and must carry on ("Carrying on clearing"), not start from the top again; afterwards the strip is empty and it returns 0 |
+| `dump` | junk in the inventory (a worse second diamond shovel, an iron shovel, a bow, a leather chestplate, rotten flesh, cobblestone in the hotbar) plus bread and a golden apple; with `want("diamond_shovel", 1)`, `dump()` must leave exactly one diamond shovel, the bread and the golden apple |
 
 Before each world test the area around (100, -60, 100) is reset: dirt/grass ground, air above, all entities
 except the player killed, survival mode, empty inventory, noon. The world rules are set once: no daylight cycle,

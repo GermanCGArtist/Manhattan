@@ -1,0 +1,4 @@
+// dump: spare tools, mob drops and hotbar leftovers go into the chest; wanted tools and good food stay
+want("diamond_shovel", 1)
+dump(pos(102, -60, 100))
+print("TEST dumped")

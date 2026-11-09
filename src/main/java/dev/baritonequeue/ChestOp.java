@@ -37,7 +37,7 @@ final class ChestOp {
         return switch (kind) {
             case GET -> "take " + (topUp ? "up to " + count : count < 0 ? "all" : count == 0 ? "a stack of" : count) + " " + name(item) + " from " + chest;
             case PUT -> "put " + (count < 0 ? "all" : count) + " " + name(item) + " into " + chest;
-            case DUMP -> "empty the inventory (keeping tools, food and the keep rules) into " + chest;
+            case DUMP -> "empty the inventory (keeping the wanted tools, good food and the keep rules) into " + chest;
         };
     }
 

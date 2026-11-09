@@ -2,6 +2,15 @@
 
 Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
 
+## 2.4.2 – dump() keeps only the wanted tools (2026-11-09)
+- `dump()` kept everything that can wear out and all food. Bows, armour and tools from the mobs `defend()` killed,
+  spare shovels and rotten flesh piled up, and the hotbar was never emptied: on the AFK run a dump trip carried only
+  100–200 items instead of 350–400, so it walked to the dump chest twice as often.
+- Now tools and armour stay only as far as the want-list asks for them (the best copies first; with no want-list, the
+  best one of each kind). Food stays except rotten flesh, spider eyes, poisonous potatoes, pufferfish and raw chicken.
+  The hotbar is emptied too. Buckets and the `keep` rules stay as before.
+- New in-game test `dump`.
+
 ## 2.4.1 – clear_area carries on instead of starting over (2026-11-09)
 - An `on` block (eating, a fight, the bed, the dump chest) used to restart `clear_area` from the first stop of the
   first lane, forgetting what it had given up on: on the AFK run that was 128 restarts in under 5 hours, each walking

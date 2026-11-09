@@ -191,7 +191,26 @@ def test_clear_resume(t):
     return "strip cleared, resumed once eating was done (%s)" % resumed[0].split("] ", 1)[-1][:80]
 
 
-TESTS = [("smoke", test_smoke), ("fill_water", test_fill_water), ("eat", test_eat), ("defend", test_defend), ("clear_resume", test_clear_resume)]
+def test_dump(t):
+    """dump() keeps only what the want-list asks for (the better copy) and good food; junk and the hotbar go."""
+    reset_area(t)
+    t.cmd("/setblock 102 -60 100 chest",
+          "/give @s cobblestone 64",                       # lands in the hotbar
+          "/give @s diamond_shovel[damage=1000] 1", "/give @s diamond_shovel 1",
+          "/give @s iron_shovel 1", "/give @s bow 1", "/give @s leather_chestplate 1",
+          "/give @s rotten_flesh 10", "/give @s bread 8", "/give @s golden_apple 1")
+    t.run("dump.txt")
+    t.wait_chat("TEST dumped", 60)
+    expect = {"diamond_shovel": 1, "iron_shovel": 0, "bow": 0, "leather_chestplate": 0, "rotten_flesh": 0,
+              "cobblestone": 0, "bread": 8, "golden_apple": 1}
+    got = {k: t.count(k) for k in expect}
+    wrong = {k: (got[k], v) for k, v in expect.items() if got[k] != v}
+    if wrong:
+        raise Fail("inventory after dump (have, expected): %s" % wrong)
+    return "kept 1 diamond shovel, bread and the golden apple; junk and the hotbar's cobblestone went into the chest"
+
+
+TESTS = [("smoke", test_smoke), ("fill_water", test_fill_water), ("eat", test_eat), ("defend", test_defend), ("clear_resume", test_clear_resume), ("dump", test_dump)]
 
 
 # ------------------------------------------------------------------ main
