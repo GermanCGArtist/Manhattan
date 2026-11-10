@@ -368,7 +368,7 @@ final class SchemPlacer {
                 Direction f = Direction.getApproximateNearest(p.getEyePosition().subtract(at));
                 aim(p, (float) (Math.toDegrees(Math.atan2(at.z - p.getEyePosition().z, at.x - p.getEyePosition().x)) - 90.0),
                         (float) -Math.toDegrees(Math.atan2(at.y - p.getEyePosition().y, Math.hypot(at.x - p.getEyePosition().x, at.z - p.getEyePosition().z))));
-                if (!breaking) { mc.gameMode.startDestroyBlock(bp, f); breaking = true; }
+                if (!breaking) { ClearProcess.equipFor(mc, p, s); mc.gameMode.startDestroyBlock(bp, f); breaking = true; }   // the fastest tool first
                 else mc.gameMode.continueDestroyBlock(bp, f);
                 p.swing(InteractionHand.MAIN_HAND);
             }
