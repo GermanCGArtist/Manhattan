@@ -4,7 +4,7 @@
 
 // ------------------------------------------------------------------ places
 let storage = pos(-706, 70, 360)       // dug blocks go here; also the dirt for scaffolding and water plugs
-let tools = pos(-702, 66, 360)         // pickaxes, shovels, 16 buckets (+ 1 water bucket for the first fill!)
+let tools = pos(-702, 66, 360)         // pickaxes, shovels, 16 buckets (+ at least 2 WATER buckets: one source alone never refills)
 let tool_return = pos(-702, 66, 365)   // worn-out tools
 let bed = pos(-699, 66, 360)
 let supply_a = pos(-698, 65, 359)      // build item area (chests, barrels, shulker boxes)
