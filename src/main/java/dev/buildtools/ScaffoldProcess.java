@@ -40,6 +40,7 @@ final class ScaffoldProcess extends Feature {
     private int targetTicks, itemTicks, cooldown, check, broken, skipped;
     private final Set<Item> dropTypes = new HashSet<>();
     private final Set<Integer> ignoredItems = new HashSet<>();
+    private final Set<BlockPos> announced = new HashSet<>();
 
     ScaffoldProcess() {
         super("BuildTools scaffolding", 13);
@@ -112,6 +113,10 @@ final class ScaffoldProcess extends Feature {
         if (target != null && !Scaffold.valid(level, target)) {   // gone: broken by us (or by anything else)
             broken++;
             target = null;
+        }
+        if (target != null && level.getBlockState(target).isAir() == false && (p.tickCount % 1) == 0 && !announced.contains(target)) {
+            announced.add(target.immutable());   // one line per block we take down, so the chat shows what goes
+            Util.msg("Taking down scaffolding at " + target.toShortString() + " (" + level.getBlockState(target).getBlock().getName().getString() + ")");
         }
         if (target == null) {
             target = pickTarget(p, level);

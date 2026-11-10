@@ -4,5 +4,9 @@ stall(1)     // a Baritone task with no progress for 1 minute is skipped: a stuc
 #acceptableThrowawayItems dirt
 let left = schem_build(1, "add")
 print("TEST schem left={left}")
+let before = schem_check(1, "add")
+print("TEST check before collect={before}")
 collect_scaffold()
+let after = schem_check(1, "add")
+print("TEST check after collect={after}")
 print("TEST scaffold done")

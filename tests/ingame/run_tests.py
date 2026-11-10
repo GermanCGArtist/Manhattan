@@ -582,9 +582,11 @@ def test_canal_scaffold_schem(t):
     line = run_scenario(t, "canal-scaffold-schem.txt", "TEST scaffold done", 300)
     if not line:
         raise Fail("the script did not finish")
+    column = [(y, t.block((104, y, 104)).split("|")[0].replace("minecraft:", "")) for y in (-61, -60, -59, -58, -57, -56)]
     bad = model_diff(t, origin, (3, 2, 3), SCAFF_SCHEM, region=((100, -60, 100), (110, -55, 110)))
     if bad:
-        raise Fail("%d blocks differ from the schematic (and air elsewhere), e.g. %s (%s)" % (len(bad), bad[:6], line))
+        raise Fail("%d blocks differ from the schematic (and air elsewhere), e.g. %s; column x104 z104 y-61..-56: %s (%s)"
+                   % (len(bad), bad[:6], column, line))
     dirt = t.count("dirt")
     if dirt != 64 - 9:
         raise Fail("dirt in the inventory: %d, expected %d (9 stay in the schematic)" % (dirt, 64 - 9))
