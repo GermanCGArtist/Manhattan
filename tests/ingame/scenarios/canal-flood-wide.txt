@@ -1,0 +1,7 @@
+// canal 4w: flood() on a WIDE trench (11 wide, 2 deep, closed): the middle of the top layer has nothing to click
+// against, so flood() puts water on temporary blocks there and breaks them again
+stall(1)     // a Baritone task with no progress for 1 minute is skipped: a stuck test fails fast
+select(pos(100, -62, 100), pos(108, -61, 110))
+print("TEST flood start")
+flood()
+print("TEST flood done")

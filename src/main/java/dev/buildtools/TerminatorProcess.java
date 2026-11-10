@@ -67,6 +67,7 @@ final class TerminatorProcess extends Feature {
     private State state = State.WORK;
     private BlockPos current, breaking, goal, diveSpot, diveTarget;
     private int walkTicks, placed, breakTicks, countBefore, targetTicks, fruitless, stateTicks, stuckTicks;
+    private int stepAside;   // times we stepped out of a wet cell we were standing in (its block can't go where we are)
     private double lastDist;
     private int placedAtDive;
     private BlockPos walkTarget;   // the cell the current walk is for
@@ -129,6 +130,7 @@ final class TerminatorProcess extends Feature {
         walkTicks = 0;
         placed = 0;
         fruitless = 0;
+        stepAside = 0;
         lastReason = "";
         ranOut = false;
         working = true;
@@ -290,6 +292,25 @@ final class TerminatorProcess extends Feature {
                 }
             }
         }
+    }
+
+    /** A dry spot to stand on next to the feet (solid below, room for the body, no water), nearest first. */
+    private BlockPos asideSpot(Level level, BlockPos feet) {
+        BlockPos best = null;
+        double bestD = Double.MAX_VALUE;
+        for (int dx = -2; dx <= 2; dx++) {
+            for (int dy = -1; dy <= 2; dy++) {
+                for (int dz = -2; dz <= 2; dz++) {
+                    if (dx == 0 && dz == 0) continue;
+                    BlockPos f = feet.offset(dx, dy, dz);
+                    if (Util.isSolid(level, f) || Util.isSolid(level, f.above()) || !Util.isSolid(level, f.below())) continue;
+                    if (!level.getFluidState(f).isEmpty() || !level.getFluidState(f.above()).isEmpty()) continue;
+                    double d = f.distSqr(feet);
+                    if (d < bestD) { bestD = d; best = f; }
+                }
+            }
+        }
+        return best;
     }
 
     private static Vec3 eyeAt(BlockPos feet) {
@@ -593,7 +614,20 @@ final class TerminatorProcess extends Feature {
 
         if (++fruitless > MAX_FRUITLESS) return finish(level, null);
         Plan plan = plan(p, level);
-        if (plan == null) return finish(level, null);
+        if (plan == null) {
+            // the last wet cell may be the one we stand in: nothing goes where the body is, so step out of it first
+            BlockPos feet = p.blockPosition();
+            boolean inWetCell = (inSelection(feet) && wet(level, feet)) || (inSelection(feet.above()) && wet(level, feet.above()));
+            if (inWetCell && stepAside < 3) {
+                BlockPos aside = asideSpot(level, feet);
+                if (aside != null) {
+                    stepAside++;
+                    startWalk(level, aside);
+                    return walkCommand();
+                }
+            }
+            return finish(level, null);
+        }
         walkTicks = 0;
         if (!plan.dive) {
             diveSpot = null;

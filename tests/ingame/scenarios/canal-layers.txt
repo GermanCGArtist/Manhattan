@@ -1,34 +1,16 @@
-// canal 1: trench_a of 8 small boxes of dirt (run_tests.py fills them), dug with 2-layer passes, top layer first
+// canal 1: trench_a of 8 ADJACENT boxes (4 and 3 deep, like the real one) dug INTO a dirt plateau (run_tests.py builds it), clear_area(2): top down, 2 layers per pass
 stall(1)     // a Baritone task with no progress for 1 minute is skipped: a stuck test fails fast
-select(pos(100, -61, 100), pos(101, -58, 100))
-add_box(pos(104, -61, 100), pos(105, -58, 100))
-add_box(pos(108, -61, 100), pos(109, -58, 100))
-add_box(pos(112, -61, 100), pos(113, -58, 100))
-add_box(pos(116, -61, 100), pos(117, -58, 100))
-add_box(pos(120, -61, 100), pos(121, -58, 100))
-add_box(pos(124, -61, 100), pos(125, -58, 100))
-add_box(pos(128, -61, 100), pos(129, -58, 100))
+select(pos(100, -61, 99), pos(101, -58, 101))
+add_box(pos(102, -60, 99), pos(103, -58, 101))
+add_box(pos(104, -61, 99), pos(105, -58, 101))
+add_box(pos(106, -60, 99), pos(107, -58, 101))
+add_box(pos(108, -61, 99), pos(109, -58, 101))
+add_box(pos(110, -60, 99), pos(111, -58, 101))
+add_box(pos(112, -61, 99), pos(113, -58, 101))
+add_box(pos(114, -60, 99), pos(115, -58, 101))
 save_area("trench_a")
-// the gap columns are safe areas: Baritone must not dig them to reach the trench (it would dig obstacles on its path)
-protect("gap0", pos(102, -61, 100), pos(102, -58, 100))
-protect("gap1", pos(106, -61, 100), pos(106, -58, 100))
-protect("gap2", pos(110, -61, 100), pos(110, -58, 100))
-protect("gap3", pos(114, -61, 100), pos(114, -58, 100))
-protect("gap4", pos(118, -61, 100), pos(118, -58, 100))
-protect("gap5", pos(122, -61, 100), pos(122, -58, 100))
-protect("gap6", pos(126, -61, 100), pos(126, -58, 100))
-#buildInLayers true
-#layerOrder true
-#layerHeight 2
 area("trench_a")
-print("TEST layers start boxes={len(areas())}")
-#sel ca
+print("TEST layers start")
+let left = clear_area(2)
+print("TEST layers left={left}")
 print("TEST layers done")
-unprotect("gap0")
-unprotect("gap1")
-unprotect("gap2")
-unprotect("gap3")
-unprotect("gap4")
-unprotect("gap5")
-unprotect("gap6")
-

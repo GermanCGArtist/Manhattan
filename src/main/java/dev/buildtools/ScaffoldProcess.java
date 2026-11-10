@@ -77,7 +77,7 @@ final class ScaffoldProcess extends Feature {
             if (!auto) Util.msg("No scaffolding recorded near you. (Only blocks Baritone placed itself are remembered, since the mod was loaded.)");
             return;
         }
-        working = true;
+        setWorking(true);
         target = null;
         item = null;
         broken = skipped = 0;
@@ -86,8 +86,32 @@ final class ScaffoldProcess extends Feature {
         Util.msg((auto ? "Enough scaffolding piled up (" : "Collecting scaffolding (") + n + " blocks)" + (auto ? ": taking it down now." : "..."));
     }
 
+    private Boolean breakBefore;   // Baritone's allowBreak while collecting (restored afterwards)
+    private int fallBefore;        // and its maxFallHeightNoWater
+
+    /**
+     * While collecting, Baritone only walks (no digging): our own clicks take the scaffolding down. Else its path from
+     * the top of a fresh build down to the scaffolding could dig straight through the build (a schematic corner).
+     */
+    private void setWorking(boolean on) {
+        if (on == working) return;
+        working = on;
+        var s = baritone.api.BaritoneAPI.getSettings();
+        if (on) {
+            breakBefore = s.allowBreak.value;
+            fallBefore = s.maxFallHeightNoWater.value;
+            s.allowBreak.value = false;
+            // without digging, the way down from the top of a build is a drop: allow a little more than 3 blocks
+            s.maxFallHeightNoWater.value = Math.max(fallBefore, 5);
+        } else if (breakBefore != null) {
+            s.allowBreak.value = breakBefore;
+            s.maxFallHeightNoWater.value = fallBefore;
+            breakBefore = null;
+        }
+    }
+
     void cancel() {
-        working = false;
+        setWorking(false);
         target = null;
         item = null;
         Minecraft mc = Minecraft.getInstance();
@@ -99,7 +123,7 @@ final class ScaffoldProcess extends Feature {
     @Override
     boolean active() {
         Minecraft mc = Minecraft.getInstance();
-        if (working && (mc.player == null || mc.level == null || mc.gameMode == null)) working = false;
+        if (working && (mc.player == null || mc.level == null || mc.gameMode == null)) setWorking(false);
         return working;
     }
 
@@ -107,7 +131,7 @@ final class ScaffoldProcess extends Feature {
     PathingCommand step(boolean calcFailed, boolean isSafeToCancel) {
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer p = mc.player;
-        if (p == null || mc.level == null || mc.gameMode == null) { working = false; return defer(); }
+        if (p == null || mc.level == null || mc.gameMode == null) { setWorking(false); return defer(); }
         Level level = mc.level;
 
         if (target != null && !Scaffold.valid(level, target)) {   // gone: broken by us (or by anything else)
@@ -219,7 +243,7 @@ final class ScaffoldProcess extends Feature {
     }
 
     private void finish(Minecraft mc) {
-        working = false;
+        setWorking(false);
         target = null;
         item = null;
         if (mc.gameMode != null) mc.gameMode.stopDestroyBlock();

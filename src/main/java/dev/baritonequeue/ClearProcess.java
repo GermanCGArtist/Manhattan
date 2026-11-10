@@ -42,7 +42,8 @@ import java.util.Set;
  * time went so far into the game log ("[Queue] clear_area progress").
  */
 final class ClearProcess implements IBaritoneProcess {
-    private static final int LANE = 6, STEP = 3, PASS = 3;
+    private static final int LANE = 6, STEP = 3;
+    private int pass = 3;   // layers per pass (2 or 3: feet and head, plus the block above the head)
     private static final int TRAVEL_TIMEOUT = 20 * 45, WALK_STUCK = 30, BREAK_TIMEOUT = 20 * 8, PICK_TIMEOUT = 20 * 3;
     private static final int REPORT_EVERY = 20 * 60 * 5;
 
@@ -90,6 +91,12 @@ final class ClearProcess implements IBaritoneProcess {
 
     /** Starts on the current selection; returns an error text or null. */
     String begin() {
+        return begin(3);
+    }
+
+    /** layers: how many layers one pass takes off (2 = feet and head, 3 = also the block above the head). */
+    String begin(int layers) {
+        pass = Math.max(1, Math.min(3, layers));
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.level == null) return "Not in a world.";
         if (working) return "clear_area is already running.";
@@ -100,7 +107,7 @@ final class ClearProcess implements IBaritoneProcess {
         yTop = Integer.MIN_VALUE;
         yBottom = Integer.MAX_VALUE;
         for (int[] b : boxes) { yTop = Math.max(yTop, b[4]); yBottom = Math.min(yBottom, b[1]); }
-        feetY = Math.max(yBottom, yTop - (PASS - 1));
+        feetY = Math.max(yBottom, yTop - (pass - 1));
         lastPass = feetY == yBottom;
         planPass(mc.level);
         skipped.clear();
@@ -115,7 +122,7 @@ final class ClearProcess implements IBaritoneProcess {
         // the way between stops may need digging: Baritone may break blocks while this runs
         breakBefore = dev.buildtools.Api.setOwnBreak(true);   // near a safe area it still stays off there
         working = true;
-        Util.msg("Clearing the area from the top, " + PASS + " layers per pass.");
+        Util.msg("Clearing the area from the top, " + pass + " layers per pass.");
         return null;
     }
 
@@ -179,7 +186,7 @@ final class ClearProcess implements IBaritoneProcess {
         stops.clear();
         stop = 0;
         for (int[] b : boxes) {
-            if (feetY < b[1] || feetY > b[4] + PASS) continue;
+            if (feetY < b[1] || feetY > b[4] + pass) continue;
             boolean alongZ = (b[5] - b[2]) >= (b[3] - b[0]);
             int c1 = alongZ ? b[0] : b[2], c2 = alongZ ? b[3] : b[5];
             int a1 = alongZ ? b[2] : b[0], a2 = alongZ ? b[5] : b[3];
@@ -204,7 +211,7 @@ final class ClearProcess implements IBaritoneProcess {
     /** Goes to the next pass down; false when this was the last one. */
     private boolean nextPass(Level level) {
         if (lastPass) return false;
-        feetY = Math.max(yBottom, feetY - PASS);
+        feetY = Math.max(yBottom, feetY - pass);
         lastPass = feetY == yBottom;
         planPass(level);
         return true;

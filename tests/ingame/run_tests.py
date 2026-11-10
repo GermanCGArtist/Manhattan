@@ -440,6 +440,7 @@ def new_world(t, name, placements=(), kit=True):
     fresh_world(t, name)
     wait_server(t)
     t.cmd("/clear @s", "/tp @s 100 -60 100 0 0")
+    t.cmd("/buildtools protect clear")     # safe areas live in the game's config: none may leak in from an earlier test
     if kit:
         give_kit(t)
     time.sleep(2)
@@ -472,7 +473,8 @@ def wait_marker_or_end(t, text, timeout):
         running = t.b("script")["running"]
         seen_running = seen_running or running
         if not running and (seen_running or time.time() - started > 3):
-            return None
+            time.sleep(1)   # the marker and the end can come in the same moment: look at the chat once more
+            return next((l for l in t.lines() if text in l), None)
         time.sleep(0.3)
     raise BridgeError("timed out after %ds waiting for chat '%s'" % (timeout, text))
 
@@ -505,22 +507,24 @@ def scaffold_left(t, region):
     return left
 
 
-def test_canal_layers(t):
-    """#buildInLayers + #layerOrder + #layerHeight 2 with trench_a (8 small boxes of dirt): all of it is dug, layers top-down."""
-    new_world(t, "canal-layers")
-    boxes = [(100 + 4 * i, -61, 100, 101 + 4 * i, -58, 100) for i in range(8)]    # 8 boxes, 8 blocks each
-    gaps = [(102 + 4 * i, -61, 100, 102 + 4 * i, -58, 100) for i in range(7)]     # not in the area: must stay
-    for b in boxes:
-        fill(t, b, "dirt")
-    for g in gaps:
-        fill(t, g, "oak_planks")
+def test_canal_layers(t, scen="canal-layers.txt", topdown=True):
+    """clear_area(2) (top down, 2 layers per pass) on trench_a: 8 boxes (2 x 3 x 4 each) dug INTO a dirt plateau,
+    like the real trench. All of it is dug, layers top-down, the plateau between the boxes stays."""
+    new_world(t, scen[:-4])
+    fill(t, (96, -61, 95, 134, -58, 105), "dirt")                                  # the plateau, 4 high
+    t.cmd("/tp @s 98 -57 97 0 0")                                                  # on top of it, beside the trench
+    # 8 adjacent boxes like the real trench_a: 4 deep and 3 deep in turn (2 x 3 each)
+    boxes = [(100 + 2 * i, -61 if i % 2 == 0 else -60, 99, 101 + 2 * i, -58, 101) for i in range(8)]
+    # not in the area, must stay: the plateau on both sides and ends, and the layer under the 3-deep boxes
+    gaps = [(98, -61, 97, 117, -58, 98), (98, -61, 102, 117, -58, 103), (98, -61, 99, 99, -58, 101), (116, -61, 99, 117, -58, 101)]
+    gaps += [(102 + 4 * i, -61, 99, 103 + 4 * i, -61, 101) for i in range(4)]
     gap_before = layers(t, gaps)["solid"]
-    t.run("canal-layers.txt")
+    t.run(scen)
     t.wait_chat("TEST layers start", 30)
     init, samples, violations = None, 0, []
     end = time.time() + 240
     while True:
-        solid = layers(t, boxes)["solid"]          # index 0 = y -61 ... 3 = y -58
+        solid = layers(t, boxes)["solid"]          # index 0 = y -61 ... 3 = y -58 (y -61 only in the 4-deep boxes)
         if init is None:
             init = list(solid)
         samples += 1
@@ -541,10 +545,10 @@ def test_canal_layers(t):
         raise Fail("blocks left in trench_a per height: %s" % left)
     if gap_after != gap_before:
         raise Fail("blocks outside trench_a were dug: %s -> %s" % (gap_before, gap_after))
-    if violations:
+    if violations and topdown:
         raise Fail("not top-down: a lower layer was dug while the top was still solid, e.g. %s (%d of %d samples)"
                    % (violations[0], len(violations), samples))
-    return "trench_a (8 boxes, 64 dirt) dug top-down in %d samples; outside boxes untouched" % samples
+    return "trench_a (8 adjacent boxes, 168 dirt dug into a plateau) dug top-down by clear_area(2) in %d samples; plateau around and below untouched" % samples
 
 
 def test_canal_pillar_scaffold(t):
@@ -893,11 +897,99 @@ def test_canal_flood_stack(t):
     return "54 sources in %.0f s with 16 buckets in one stack; ends sealed (%s)" % (secs, ", ".join(ends))
 
 
+def test_canal_flood_wide(t):
+    """flood() on a trench 11 wide like the real canal (x 100..108, z 100..110, y -62..-61), closed, 16 empty buckets + 2 water buckets.
+    The middle of the top layer has no block to click against and is out of reach from the edges: flood() must place water on temporary blocks and take
+    them away again. Must complete: all 198 cells sources, no water outside, no block left in the trench."""
+    new_world(t, "canal-flood-wide")
+    fill(t, (100, -62, 100, 108, -61, 110), "air")
+    t.cmd("/give @s bucket 16", "/give @s water_bucket 2", "/give @s dirt 64")
+    time.sleep(1)
+    t0 = time.time()
+    line = run_scenario(t, "canal-flood-wide.txt", "TEST flood done", 900)
+    secs = time.time() - t0
+    trench = (100, -62, 100, 108, -61, 110)
+    n = layers(t, [trench])["water"]
+    around = sum(layers(t, [(80, -66, 85, 130, -54, 120)])["water"])
+    if around != sum(n):
+        wet = [(x, y, z, t.block((x, y, z)).split("|")[0]) for x in range(97, 112) for y in range(-63, -57) for z in range(97, 114)
+               if not (100 <= x <= 108 and -62 <= y <= -61 and 100 <= z <= 110) and "water" in t.block((x, y, z))]
+        raise Fail("water outside the trench: %d blocks, at %s" % (around - sum(n), wet[:6]))
+    not_source, solid = [], []
+    for x in range(100, 109):
+        for y in (-62, -61):
+            for z in range(100, 111):
+                st = t.b("blockstate %d %d %d" % (x, y, z))["state"]
+                if "water" not in st:
+                    solid.append(((x, y, z), st.split("|")[0]))
+                elif "level=0" not in st:
+                    not_source.append((x, y, z))
+    if solid:
+        raise Fail("%d trench cells hold a block (temporary blocks left?), e.g. %s" % (len(solid), solid[:3]))
+    if not_source:
+        raise Fail("%d trench cells are not sources, e.g. %s (%s)" % (len(not_source), not_source[:3], line))
+    stilts = [l for l in t.lines() if "temporary blocks" in l]
+    return "198 sources in %.0f s, nothing outside%s" % (secs, ", temporary blocks used" if stilts else "")
+
+
+SMOKE_WALL = {(x, 0, 0): "minecraft:stone_bricks" for x in range(12)}   # a row of 12 along the trench side
+
+
+def test_canal_smoke(t):
+    """The whole canal script (scripts/canal.txt from "survival" on) on a small copy of the canal:
+    a dirt plateau; trench_a (12 x 3 x 6) dug in 2-layer passes; a water pocket under it plugged with dirt from the
+    storage chest; trench_canal (12 x 2 x 2) dug below it; two placements (a row of stone bricks along each side of
+    trench_a) built with bricks from a shulker box; trench_canal filled with water from 16 buckets + 2 water buckets."""
+    new_world(t, "canal-smoke", [("wall north", (12, 1, 1), (100, -60, 100), SMOKE_WALL),
+                                 ("wall south", (12, 1, 1), (100, -60, 105), SMOKE_WALL)], kit=False)
+    fill(t, (88, -61, 88, 132, -58, 120), "dirt")                               # the plateau, 4 high
+    fill(t, (104, -61, 102, 106, -61, 103), "water")                           # a water pocket under trench_a
+    t.cmd("/tp @s 95 -57 95 0 0")
+    eff = '{"minecraft:efficiency":5}'
+    chest_with(t, (92, -57, 92), [("dirt", 64)] * 4)                            # storage
+    chest_with(t, (94, -57, 92), [("diamond_pickaxe[enchantments=%s]" % eff, 1), ("diamond_shovel[enchantments=%s]" % eff, 1),
+                                  ("diamond_pickaxe[enchantments=%s]" % eff, 1), ("diamond_shovel[enchantments=%s]" % eff, 1),
+                                  ("bucket", 16), ("water_bucket", 1), ("water_bucket", 1), ("bread", 32)])   # tools
+    chest_with(t, (96, -57, 92), [])                                           # tool return
+    t.cmd("/setblock 98 -57 92 minecraft:red_bed[facing=north,part=foot]", "/setblock 98 -57 91 minecraft:red_bed[facing=north,part=head]")
+    chest_with(t, (100, -57, 92), [("stone_bricks", 64)], kind="shulker_box")   # build supplies
+    time.sleep(1)
+    t0 = time.time()
+    line = run_scenario(t, "canal-smoke.txt", "TEST canal done", 1200)
+    secs = time.time() - t0
+    problems = []
+    # 1. trench_a dug (but the two brick rows), 3. trench_canal: water sources only
+    for x in range(100, 112):
+        for y in (-60, -59, -58):
+            for z in range(100, 106):
+                b = t.block((x, y, z)).split("|")[0]
+                want = "minecraft:stone_bricks" if (y == -60 and z in (100, 105)) else "minecraft:air"
+                if b != want:
+                    problems.append(("trench_a", (x, y, z), b))
+        for y in (-62, -61):
+            for z in (102, 103):
+                st = t.b("blockstate %d %d %d" % (x, y, z))["state"]
+                if "water" not in st or "level=0" not in st:
+                    problems.append(("canal", (x, y, z), st.split("|")[0]))
+    # the rest of the pocket (outside trench_canal) is plugged; no water anywhere but in trench_canal
+    canal = sum(layers(t, [(100, -62, 102, 111, -61, 103)])["water"])
+    around = sum(layers(t, [(80, -66, 80, 140, -54, 130)])["water"])
+    if around != canal:
+        wet = [(x, y, z) for x in range(96, 117) for y in range(-63, -56) for z in range(96, 111)
+               if not (100 <= x <= 111 and -62 <= y <= -61 and 102 <= z <= 103)
+               and "water" in t.block((x, y, z))]
+        problems.append(("water outside trench_canal", around - canal, wet[:6]))
+    if problems:
+        raise Fail("%d problems, e.g. %s (%s)" % (len(problems), problems[:6], line))
+    steps = [l.split("] ", 1)[-1] for l in t.lines() if "/5:" in l]
+    return "the whole canal script in %.0f s: %d steps run, trench dug, bricks built, 48 water sources" % (secs, len(steps))
+
+
 CANAL_TESTS = [("canal_layers", test_canal_layers), ("canal_pillar_scaffold", test_canal_pillar_scaffold),
                ("canal_scaffold_schem", test_canal_scaffold_schem), ("canal_water_pond", test_canal_water_pond),
                ("canal_water_river", test_canal_water_river), ("canal_flood_bucket", test_canal_flood_bucket),
                ("canal_flood_two_water", test_canal_flood_two_water), ("canal_flood_stack", test_canal_flood_stack),
-               ("canal_flood_pond", test_canal_flood_pond), ("canal_flood_none", test_canal_flood_none),
+               ("canal_flood_pond", test_canal_flood_pond), ("canal_flood_none", test_canal_flood_none), ("canal_flood_wide", test_canal_flood_wide), ("canal_smoke", test_canal_smoke),
                ("canal_schem_two", test_canal_schem_two), ("canal_schem_needed", test_canal_schem_needed),
                ("canal_survival_dump", test_canal_survival_dump), ("canal_survival_restock", test_canal_survival_restock),
                ("canal_tools_schem", test_canal_tools_schem)]
