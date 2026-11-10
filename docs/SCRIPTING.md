@@ -1,6 +1,6 @@
 # Manhattan – the script language
 
-Open the editor with **J**. **Run** starts the script, **Test** checks it without running it, **Stop** ends it, **Skip** ends the action that runs now and carries on, **Pick block** lets you aim at a block and put its position into the script.
+Open the editor with **J**. **Run** starts the script, **Test** checks it without running it (the script itself, and, in a world, what it will meet: whether there is a chest, barrel or shulker box at every `pos(…)` used with take/put/dump/fill_water and the survival chests, a bed at `survival.bed`, whether the Litematica placements named in `schem_*` exist and are enabled, which items a `schem_build` needs that are in neither your inventory nor any chest seen open, chests seen open that lack an item `take`/`take_upto` asks for, and a bucket and a first water source for `flood()`; positions that are not loaded are reported, not checked), **Stop** ends it, **Skip** ends the action that runs now and carries on, **Pick block** lets you aim at a block and put its position into the script.
 
 The helpers that used to be the SurvivalKit, BuildTools and LoadChest addons are built in. Everything they did is a script function (below); their chat commands (`/survival …`, `/buildtools …`, `/loadchest …`) still work for doing things by hand. None of them acts on its own unless the script switches it on.
 

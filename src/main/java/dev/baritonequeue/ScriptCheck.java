@@ -41,6 +41,12 @@ final class ScriptCheck {
             c.defined.addAll(Suggest.definedNames(text));
             c.collect(program);
             c.block(program);
+            // the world it will run in: chests, bed, placements, materials, water (only in game)
+            try {
+                WorldCheck.run(program, c::add);
+            } catch (Throwable t) {
+                c.add(Level.WARN, 0, "Could not check the world: " + t);
+            }
         } catch (Parser.ParseError e) {
             c.add(Level.ERROR, e.line, e.getMessage() + oldStyleHint(script, e.line));
         }
