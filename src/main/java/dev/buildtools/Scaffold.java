@@ -29,6 +29,7 @@ final class Scaffold {
 
     private static final Map<BlockPos, Block> spots = new LinkedHashMap<>();
     private static String dimension = "";
+    private static Object world;   // the level object: a new world (same dimension name) starts with no spots
 
     static void register() {
         // registered after Guard, so a placement Guard vetoes (safe areas) never reaches this
@@ -39,8 +40,9 @@ final class Scaffold {
             if (!Util.baritone().getInputOverrideHandler().isInputForcedDown(Input.CLICK_RIGHT)) return InteractionResult.PASS;   // you, not Baritone
             BlockPos clicked = hit.getBlockPos();
             BlockPos placed = level.getBlockState(clicked).canBeReplaced() ? clicked : clicked.relative(hit.getDirection());
+            var outside = Api.scaffoldOutsideSchematic;   // a schematic build knows which blocks are wanted
+            if (outside != null && !outside.test(placed, bi.getBlock())) return InteractionResult.PASS;   // the schematic wants it: not scaffolding
             if (Util.baritone().getBuilderProcess().isActive() && !clearingStep()) {   // the builder may be building
-                var outside = Api.scaffoldOutsideSchematic;   // a schematic build knows which blocks are wanted
                 if (outside == null || !outside.test(placed, bi.getBlock())) return InteractionResult.PASS;
             }
             if (spots.size() < MAX) spots.put(placed.immutable(), bi.getBlock());
@@ -67,6 +69,11 @@ final class Scaffold {
     /** Called every tick: the list belongs to one dimension. */
     static void tick(Minecraft mc) {
         if (mc.level == null) return;
+        if (mc.level != world) {
+            world = mc.level;
+            spots.clear();
+            dimension = "";
+        }
         String d = mc.level.dimension().identifier().toString();
         if (!d.equals(dimension)) {
             spots.clear();
@@ -96,6 +103,11 @@ final class Scaffold {
     static boolean valid(Level level, BlockPos pos) {
         Block b = spots.get(pos);
         if (b == null) return false;
+        var outside = Api.scaffoldOutsideSchematic;
+        if (outside != null && !outside.test(pos, b)) {   // a schematic wants this block here: never taken down
+            spots.remove(pos);
+            return false;
+        }
         if (level.getBlockState(pos).getBlock() == b) return true;
         spots.remove(pos);
         return false;

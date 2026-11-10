@@ -1,0 +1,17 @@
+// canal 7a: a full inventory triggers dump(storage); keep("dirt", 256) stays with us; the task goes on afterwards
+stall(1)     // a Baritone task with no progress for 1 minute is skipped: a stuck test fails fast
+option("survival.bed", pos(96, -60, 95))
+option("survival.supply", pos(96, -60, 97))
+option("survival.returnChest", pos(96, -60, 96))
+keep("dirt", 256)
+// the want-list is global config (it survives from the tests before): state the tools we keep
+want("diamond_pickaxe", 1)
+want("diamond_shovel", 1)
+enable("restock", "eat")
+on full do dump(pos(96, -60, 96)) end
+print("TEST dump armed")
+wait 5
+select(pos(102, -61, 100), pos(104, -61, 102))
+let left = clear_area()
+let dirt = count("dirt")
+print("TEST cleared left={left} dirt={dirt}")

@@ -1,0 +1,5 @@
+// canal tools: schem_build exact digs a box of schematic air (run_tests.py: dirt on top of stone); the pick and the shovel
+// must be the ones that break them
+stall(1)     // a Baritone task with no progress for 1 minute is skipped: a stuck test fails fast
+let left = schem_build(1, "exact")
+print("TEST tools left={left}")

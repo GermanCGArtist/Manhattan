@@ -1,0 +1,12 @@
+// canal 2b: schematic 1 floats 1 block above the grass (run_tests.py); schem_build reaches it with dirt scaffolding,
+// collect_scaffold() takes the scaffolding down but the schematic's own dirt stays.
+stall(1)     // a Baritone task with no progress for 1 minute is skipped: a stuck test fails fast
+#acceptableThrowawayItems dirt
+let left = schem_build(1, "add")
+print("TEST schem left={left}")
+let before = schem_check(1, "add")
+print("TEST check before collect={before}")
+collect_scaffold()
+let after = schem_check(1, "add")
+print("TEST check after collect={after}")
+print("TEST scaffold done")

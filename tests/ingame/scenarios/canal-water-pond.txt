@@ -1,0 +1,7 @@
+// canal 3a: a 5x2x5 pond of sources, 4 dirt in the inventory, the rest from the chest at (110, -60, 102)
+stall(1)     // a Baritone task with no progress for 1 minute is skipped: a stuck test fails fast
+select(pos(104, -62, 100), pos(108, -61, 104))
+let chest = pos(110, -60, 102)
+let left = fill_water("dirt", chest)
+let dirt = count("dirt")
+print("TEST pond left={left} dirt={dirt}")

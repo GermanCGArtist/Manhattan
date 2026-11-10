@@ -1,0 +1,6 @@
+// canal 4: flood() on the 2-deep trench of run_tests.py (open at both ends)
+stall(1)     // a Baritone task with no progress for 1 minute is skipped: a stuck test fails fast
+select(pos(100, -62, 100), pos(108, -61, 102))
+print("TEST flood start")
+flood()
+print("TEST flood done")

@@ -54,6 +54,11 @@ public final class Api {
         return BuildToolsMod.fill.busy() ? null : "Could not start filling with water (see the message above).";
     }
 
+    /** Why the last flood stopped early (its message is in chat too), or null. */
+    public static String floodFailure() {
+        return BuildToolsMod.fill.failure();
+    }
+
     public static boolean flooding() {
         return BuildToolsMod.fill.busy();
     }

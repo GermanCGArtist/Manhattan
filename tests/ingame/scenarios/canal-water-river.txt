@@ -1,0 +1,6 @@
+// canal 3b: a flowing river (level 3) in a 1-wide channel with dry edges, 64 dirt in the inventory, no chest
+stall(1)     // a Baritone task with no progress for 1 minute is skipped: a stuck test fails fast
+select(pos(100, -61, 99), pos(120, -61, 103))
+let left = fill_water("dirt")
+let dirt = count("dirt")
+print("TEST river left={left} dirt={dirt}")

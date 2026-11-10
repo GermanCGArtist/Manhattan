@@ -147,6 +147,16 @@ final class Util {
     }
 
     /** Inventory index of an item, hotbar first; -1 if none. */
+    /** How many items of this kind the player carries, all stacks together. */
+    static int countItem(LocalPlayer p, Item item) {
+        int n = 0;
+        for (int i = 0; i < p.getInventory().getContainerSize(); i++) {
+            ItemStack st = p.getInventory().getItem(i);
+            if (st.is(item)) n += st.getCount();
+        }
+        return n;
+    }
+
     static int slotOf(LocalPlayer p, Item item) {
         int found = -1;
         for (int i = 0; i < 36; i++) {

@@ -4,7 +4,7 @@
 
 // ------------------------------------------------------------------ places
 let storage = pos(-706, 70, 360)       // dug blocks go here; also the dirt for scaffolding and water plugs
-let tools = pos(-702, 66, 360)         // pickaxes, shovels, 16 buckets (+ at least 2 WATER buckets: one source alone never refills)
+let tools = pos(-702, 66, 360)         // pickaxes, shovels, 16 buckets + at least 2 WATER buckets (one source alone never refills)
 let tool_return = pos(-702, 66, 365)   // worn-out tools
 let bed = pos(-699, 66, 360)
 let supply_a = pos(-698, 65, 359)      // build item area (chests, barrels, shulker boxes)
@@ -32,11 +32,11 @@ restock()
 
 // ------------------------------------------------------------------ 1. dig trench_a, 2 layers at a time
 print("1/5: digging trench_a")
-#buildInLayers true
-#layerOrder true
-#layerHeight 2
 area("trench_a")
-#sel ca
+let left_a = clear_area(2)             // top down, 2 layers per pass (Baritone's #layerOrder top-down gets stuck)
+if left_a > 0                          // Baritone finishes what clear_area could not reach
+  #sel ca
+end
 collect_scaffold()
 
 // ------------------------------------------------------------------ 2. make the existing water safe
@@ -49,9 +49,11 @@ if wet > 0 then print("{wet} wet cells are left; check them before going on") en
 // ------------------------------------------------------------------ 3. dig the water trench
 print("3/5: digging trench_canal")
 area("trench_canal")
-#sel ca
+let left_c = clear_area(2)
+if left_c > 0
+  #sel ca
+end
 collect_scaffold()
-#buildInLayers false
 dump(storage)
 
 // ------------------------------------------------------------------ 4. build both schematics
@@ -121,6 +123,11 @@ print("5/5: filling trench_canal with water")
 dump(storage)
 take_upto(storage, scaffold, 256)      // for sealing the open ends
 restock()                              // the buckets
+try
+  take_upto(tools, "water_bucket", 2)  // the first water: restock's "bucket" rule is already met by empty buckets
+catch err
+  print("No water buckets in the tools chest: flood() needs water within 16 blocks then")
+end
 area("trench_canal")
 flood()
 print("Canal done.")

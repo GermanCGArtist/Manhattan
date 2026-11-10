@@ -40,7 +40,7 @@ import java.util.concurrent.TimeUnit;
  * 127.0.0.1 (port 25599, or -Dmanhattan.testbridge.port) for one command per line and answers with one JSON line.
  * tests/ingame/bridge.py is the client. It lives in dev.baritonequeue so it can start scripts and read the runner.
  *
- * Commands: ping | state | chat &lt;text or /command&gt; | chatlog [from] | block x y z | count item | entities type radius
+ * Commands: ping | state | chat &lt;text or /command&gt; | chatlog [from] | block x y z | layers x1 y1 z1 x2 y2 z2 [...] | count item | entities type radius
  * | world name [seed] | leave | runfile path | script | stopscript | editor | screen [close] | quit
  */
 public class TestBridge implements ClientModInitializer {
@@ -193,6 +193,49 @@ public class TestBridge implements ClientModInitializer {
                 }).get(20, TimeUnit.SECONDS);
                 return ok("\"block\":" + q(id));
             }
+            case "layers": {
+                // layers x1 y1 z1 x2 y2 z2 [more boxes...]: per y from the lowest to the highest, how many blocks in the
+                // boxes are not air ("solid") and how many hold water (any water state). Summed over all the boxes.
+                if (a.length < 6 || a.length % 6 != 0) return err("layers needs boxes of six numbers");
+                var server = mc.getSingleplayerServer();
+                if (server == null) return err("no single-player world");
+                int[] v = new int[a.length];
+                for (int i = 0; i < a.length; i++) v[i] = Integer.parseInt(a[i]);
+                int ylo = Integer.MAX_VALUE, yhi = Integer.MIN_VALUE;
+                for (int i = 0; i < v.length; i += 6) {
+                    ylo = Math.min(ylo, Math.min(v[i + 1], v[i + 4]));
+                    yhi = Math.max(yhi, Math.max(v[i + 1], v[i + 4]));
+                }
+                final int lo = ylo, hi = yhi;
+                String[] res = server.submit(() -> {
+                    ServerLevel lvl = server.overworld();
+                    if (mc.player != null) {
+                        ServerLevel own = server.getLevel(mc.player.level().dimension());
+                        if (own != null) lvl = own;
+                    }
+                    StringBuilder solid = new StringBuilder(), water = new StringBuilder();
+                    for (int y = lo; y <= hi; y++) {
+                        int ns = 0, nw = 0;
+                        for (int i = 0; i < v.length; i += 6) {
+                            if (y < Math.min(v[i + 1], v[i + 4]) || y > Math.max(v[i + 1], v[i + 4])) continue;
+                            for (int x = Math.min(v[i], v[i + 3]); x <= Math.max(v[i], v[i + 3]); x++)
+                                for (int z = Math.min(v[i + 2], v[i + 5]); z <= Math.max(v[i + 2], v[i + 5]); z++) {
+                                    BlockPos p = new BlockPos(x, y, z);
+                                    if (!lvl.getBlockState(p).isAir()) ns++;
+                                    if (lvl.getFluidState(p).is(net.minecraft.tags.FluidTags.WATER)) nw++;
+                                }
+                        }
+                        solid.append(solid.isEmpty() ? "" : ",").append(ns);
+                        water.append(water.isEmpty() ? "" : ",").append(nw);
+                    }
+                    return new String[]{solid.toString(), water.toString()};
+                }).get(20, TimeUnit.SECONDS);
+                return ok("\"ylo\":" + lo + ",\"solid\":[" + res[0] + "],\"water\":[" + res[1] + "]");
+            }
+            case "held": return onGame(() -> {
+                if (mc.player == null) return err("not in a world");
+                return ok("\"item\":" + q(BuiltInRegistries.ITEM.getKey(mc.player.getMainHandItem().getItem()).toString()));
+            });
             case "count": return onGame(() -> {
                 if (mc.player == null) return err("not in a world");
                 String want = a[0].contains(":") ? a[0] : "minecraft:" + a[0];

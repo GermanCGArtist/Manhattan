@@ -42,14 +42,17 @@ final class SchemProcess {
     private java.util.List<String> oldIgnore;
     private java.util.Map<net.minecraft.world.level.block.Block, java.util.List<net.minecraft.world.level.block.Block>> oldSubs;
     private int oldStart;
+    private Object planWorld;   // the level the plan was made in
     private Boolean breakBefore;
 
     {
         // throwaway blocks Baritone places where the schematic wants something else are scaffolding: let buildtools
         // record them, so collect_scaffold() can take them down after the build
         dev.buildtools.Api.scaffoldOutsideSchematic = (pos, block) -> {
-            Plan p = plan;
-            if (!working || p == null) return false;
+            // true = the block is OUTSIDE the schematic (scaffolding, if Baritone placed it). With no plan for this
+            // world nothing is wanted, so everything counts as outside.
+            Plan p = plan;   // the last build's plan stays: its blocks are never scaffolding, even after the build
+            if (p == null || planWorld != Minecraft.getInstance().level) return true;
             var want = p.at(pos.getX() - p.min.getX(), pos.getY() - p.min.getY(), pos.getZ() - p.min.getZ());
             return want == null || want.getBlock() != block;
         };
@@ -77,6 +80,7 @@ final class SchemProcess {
             if (c.todoByPhase.getOrDefault(ph, 0) > 0 && (ph != Phase.CLEAR || mode != Mode.ADD)) phases.add(ph);
         }
         plan = p;
+        planWorld = Minecraft.getInstance().level;
         this.mode = mode;
         for (String n : p.notes) Util.msg("Note: " + n);
         if (!p.fluids.isEmpty()) Util.msg("Fluids are not built yet (" + p.fluids + "); they are left out.");
