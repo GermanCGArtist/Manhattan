@@ -11,6 +11,11 @@ Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
   full, shaped, attached, redstone, power), bottom-up per layer. Fluids are listed, not built yet. Safe areas are left out.
 - New in-game tests `schem_list`, `schem_add`, `schem_fix`, `schem_exact`; the test profile gets Litematica and
   malilib (copied from the Bestes_projekt profile) and never the Litematica printer.
+- New presets, all in the current language and parsed at build time: the canal, building a schematic with materials from
+  chests, digging top down with `clear_area(2)`, filling with water (`flood()`), filling water with dirt from a chest.
+  The digging presets use `clear_area` instead of `#layerOrder true` + `#sel ca` (which gets stuck), "Remove water
+  (layers)" is gone (use the water fill), the helpers use `enable(...)` and `on bed_time`. On the first start, presets
+  you never changed are replaced; edited ones stay as "name (yours)".
 - Canal work (tested end to end by the new `canal_smoke` test, which runs `scripts/canal.txt` on a small canal):
   - `flood()` works in trenches of any width: it stands or swims in the water (head always dry, comes up for air),
     puts water on temporary blocks where there is nothing to click against, empties a bucket only when the line of

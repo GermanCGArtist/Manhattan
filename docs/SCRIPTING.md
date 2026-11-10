@@ -198,6 +198,18 @@ options("survival")
 **General:** `print`, `log`, `str`, `num`, `int`, `type`, `len`, `range`, `push`, `pop`, `insert`, `remove`, `contains`, `index_of`, `keys`, `values`, `join`, `split`, `upper`, `lower`, `trim`, `replace`, `starts_with`, `ends_with`, `sort`, `reverse`, `copy`, `sum`, `min`, `max`, `abs`, `floor`, `ceil`, `round`, `sqrt`, `random`, `error`, `assert`, `now`, `stop`.
 `list.push(x)` is the same as `push(list, x)`; that works for every function.
 
+## Presets
+
+**Presets...** in the editor inserts ready-made scripts at the cursor. The ones that come with the mod (2.5.0): the canal
+(dig, plug the old water, build the schematics, fill with water), building a Litematica schematic with materials from
+chests, digging an area top down (`clear_area(2)`), mining an area or several areas in a row, the water job (fill with
+dirt from a chest, then mine), filling water with dirt, filling an area with water (`flood()`), clearing trees, the
+survival helpers, staying fed and sleeping, emptying into a chest when full, and the mining, farming and travel ones.
+Positions are placeholders: put the cursor on a `pos(...)` and use Pick block.
+
+When a new version brings new presets, the old ones you never changed are replaced; ones you edited stay, next to the
+new one as "name (yours)", and your own presets are never touched.
+
 ## Old scripts
 
 The first start of 2.0.0 converts the saved script and your own presets automatically. The old text stays in `config/baritonequeue.json` under `scriptBeforeV2`. Some examples:
