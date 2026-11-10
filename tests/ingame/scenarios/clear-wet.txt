@@ -1,0 +1,4 @@
+// clear_wet: blocks next to water stay and do not count in what clear_area returns
+select(pos(102, -60, 92), pos(108, -60, 96))
+let left = clear_area()
+print("TEST cleared left={left}")

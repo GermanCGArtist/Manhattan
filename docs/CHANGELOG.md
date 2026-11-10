@@ -11,6 +11,37 @@ Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
   full, shaped, attached, redstone, power), bottom-up per layer. Fluids are listed, not built yet. Safe areas are left out.
 - New in-game tests `schem_list`, `schem_add`, `schem_fix`, `schem_exact`; the test profile gets Litematica and
   malilib (copied from the Bestes_projekt profile) and never the Litematica printer.
+- Canal work (tested end to end by the new `canal_smoke` test, which runs `scripts/canal.txt` on a small canal):
+  - `flood()` works in trenches of any width: it stands or swims in the water (head always dry, comes up for air),
+    puts water on temporary blocks where there is nothing to click against, empties a bucket only when the line of
+    sight really ends on the intended face (no more water on the rim), never lets Baritone dig while filling, takes
+    out blocks Baritone pillared into the trench, refills several buckets per trip and checks every scoop.
+  - `clear_area(2)`: 2 layers per pass (Baritone's own `#layerOrder` top-down `#sel ca` gets stuck).
+  - `collect_scaffold()` never digs through a fresh build (Baritone only walks while it collects); `fill_water` steps
+    out of the last wet cell when it stands in it; `take_upto` takes exactly the count still needed.
+  - `schem_build(..., "skip")` (default) builds what it has items for and leaves out the rest; the builder takes
+    items from the whole inventory; the digger uses the fastest tool; Test checks the world too (chests, bed,
+    placements, materials, water for `flood()`).
+
+## 2.4.4 – clear_area says why blocks are left (2026-11-09)
+- `clear_area` returned every block left, so `if clear_area() > 0 then #sel ca end` handed the blocks next to the
+  water to Baritone, whose builder will not break them either: on the AFK run it walked back and forth for 15 min.
+  It now returns only the blocks it could not get at, and the chat line splits the rest: "415 left: 400 next to
+  water or lava (left alone so nothing floods), 15 it could not get at."
+- `scripts/water-job.txt` no longer runs `#sel ca` after `clear_area`.
+
+## 2.4.3 – air guard, tools in the hotbar, Baritone giving up (2026-11-09)
+- Drowned on the AFK run: `#sel ca` after `clear_area` dug at the blocks next to the water that `clear_area` leaves
+  alone on purpose, and Baritone got stuck under water. New always-on air guard (script or not, before fights and
+  everything else): with less than half the air left under water it swims up to open water in the same pool, breaks
+  the block over the head when closed in (with the best hotbar tool), waits for the air to fill, then swims to dry
+  land. The water fill's own dives are left alone.
+- A Baritone build (`#sel ca`, `#build`) that pauses itself ("Unable to do it. Pausing, resume to resume") is
+  cancelled after 10 s and the script goes on; it used to wait there for good.
+- While a script runs, the want-list tools always sit in the hotbar (Baritone only uses tools from the hotbar): once
+  a second one that is only in the main inventory is swapped into an empty slot, else over blocks or other things -
+  never over food, another wanted tool, the selected slot or a slot `hotbar()` pinned.
+- New in-game tests `hotbar_tools` and `air`.
 
 ## 2.4.2 – dump() keeps only the wanted tools (2026-11-09)
 - `dump()` kept everything that can wear out and all food. Bows, armour and tools from the mobs `defend()` killed,

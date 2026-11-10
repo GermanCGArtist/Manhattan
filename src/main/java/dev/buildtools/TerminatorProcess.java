@@ -447,7 +447,7 @@ final class TerminatorProcess extends Feature {
     }
 
     /** The first air cell straight above (the surface), when the way up is all water; null if something is in the way. */
-    private static BlockPos surfaceAbove(Level level, BlockPos s) {
+    static BlockPos surfaceAbove(Level level, BlockPos s) {
         BlockPos.MutableBlockPos m = s.mutable();
         for (int i = 0; i < 40; i++) {
             m.move(Direction.UP);

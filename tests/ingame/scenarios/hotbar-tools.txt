@@ -1,0 +1,7 @@
+// hotbar_tools: wanted tools that sit in the main inventory move into the hotbar while a script runs
+want("diamond_pickaxe", 1)
+want("diamond_shovel", 1)
+hotbar(9, "food")
+print("TEST hotbar armed")
+wait 8
+print("TEST hotbar done")

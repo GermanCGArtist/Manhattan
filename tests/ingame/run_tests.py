@@ -995,7 +995,60 @@ CANAL_TESTS = [("canal_layers", test_canal_layers), ("canal_pillar_scaffold", te
                ("canal_tools_schem", test_canal_tools_schem)]
 
 
-TESTS = [("smoke", test_smoke), ("fill_water", test_fill_water), ("eat", test_eat), ("defend", test_defend), ("clear_resume", test_clear_resume), ("dump", test_dump),
+def test_hotbar_tools(t):
+    """Wanted tools that only sit in the main inventory are moved into the hotbar (not over food or pinned slots)."""
+    reset_area(t)
+    t.cmd(*["/item replace entity @s hotbar.%d with cobblestone 64" % i for i in range(8)],
+          "/item replace entity @s hotbar.8 with bread 8",
+          "/give @s diamond_pickaxe 1", "/give @s diamond_shovel 1")
+    t.run("hotbar-tools.txt")
+    t.wait_chat("TEST hotbar done", 30)
+    hb = t.state()["hotbar"]
+    missing = [x for x in ("diamond_pickaxe", "diamond_shovel") if x not in hb]
+    if missing:
+        raise Fail("not in the hotbar: %s (hotbar %s)" % (missing, hb))
+    if hb[8] != "bread":
+        raise Fail("the food slot was taken: hotbar %s" % hb)
+    return "pickaxe and shovel moved into the hotbar, bread stayed in slot 9 (%s)" % hb
+
+
+def test_air(t):
+    """Shut in under water (a stone lid one block over the water): the air guard breaks out before drowning."""
+    reset_area(t)
+    t.cmd("/fill 102 -62 98 106 -54 102 stone", "/fill 103 -62 99 105 -55 101 water",
+          "/fill 103 -54 99 105 -54 101 stone",   # the lid: water right up to it, no air pocket
+          "/give @s diamond_pickaxe 1", "/tp @s 104 -60 100")
+    t.run("air.txt")
+    t.wait_chat("TEST air armed", 10)
+    t.wait_chat("Running out of air", 40)
+    t.b.wait(lambda: (lambda s: s if not s["underWater"] else None)(t.state()), 40, what="the head above water")
+    st = t.state()
+    t.b("stopscript")
+    if any("drowned" in l or " died" in l for l in t.lines()) or st["health"] <= 0:
+        raise Fail("drowned (%s)" % [l for l in t.lines() if "air" in l.lower() or "drown" in l][-4:])
+    return "came up for air (health %.0f, air %d)" % (st["health"], st["air"])
+
+
+def test_clear_wet(t):
+    """Blocks next to water are left alone, named in chat and not counted in what clear_area() returns."""
+    reset_area(t)
+    t.cmd("/fill 102 -60 92 108 -60 96 dirt", "/fill 109 -60 91 110 -59 97 stone", "/fill 109 -60 93 109 -59 95 water",
+          "/give @s diamond_shovel 1")
+    t.run("clear-wet.txt")
+    line = t.wait_chat("TEST cleared", 120)
+    done = next((l for l in t.lines() if "clear_area done" in l), "")
+    if "left=0" not in line:
+        raise Fail("clear_area counted the wet blocks: " + line + " / " + done)
+    if "next to water" not in done:
+        raise Fail("no 'next to water' in the report: " + done)
+    wet = [z for z in (93, 94, 95) if "dirt" in t.block((108, -60, z))]
+    if len(wet) != 3:
+        raise Fail("the blocks next to the water were broken: %s" % done)
+    return done.split("] ", 1)[-1][:100]
+
+
+
+TESTS = [("smoke", test_smoke), ("fill_water", test_fill_water), ("eat", test_eat), ("defend", test_defend), ("clear_resume", test_clear_resume), ("dump", test_dump), ("hotbar_tools", test_hotbar_tools), ("air", test_air), ("clear_wet", test_clear_wet),
          ("schem_list", test_schem_list), ("schem_add", test_schem_add), ("schem_fix", test_schem_fix), ("schem_fix_wrong", test_schem_fix_wrong), ("schem_exact", test_schem_exact)]
 
 TESTS += CANAL_TESTS

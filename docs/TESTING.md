@@ -49,6 +49,9 @@ Nothing to do by hand: there is **no Microsoft login**. The test starts the game
 | `defend` | `on mobs > 0 … defend()`: at night a zombie is summoned 4 blocks away; the handler fires and kills it |
 | `clear_resume` | a 7×21×2 strip of dirt; `clear_area()` is interrupted by `on food < 14 … eat()` and must carry on ("Carrying on clearing"), not start from the top again; afterwards the strip is empty and it returns 0 |
 | `dump` | junk in the inventory (a worse second diamond shovel, an iron shovel, a bow, a leather chestplate, rotten flesh, cobblestone in the hotbar) plus bread and a golden apple; with `want("diamond_shovel", 1)`, `dump()` must leave exactly one diamond shovel, the bread and the golden apple |
+| `hotbar_tools` | the hotbar full of cobblestone and bread in slot 9, a diamond pickaxe and shovel in the main inventory; with both on the want-list they must end up in the hotbar, the bread stays |
+| `air` | shut in a water-filled stone box with a one-block lid; the air guard must break out before drowning (fails on a "drowned" chat line) |
+| `clear_wet` | a 7×5 dirt layer with water beside one end; the three dirt blocks touching the water stay, the report says "next to water" and `clear_area()` returns 0 |
 
 Before each world test the area around (100, -60, 100) is reset: dirt/grass ground, air above, all entities
 except the player killed, survival mode, empty inventory, noon. The world rules are set once: no daylight cycle,
@@ -61,7 +64,8 @@ and put it in `TESTS`.
 
 ## Parallel runs, schematic tests, no focus stealing (2.5.0)
 
-`tests\ingameun.bat` starts several games at once when there is RAM for it (about 3 GB each, at most 3; `-j N` /
+`tests\ingame
+un.bat` starts several games at once when there is RAM for it (about 3 GB each, at most 3; `-j N` /
 `--workers N` sets it, `-j 1` is one game in the "Manhatten Testing" profile as before). Each worker is its own game:
 game dir `tmp\ingame\wN` (own `config/`, `saves/`, `logs/`, `options.txt`, Litematica placements), bridge port
 25600+N, log `tmp\ingame\wN.log`. Workers take tests from a queue (slow ones first), each test has a hard limit
@@ -84,6 +88,13 @@ there; the Litematica printer is never installed.
 | `schem_fix` | the wrong floor block is replaced; schematic air is left alone |
 | `schem_fix_wrong` | wrong blocks on the redstone, stair, torch, log and slab spots, and a stair with the wrong facing and half, are all replaced; every block is compared with facing, half, type and axis |
 | `schem_exact` | built into a hill of dirt: schematic air is dug out top-down, wrong dirt is replaced, everything matches |
+| `canal_layers` | 8 adjacent boxes (4 and 3 deep) of trench_a dug into a dirt plateau by `clear_area(2)`: everything dug, top layers first, nothing around or below touched |
+| `canal_scaffold_schem` | a schematic floating above the ground built on dirt scaffolding; `collect_scaffold()` takes the scaffolding down and leaves the schematic whole |
+| `canal_water_pond`, `canal_water_river` | `fill_water("dirt", chest)` dries a pond (fetching dirt from the chest) and a flowing river |
+| `canal_flood_*` | `flood()` on a 2-deep trench open at both ends: with 2 water buckets, with 16 stacked buckets, 11 wide (temporary blocks where nothing can be clicked), no water outside, ends sealed; with one bucket or none it stops with a clear message |
+| `canal_schem_two`, `canal_schem_needed`, `canal_tools_schem` | two placements with one item missing (skipped and reported), `schem_needed` and `take_upto` from chest/barrel/shulker box, the digger takes pickaxe and shovel |
+| `canal_survival_dump`, `canal_survival_restock` | a full inventory triggers `dump(storage)` and the task goes on; `restock()` fetches buckets and tools |
+| `canal_smoke` | the whole `scripts/canal.txt` (from "survival" on) on a small copy of the canal: dig, plug the water, dig the water trench, build two placements from a shulker box, fill with water |
 
 ## How it works
 

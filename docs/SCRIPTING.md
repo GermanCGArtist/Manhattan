@@ -105,7 +105,7 @@ The ones marked **waits** take time in the world: the script waits until they ar
 | function | |
 |---|---|
 | `fill_water(["dirt" [, chest [, per_trip]]])` | waits; fills the selection's water. With a chest it fetches more (512 per trip) whenever the blocks run out. Returns the number of wet cells left (0 = done) |
-| `clear_area([layers])` | waits; mines out the selection itself instead of Baritone's builder, from the top, 3 layers per pass (or 2: `clear_area(2)`; details below). Returns the blocks left |
+| `clear_area([layers])` | waits; mines out the selection itself instead of Baritone's builder, from the top, 3 layers per pass (or 2: `clear_area(2)`; details below). Returns the blocks left that it could not get at (not counting the ones next to water or lava, or protected) |
 | `drain()` | waits; removes flowing water that blocks the builder |
 | `flood()` | waits; fills the selection with water, using buckets |
 | `collect_scaffold()` | waits; takes down the blocks Baritone placed to reach things |
@@ -145,12 +145,9 @@ Deeper cells are done in **dive mode** (on by default; switch it off with `optio
 * At every stop it breaks everything in reach, highest first. Blocks that break at once (Haste + Efficiency) go at one per tick, others as fast as the game allows. It takes the fastest tool, but not one the item saver protects.
 * Short level steps it walks itself and picks up drops right away. Longer or awkward moves go to Baritone, which may dig while clear_area runs.
 * It leaves blocks next to water or lava alone (no flooding), and respects safe areas and Baritone's do-not-break list.
-* At the end it prints where the time went (breaking, walking, Baritone paths, picking up). Finish what is left with `#sel ca`:
-  ```
-  if clear_area() > 0
-    #sel ca              // a # line must stand on a line of its own
-  end
-  ```
+* At the end it prints what is left and why (next to water or lava, protected, could not get at) and where the time
+  went. It returns only the blocks it could not get at; the wet and protected ones are never worth another go. Don't
+  hand the rest to `#sel ca`: Baritone's builder will not break next to water either and walks back and forth.
 
 **Survival:**
 
