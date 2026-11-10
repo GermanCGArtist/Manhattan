@@ -287,7 +287,7 @@ final class ClearProcess implements IBaritoneProcess {
     // ------------------------------------------------------------------ tools
 
     /** Puts the fastest tool for the block in the hand (not one Baritone's item saver would spare). */
-    private static void equipFor(Minecraft mc, LocalPlayer p, BlockState s) {
+    static void equipFor(Minecraft mc, LocalPlayer p, BlockState s) {
         var inv = p.getInventory();
         int best = -1;
         float bestSpeed = 1.0f;
