@@ -183,6 +183,22 @@ final class ChestProcess implements IBaritoneProcess {
                 Slot s = h.slots.get(index);
                 int before = s.getItem().getCount();
                 if (before == 0) return pause();
+                int still = needed == Integer.MAX_VALUE ? Integer.MAX_VALUE : needed - moved;
+                if (op.kind == ChestOp.Kind.GET && still > 0 && still < before) {
+                    // take exactly what is still needed: all of the stack onto the cursor, one into an empty
+                    // slot of ours each click, the rest back into its slot (a quick move would take the whole stack)
+                    Slot target = null;
+                    for (Slot sl : h.slots) {
+                        if (sl.container == p.getInventory() && sl.getItem().isEmpty()) { target = sl; break; }
+                    }
+                    if (target == null) return fail("No free slot in the inventory for " + still + " of " + before + " in the chest.");
+                    mc.gameMode.handleContainerInput(h.containerId, s.index, 0, ContainerInput.PICKUP, p);
+                    for (int k = 0; k < still; k++) mc.gameMode.handleContainerInput(h.containerId, target.index, 1, ContainerInput.PICKUP, p);
+                    mc.gameMode.handleContainerInput(h.containerId, s.index, 0, ContainerInput.PICKUP, p);
+                    moved += still;
+                    todo.clear();
+                    return pause();
+                }
                 mc.gameMode.handleContainerInput(h.containerId, s.index, 0, ContainerInput.QUICK_MOVE, p);
                 int delta = before - s.getItem().getCount();   // the client already applied the move
                 if (delta <= 0) {

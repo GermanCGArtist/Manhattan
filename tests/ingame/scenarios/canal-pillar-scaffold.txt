@@ -1,0 +1,9 @@
+// PILLAR test (not a canal dig): a stone patch floating 4 blocks above the grass (run_tests.py places it 4 blocks above the grass). #sel ca reaches it by
+// building up with dirt; collect_scaffold() must take that dirt down again.
+stall(1)     // a Baritone task with no progress for 1 minute is skipped: a stuck test fails fast
+#acceptableThrowawayItems dirt
+select(pos(103, -56, 103), pos(105, -56, 105))
+#sel ca
+print("TEST scaffold sel cleared")
+collect_scaffold()
+print("TEST scaffold done")

@@ -14,6 +14,11 @@ import net.minecraft.world.item.Items;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.FallingBlock;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
+import baritone.api.pathing.goals.GoalBlock;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -41,11 +46,14 @@ final class FillProcess extends Feature {
     private final Set<BlockPos> skipped = new HashSet<>();     // cells we could not reach
     private List<BlockPos> seal = new ArrayList<>();
     private int sealAttempts, pausedTicks;
+    private String failure;     // why the last fill stopped (null while it runs or after a success)
 
     private final Placer placer = new Placer();
     private BlockPos cur;
     private Placer.Mode curMode;
-    private int waitTicks, pass, layerY, noPlaceable, budget, placed, minX, minZ;
+    private int waitTicks, pass, layerY, noPlaceable, budget, placed, scooped, minX, minZ;
+    private boolean refilling;   // empty-handed: scooping up buckets at a source before walking back to the cells
+    private int flowWaits;       // ticks spent waiting for a new source to form between two placed sources
 
     FillProcess() {
         super("BuildTools fill", 14);
@@ -63,6 +71,7 @@ final class FillProcess extends Feature {
         LocalPlayer p = mc.player;
         if (p == null || mc.level == null) return;
         if (state != State.IDLE) { Util.msg("Already busy with a fill."); return; }
+        failure = null;
         Level level = mc.level;
 
         ISelection[] selections = Util.baritone().getSelectionManager().getSelections();
@@ -205,6 +214,8 @@ final class FillProcess extends Feature {
         layerY = Integer.MIN_VALUE;
         noPlaceable = 0;
         placed = 0;
+        scooped = 0;
+        refilling = false;
         budget = targets.size() * 3 + 200;
     }
 
@@ -231,6 +242,7 @@ final class FillProcess extends Feature {
             switch (placer.tick(mc, p)) {
                 case DONE -> {
                     if (curMode == Placer.Mode.WATER) placed++;
+                    if (curMode == Placer.Mode.PICKUP) scooped++;
                     cur = null;
                     return pause();
                 }
@@ -306,22 +318,36 @@ final class FillProcess extends Feature {
             choices = lattice;
         }   // from pass 1 on every placeable gap is filled directly; `budget` stops a layer that never fills
 
-        // need a full bucket?
-        if (Util.slotOf(p, Items.WATER_BUCKET) < 0) {
-            if (Util.slotOf(p, Items.BUCKET) < 0) {
-                abort("No bucket left in the inventory.");
+        // the buckets: refill when empty-handed, several at once, then place them all before walking back
+        int water = Util.countItem(p, Items.WATER_BUCKET), empty = Util.countItem(p, Items.BUCKET);
+        if (water == 0 && empty == 0) {
+            abort("No bucket left in the inventory.");
+            return pause();
+        }
+        if (water == 0) refilling = true;
+        int want = Math.min(remaining.size(), water + empty);   // buckets worth holding now
+        if (refilling && water < want && empty > 0) {
+            BlockPos source = findSource(level, p);
+            if (source != null) {
+                flowWaits = 0;
+                cur = source;
+                curMode = Placer.Mode.PICKUP;
+                placer.start(source, Placer.Mode.PICKUP, water);
                 return pause();
             }
-            BlockPos source = findSource(level, p);
-            if (source == null) {
+            if (water == 0 && flowWaits < 6) {
+                // two placed sources one cell apart: the cell between them fills by itself and then regenerates
+                flowWaits++;
+                waitTicks = 30;
+                return pause();
+            }
+            if (water == 0) {
                 abort("No water source to refill from within 16 blocks. Stand next to a pond or carry water buckets.");
                 return pause();
             }
-            cur = source;
-            curMode = Placer.Mode.PICKUP;
-            placer.start(source, Placer.Mode.PICKUP);
-            return pause();
+            // no source left in reach: place the water we have
         }
+        refilling = false;
 
         BlockPos next = null;
         double best = Double.MAX_VALUE;
@@ -345,6 +371,7 @@ final class FillProcess extends Feature {
                 for (int dz = -16; dz <= 16; dz++) {
                     BlockPos pos = origin.offset(dx, dy, dz);
                     if (!Util.isSourceWater(level.getBlockState(pos))) continue;
+                    if (!level.getFluidState(pos.above()).isEmpty()) continue;   // something on top: the scoop ray would hit that
                     boolean regen = Util.regenerates(level, pos);
                     if (targets.contains(pos) && !regen) continue;   // would undo our own work
                     double score = pos.distSqr(origin) - (regen ? 1000 : 0);
@@ -355,8 +382,42 @@ final class FillProcess extends Feature {
         return best;
     }
 
+    /** Walks to a dry spot from which the cell can be clicked (not just "3 blocks away": that may be a wall). */
     private PathingCommand walkTo(BlockPos pos) {
-        return new PathingCommand(new GoalNear(pos, 3), PathingCommandType.SET_GOAL_AND_PATH);
+        Minecraft mc = Minecraft.getInstance();
+        BlockPos stand = mc.level == null || mc.player == null ? null : standNear(mc.level, mc.player, pos);
+        return new PathingCommand(stand == null ? new GoalNear(pos, 3) : new GoalBlock(stand), PathingCommandType.SET_GOAL_AND_PATH);
+    }
+
+    /** A dry standing spot near the cell with a clear view of it (for a scoop or a placement), nearest to the player. */
+    private BlockPos standNear(Level level, LocalPlayer p, BlockPos cell) {
+        BlockPos best = null;
+        double bestD = Double.MAX_VALUE;
+        for (int dx = -3; dx <= 3; dx++) {
+            for (int dy = -2; dy <= 2; dy++) {
+                for (int dz = -3; dz <= 3; dz++) {
+                    BlockPos feet = cell.offset(dx, dy, dz);
+                    if (Util.isSolid(level, feet) || Util.isSolid(level, feet.above())) continue;   // room for the body
+                    if (!Util.isSolid(level, feet.below())) continue;                               // something to stand on
+                    if (!level.getFluidState(feet).isEmpty()) continue;                             // not in water
+                    Vec3 eye = new Vec3(feet.getX() + 0.5, feet.getY() + 1.62, feet.getZ() + 0.5);
+                    boolean ok = curMode == Placer.Mode.PICKUP
+                            ? sourceVisibleFrom(level, p, eye, cell)
+                            : Placer.placeableFrom(level, p, eye, cell);
+                    if (!ok) continue;
+                    double d = feet.distSqr(p.blockPosition());
+                    if (d < bestD) { bestD = d; best = feet; }
+                }
+            }
+        }
+        return best;
+    }
+
+    private static boolean sourceVisibleFrom(Level level, LocalPlayer p, Vec3 eye, BlockPos cell) {
+        Vec3 aim = Vec3.atCenterOf(cell);
+        if (eye.distanceTo(aim) > 4.2) return false;
+        BlockHitResult hit = level.clip(new ClipContext(eye, aim, ClipContext.Block.COLLIDER, ClipContext.Fluid.SOURCE_ONLY, p));
+        return hit.getType() == HitResult.Type.BLOCK && hit.getBlockPos().equals(cell);
     }
 
     private void finish() {
@@ -369,7 +430,13 @@ final class FillProcess extends Feature {
         if (state == State.SEALING) Util.baritone().getBuilderProcess().onLostControl();
         state = State.IDLE;
         cur = null;
+        failure = why;
         Util.msg("Fill stopped: " + why);
+    }
+
+    /** Why the last fill stopped early, or null. flood() reads it so that the script stops with that error. */
+    String failure() {
+        return failure;
     }
 
     @Override

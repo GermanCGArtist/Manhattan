@@ -1,6 +1,6 @@
-"""Install, launch and talk to the "Manhatten Testing" Modrinth profile.
+"""Install, launch and talk to the test games (copies of the "Manhatten Testing" setup under tmp/ingame/wN).
 
-Only this profile is ever started or stopped here. Other Minecraft instances (in particular "26.1.1 AFK") are
+Only games whose game dir is one of those copies are ever started or stopped here. Other Minecraft instances (in particular "26.1.1 AFK") are
 never touched: processes are found by their --gameDir, and only ones whose game dir is the testing profile count.
 
 Standard library only (Python 3.9+).
@@ -20,13 +20,20 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 APPDATA = os.environ.get("APPDATA", os.path.expanduser(r"~\AppData\Roaming"))
 MODRINTH = os.path.join(APPDATA, "ModrinthApp")
 META = os.path.join(MODRINTH, "meta")
-PROFILE = os.environ.get("MANHATTAN_PROFILE") or os.path.join(MODRINTH, "profiles", "Manhatten Testing")   # sic: the profile is spelled this way
-# (a parallel worker has its own game dir under tmp/ingame/ and its own bridge port; see run_tests.py --workers)
-WORKER = bool(os.environ.get("MANHATTAN_PROFILE"))
+# The user's own "Manhatten Testing" profile (spelled this way) is never used by the harness any more: every game
+# runs in its own copy under tmp/ingame/wN (own mods, saves, config, logs), so the profile stays untouched while the
+# user plays in it. A run without MANHATTAN_PROFILE uses tmp/ingame/w1.
+USER_PROFILE = os.path.join(MODRINTH, "profiles", "Manhatten Testing")
+PROFILE = os.environ.get("MANHATTAN_PROFILE") or os.path.join(REPO, "tmp", "ingame", "w1")
+if os.path.normcase(os.path.abspath(PROFILE)) == os.path.normcase(os.path.abspath(USER_PROFILE)):
+    raise RuntimeError("the harness never runs in the user's 'Manhatten Testing' profile; use a copy (tmp/ingame/wN)")
+WORKER = True   # every game is a copy: the lighter settings apply to all of them
 AFK_MODS = os.path.join(MODRINTH, "profiles", "26.1.1 AFK", "mods")
 VERSION = "26.1.1-0.20.1"   # Modrinth's id for Minecraft 26.1.1 + Fabric Loader 0.20.1
 FABRIC_API = "fabric-api-0.145.4+26.1.1.jar"
-PORT = int(os.environ.get("MANHATTAN_BRIDGE_PORT", "25599"))
+# bridge ports: 25700 + worker number (25701 for a single game). 25599..25603 belong to the other harness users.
+PORT_BASE = int(os.environ.get("MANHATTAN_PORT_BASE", "25700"))
+PORT = int(os.environ.get("MANHATTAN_BRIDGE_PORT", str(PORT_BASE + 1)))
 USERNAME = "ManhattanTest"
 WORLD = "manhattan-test"
 
@@ -83,7 +90,7 @@ def _java_processes():
 
 
 def testing_pids():
-    """PIDs of Minecraft instances whose game dir is the testing profile (and nothing else)."""
+    """PIDs of Minecraft instances whose game dir is this harness game's dir (and nothing else)."""
     want = os.path.normcase(os.path.normpath(PROFILE)).replace("/", "\\")
     # the path may be quoted or not (it has a space); it must end there: '"', ' --next-arg' or the end
     pat = re.compile(r'--gamedir\s+"?' + re.escape(want) + r'\\?(?:"|\s+--|\s*$)')
@@ -259,7 +266,7 @@ def launch():
     si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
     si.wShowWindow = 4
     proc = subprocess.Popen(args, cwd=PROFILE, stdout=out, stderr=subprocess.STDOUT, creationflags=flags, startupinfo=si)
-    log("launched Minecraft (pid %d) on profile 'Manhatten Testing'" % proc.pid)
+    log("launched Minecraft (pid %d) in game dir %s" % (proc.pid, PROFILE))
     return proc
 
 

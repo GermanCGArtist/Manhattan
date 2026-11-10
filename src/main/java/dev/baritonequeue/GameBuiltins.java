@@ -360,7 +360,11 @@ final class GameBuiltins {
         def(g, "drain", 0, 0, "drain()", "remove the flowing water that blocks the builder (selection, or 8 blocks around you)", (in, a, l) ->
                 in.await(() -> new Actions.Feature(dev.buildtools.Api::drainNow, dev.buildtools.Api::draining, dev.buildtools.Api::stopDraining, () -> true), "drain", l));
         def(g, "flood", 0, 0, "flood()", "fill the selection WITH water, using buckets (seals the open sides first)", (in, a, l) ->
-                in.await(() -> new Actions.Feature(dev.buildtools.Api::floodNow, dev.buildtools.Api::flooding, dev.buildtools.Api::stopFlooding, () -> true), "flood", l));
+                in.await(() -> new Actions.Feature(dev.buildtools.Api::floodNow, dev.buildtools.Api::flooding, dev.buildtools.Api::stopFlooding,
+                        () -> {   // a stop with a reason (no water to refill from, cells out of reach ...) fails the script
+                            String why = dev.buildtools.Api.floodFailure();
+                            return why == null ? (Object) Boolean.TRUE : new Modules.Failure(why);
+                        }), "flood", l));
         def(g, "collect_scaffold", 0, 0, "collect_scaffold()", "take down the blocks Baritone placed to reach things, and pick them up", (in, a, l) ->
                 in.await(() -> new Actions.Feature(dev.buildtools.Api::collectScaffoldNow, dev.buildtools.Api::collectingScaffold, dev.buildtools.Api::stopCollectingScaffold, () -> true), "collect_scaffold", l));
 

@@ -1,0 +1,4 @@
+// canal 5: both enabled placements (run_tests.py), skip mode; one item (emerald_block) is in neither inventory nor chest
+stall(1)     // a Baritone task with no progress for 1 minute is skipped: a stuck test fails fast
+let left = schem_build("all", "add", "skip")
+print("TEST schem2 left={left}")

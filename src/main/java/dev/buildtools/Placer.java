@@ -37,6 +37,7 @@ final class Placer {
     static Item preferred;
 
     private Mode mode = Mode.BLOCK;
+    private int waterBefore;     // PICKUP: water buckets carried when the scoop started (done = one more)
     private BlockPos target;
     private int walkTicks, actTicks, cooldown, actions;
     private String failure = "";
@@ -50,8 +51,14 @@ final class Placer {
     }
 
     void start(BlockPos target, Mode mode) {
+        start(target, mode, -1);
+    }
+
+    /** waterBuckets: for a scoop, the water buckets carried before it (-1 = not counted: the source must vanish). */
+    void start(BlockPos target, Mode mode, int waterBuckets) {
         this.target = target;
         this.mode = mode;
+        this.waterBefore = waterBuckets;
         walkTicks = 0;
         actTicks = 0;
         cooldown = 0;
@@ -117,17 +124,18 @@ final class Placer {
         return best;
     }
 
-    private boolean done(Level level) {
+    private boolean done(Level level, LocalPlayer p) {
         BlockState s = level.getBlockState(target);
         return switch (mode) {
             case BLOCK -> Util.isSolid(level, target);
             case WATER -> Util.isSourceWater(s);
-            case PICKUP -> !Util.isSourceWater(s);
+            // a scoop is done when a water bucket is really in the inventory (a source that merely vanished is not)
+            case PICKUP -> waterBefore < 0 ? !Util.isSourceWater(s) : Util.countItem(p, Items.WATER_BUCKET) > waterBefore;
         };
     }
 
     Status tick(Minecraft mc, LocalPlayer p) {
-        if (done(mc.level)) return Status.DONE;
+        if (done(mc.level, p)) return Status.DONE;
 
         Click click = findClick(mc, p);
         if (click == null) {

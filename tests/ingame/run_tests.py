@@ -1,14 +1,18 @@
 """In-game smoke tests for Manhattan on the "Manhatten Testing" profile.
 
-  python tests/ingame/run_tests.py                 install, launch, run every test, close the game
+  python tests/ingame/run_tests.py                 install, launch, run every test (parallel games), close them
   python tests/ingame/run_tests.py fill_water eat  only these tests
+  python tests/ingame/run_tests.py -j 1            one game (still a copy, tmp/ingame/w1)
   python tests/ingame/run_tests.py --keep-open     leave the game running afterwards (drive it with bridge.py)
-  python tests/ingame/run_tests.py --attach        use the testing instance that is already running
+  python tests/ingame/run_tests.py --attach        use the copy game (tmp/ingame/w1) that is already running
 
+Every game is a copy of the testing setup under tmp/ingame/wN (own mods, saves, logs, bridge port 25700+N).
+The user's "Manhatten Testing" profile is never started, installed into or saved to.
 Exit code 0 = every test passed. Never touches any other Minecraft instance.
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -261,19 +265,32 @@ def schem_supplies(t):
 
 def schem_wrong(t, ignore=()):
     """Positions whose block differs from the model: [(pos, wanted, got)]. Air for every position the model leaves empty."""
-    model, bad = schem_model(), []
-    for x in range(5):
-        for y in range(3):
-            for z in range(5):
-                pos = (SCHEM_ORIGIN[0] + x, SCHEM_ORIGIN[1] + y, SCHEM_ORIGIN[2] + z)
+    return model_diff(t, SCHEM_ORIGIN, SCHEM_SIZE, schem_model(), ignore=ignore)
+
+
+def model_diff(t, origin, size, model, region=None, ignore=()):
+    """Blocks of the region (default: the box of the model) that differ from it: [(pos, wanted, got)].
+    Inside the box the model's block is wanted (facing, half, type and axis are compared too), outside it air."""
+    sx, sy, sz = size
+    if region is None:
+        region = ((origin[0], origin[1], origin[2]), (origin[0] + sx - 1, origin[1] + sy - 1, origin[2] + sz - 1))
+    (x1, y1, z1), (x2, y2, z2) = region
+    bad = []
+    for x in range(x1, x2 + 1):
+        for y in range(y1, y2 + 1):
+            for z in range(z1, z2 + 1):
+                pos = (x, y, z)
                 if pos in ignore:
                     continue
-                want = model.get((x, y, z), "minecraft:air").split("[")[0]
+                lx, ly, lz = x - origin[0], y - origin[1], z - origin[2]
+                inside = 0 <= lx < sx and 0 <= ly < sy and 0 <= lz < sz
+                want_full = model.get((lx, ly, lz), "minecraft:air") if inside else "minecraft:air"
+                want = want_full.split("[")[0]
                 got = t.block(pos).split("|")[0]
                 if got != want:
                     bad.append((pos, want.replace("minecraft:", ""), got.replace("minecraft:", "")))
-                elif "[" in model.get((x, y, z), ""):
-                    props = dict(kv.split("=") for kv in model[(x, y, z)].split("[")[1][:-1].split(","))
+                elif "[" in want_full:
+                    props = dict(kv.split("=") for kv in want_full.split("[")[1][:-1].split(","))
                     st = t.b("blockstate %d %d %d" % pos)["state"]
                     have = dict(kv.split("=") for kv in st.split("[")[1][:-1].split(",")) if "[" in st else {}
                     for k, v in props.items():
@@ -382,8 +399,512 @@ def test_schem_fix_wrong(t):
     return "six wrong blocks on redstone/stair/torch/log/slab spots all replaced (%s); %s" % (line.split("TEST ", 1)[-1], "; ".join(report[:1]))
 
 
+
+# ------------------------------------------------------------------ canal features: one small world of its own per test
+
+def write_placements(name, placements):
+    """placements: [(label, size, origin, model)]: the schematic files and Litematica's placement file for world `name`."""
+    cfgdir = os.path.join(mc.PROFILE, "config", "litematica")
+    schdir = os.path.join(mc.PROFILE, "schematics")
+    os.makedirs(cfgdir, exist_ok=True)
+    os.makedirs(schdir, exist_ok=True)
+    items = []
+    for label, size, origin, model in placements:
+        sch = os.path.join(schdir, "%s-%s.litematic" % (name, label.replace(" ", "-")))
+        litematic.write(sch, label, size, model)
+        items.append((label, sch, origin, "NONE", "NONE", True))
+    with open(os.path.join(cfgdir, "litematica_%s_dim_minecraft_overworld.json" % name), "w", encoding="utf-8") as f:
+        f.write(litematic.placements_json(items))
+
+
+def give_kit(t):
+    """What the real run carries from the tools chest: a diamond pickaxe, shovel and axe with Efficiency V, and food."""
+    eff = '[enchantments={"minecraft:efficiency":5}]'
+    t.cmd("/give @s diamond_pickaxe%s 1" % eff, "/give @s diamond_shovel%s 1" % eff,
+          "/give @s diamond_axe%s 1" % eff, "/give @s bread 32")
+    time.sleep(1)
+    got = {k: t.count(k) for k in ("diamond_pickaxe", "diamond_shovel", "diamond_axe")}
+    if any(v != 1 for v in got.values()):
+        raise Fail("the tool kit did not reach the inventory: %s" % got)
+
+
+RUN_ID = int(time.time())
+
+
+def new_world(t, name, placements=(), kit=True):
+    """Leaves the current world, creates (flat, creative cheats, then survival) a world of its own and puts the player
+    at (100, -60, 100). The Litematica placements are written before the world loads. kit: the tools of the real run."""
+    name = "%s-%d" % (name, RUN_ID)     # a world of this run only: no terrain or inventory left over from earlier runs
+    if placements:
+        write_placements(name, placements)
+    fresh_world(t, name)
+    wait_server(t)
+    t.cmd("/clear @s", "/tp @s 100 -60 100 0 0")
+    if kit:
+        give_kit(t)
+    time.sleep(2)
+
+
+def fill(t, box, block):
+    t.cmd("/fill %d %d %d %d %d %d %s" % (box[0], box[1], box[2], box[3], box[4], box[5], block))
+
+
+def chest_with(t, p, items, kind="chest"):
+    """A container at p holding [(item, count)] in slots 0, 1, ... (/item replace block, needs cheats)."""
+    t.cmd("/setblock %d %d %d minecraft:%s" % (p[0], p[1], p[2], kind))
+    for slot, (item, n) in enumerate(items):
+        t.cmd("/item replace block %d %d %d container.%d with minecraft:%s %d" % (p[0], p[1], p[2], slot, item, n))
+
+
+def layers(t, boxes):
+    """Per height (lowest first): how many blocks in the boxes are solid, and how many hold water; summed over the boxes."""
+    return t.b("layers " + " ".join(str(v) for b in boxes for v in b))
+
+
+def wait_marker_or_end(t, text, timeout):
+    """Waits until a chat line holds `text` (returns it) or the script has ended without it (returns None at once,
+    so a script that stopped with PROBLEM or 'stopped' fails right away instead of at the timeout)."""
+    end, seen_running, started = time.time() + timeout, False, time.time()
+    while time.time() < end:
+        line = next((l for l in t.lines() if text in l), None)
+        if line:
+            return line
+        running = t.b("script")["running"]
+        seen_running = seen_running or running
+        if not running and (seen_running or time.time() - started > 3):
+            return None
+        time.sleep(0.3)
+    raise BridgeError("timed out after %ds waiting for chat '%s'" % (timeout, text))
+
+
+def run_scenario(t, scen, marker, timeout=240):
+    """Runs a scenario and waits for its marker line, or for the script to end without it (then the test fails at once,
+    with the script's own PROBLEM / stopped lines)."""
+    t.run(scen)
+    line = wait_marker_or_end(t, marker, timeout)
+    if line is None:
+        why = [l for l in t.lines() if "PROBLEM" in l or "stopped" in l.lower() or "Fill stopped" in l or "Stopped" in l]
+        raise Fail("the script ended without '%s': %s" % (marker, (why or t.lines()[-3:])[-1][:200]))
+    t.script_done(60)
+    return line
+
+
+def wet_in(t, boxes):
+    return sum(layers(t, boxes)["water"])
+
+
+def scaffold_left(t, region):
+    """Positions of the region that hold a block (not air)."""
+    left = []
+    (x1, y1, z1), (x2, y2, z2) = region
+    for x in range(x1, x2 + 1):
+        for y in range(y1, y2 + 1):
+            for z in range(z1, z2 + 1):
+                if "air" not in t.block((x, y, z)):
+                    left.append((x, y, z))
+    return left
+
+
+def test_canal_layers(t):
+    """#buildInLayers + #layerOrder + #layerHeight 2 with trench_a (8 small boxes of dirt): all of it is dug, layers top-down."""
+    new_world(t, "canal-layers")
+    boxes = [(100 + 4 * i, -61, 100, 101 + 4 * i, -58, 100) for i in range(8)]    # 8 boxes, 8 blocks each
+    gaps = [(102 + 4 * i, -61, 100, 102 + 4 * i, -58, 100) for i in range(7)]     # not in the area: must stay
+    for b in boxes:
+        fill(t, b, "dirt")
+    for g in gaps:
+        fill(t, g, "oak_planks")
+    gap_before = layers(t, gaps)["solid"]
+    t.run("canal-layers.txt")
+    t.wait_chat("TEST layers start", 30)
+    init, samples, violations = None, 0, []
+    end = time.time() + 240
+    while True:
+        solid = layers(t, boxes)["solid"]          # index 0 = y -61 ... 3 = y -58
+        if init is None:
+            init = list(solid)
+        samples += 1
+        lower_started = solid[0] < init[0] or solid[1] < init[1]      # y -61 / -60 touched
+        if lower_started and (solid[2] or solid[3]):                  # while y -59 / -58 still solid
+            violations.append(list(solid))
+        if not t.b("script")["running"]:
+            break
+        if time.time() > end:
+            t.b("stopscript")
+            raise Fail("#sel ca did not finish in 240 s; solid per height now %s" % solid)
+        time.sleep(0.25)
+    if not any("TEST layers done" in l for l in t.lines()):
+        raise Fail("the script did not reach 'TEST layers done' (%s)" % t.lines()[-4:])
+    left = layers(t, boxes)["solid"]
+    gap_after = layers(t, gaps)["solid"]
+    if sum(left):
+        raise Fail("blocks left in trench_a per height: %s" % left)
+    if gap_after != gap_before:
+        raise Fail("blocks outside trench_a were dug: %s -> %s" % (gap_before, gap_after))
+    if violations:
+        raise Fail("not top-down: a lower layer was dug while the top was still solid, e.g. %s (%d of %d samples)"
+                   % (violations[0], len(violations), samples))
+    return "trench_a (8 boxes, 64 dirt) dug top-down in %d samples; outside boxes untouched" % samples
+
+
+def test_canal_pillar_scaffold(t):
+    """PILLAR test, not a canal dig: #sel ca on a stone patch floating in the air; Baritone builds dirt up to it, and
+    collect_scaffold() takes the dirt back down."""
+    new_world(t, "canal-pillar-scaffold")
+    fill(t, (103, -56, 103, 105, -56, 105), "stone")
+    t.cmd("/give @s dirt 64")
+    time.sleep(1)
+    line = run_scenario(t, "canal-pillar-scaffold.txt", "TEST scaffold done", 240)
+    if not line:
+        raise Fail("the script did not finish")
+    stone_left = layers(t, [(103, -56, 103, 105, -56, 105)])["solid"]
+    if sum(stone_left):
+        raise Fail("the floating stone is not all dug: %s" % stone_left)
+    left = scaffold_left(t, ((100, -60, 100), (108, -57, 108)))
+    if left:
+        raise Fail("%d scaffold blocks left after collect_scaffold(), e.g. %s" % (len(left), left[:6]))
+    dirt = t.count("dirt")
+    if dirt != 64:
+        raise Fail("dirt after collect_scaffold(): %d, expected 64 (not all of the scaffold was picked up)" % dirt)
+    return "patch dug; no scaffold left, 64 dirt back in the inventory"
+
+
+SCAFF_SCHEM = {(x, 0, z): "minecraft:dirt" for x in range(3) for z in range(3)}
+SCAFF_SCHEM.update({(x, 1, z): "minecraft:stone" for x in range(3) for z in range(3) if x in (0, 2) or z in (0, 2)})
+
+
+def test_canal_scaffold_schem(t):
+    """collect_scaffold() after schem_build: the scaffolding goes, the schematic's own dirt stays."""
+    origin = (104, -57, 104)
+    new_world(t, "canal-scaffold-schem", [("scaffold house", (3, 2, 3), origin, SCAFF_SCHEM)])
+    t.cmd("/give @s dirt 64", "/give @s stone 16")
+    time.sleep(1)
+    line = run_scenario(t, "canal-scaffold-schem.txt", "TEST scaffold done", 300)
+    if not line:
+        raise Fail("the script did not finish")
+    bad = model_diff(t, origin, (3, 2, 3), SCAFF_SCHEM, region=((100, -60, 100), (110, -55, 110)))
+    if bad:
+        raise Fail("%d blocks differ from the schematic (and air elsewhere), e.g. %s (%s)" % (len(bad), bad[:6], line))
+    dirt = t.count("dirt")
+    if dirt != 64 - 9:
+        raise Fail("dirt in the inventory: %d, expected %d (9 stay in the schematic)" % (dirt, 64 - 9))
+    return "schematic built on scaffolding; scaffolding gone, schematic dirt stays"
+
+
+def test_canal_water_pond(t):
+    """fill_water("dirt", chest) on a 5x2x5 pond: 50 cells, 4 dirt in the inventory, the rest fetched from the chest."""
+    new_world(t, "canal-water-pond")
+    fill(t, (104, -62, 100, 108, -61, 104), "water")
+    chest_with(t, (110, -60, 102), [("dirt", 64)])
+    t.cmd("/give @s dirt 4")
+    time.sleep(1)
+    line = run_scenario(t, "canal-water-pond.txt", "TEST pond", 300)
+    if not line:
+        raise Fail("the script did not finish")
+    wet = wet_in(t, [(104, -62, 100, 108, -61, 104)])
+    if wet:
+        raise Fail("%d wet cells left" % wet)
+    if "left=0" not in line:
+        raise Fail("fill_water did not return 0: %s" % line)
+    dirt = t.count("dirt")
+    if dirt != 4 + 64 - 50:
+        raise Fail("dirt in the inventory %d, expected %d (50 cells; 46 fetched from the chest)" % (dirt, 4 + 64 - 50))
+    return "50 cells dry, 46 dirt fetched from the chest"
+
+
+def test_canal_water_river(t):
+    """fill_water("dirt") on a flowing river (level 3) with dry edges: no wet cell left in the selection."""
+    new_world(t, "canal-water-river")
+    fill(t, (100, -61, 99, 120, -61, 103), "air")
+    fill(t, (100, -61, 101, 120, -61, 101), "minecraft:water[level=3]")
+    t.cmd("/setblock 100 -61 101 minecraft:water")      # the source: flowing water without one dries up
+    t.cmd("/give @s dirt 64")
+    time.sleep(3)
+    before = wet_in(t, [(100, -61, 99, 120, -61, 103)])
+    if before == 0:
+        raise Fail("river setup failed: no water in the selection")
+    line = run_scenario(t, "canal-water-river.txt", "TEST river", 300)
+    if not line:
+        raise Fail("the script did not finish")
+    wet = wet_in(t, [(100, -61, 99, 120, -61, 103)])
+    if wet:
+        raise Fail("%d wet cells left (%d before)" % (wet, before))
+    if "left=0" not in line:
+        raise Fail("fill_water did not return 0: %s" % line)
+    return "%d wet cells of the river dried with dirt" % before
+
+
+def flood_world(t, name):
+    """A trench 9 long, 3 wide, 2 deep (x 100..108, z 100..102, y -62..-61) open at both ends: air continues west and east."""
+    new_world(t, name)
+    fill(t, (100, -62, 100, 108, -61, 102), "air")
+    fill(t, (90, -61, 100, 99, -61, 102), "air")
+    fill(t, (109, -61, 100, 118, -61, 102), "air")
+
+
+def flood_check(t, pond=None):
+    """All 54 trench cells are water sources, no water anywhere else around (but a pond we made), the open ends are closed."""
+    trench = (100, -62, 100, 108, -61, 102)
+    n = layers(t, [trench])["water"]
+    around = sum(layers(t, [(80, -66, 90, 130, -54, 110)])["water"])
+    extra = sum(layers(t, [pond])["water"]) if pond else 0
+    if around != sum(n) + extra:
+        raise Fail("water outside the trench (and the pond): %d blocks" % (around - sum(n) - extra))
+    if sum(n) != 54:
+        raise Fail("%d water blocks in the trench, expected 54 (%s)" % (sum(n), n))
+    not_source = []
+    for x in range(100, 109):
+        for y in (-62, -61):
+            for z in range(100, 103):
+                st = t.b("blockstate %d %d %d" % (x, y, z))["state"]
+                if "level=0" not in st:
+                    not_source.append(((x, y, z), st))
+    if not_source:
+        raise Fail("%d trench cells are not sources, e.g. %s" % (len(not_source), not_source[:3]))
+    ends = [t.block(p).split("|")[0] for p in ((99, -61, 101), (99, -62, 101), (109, -61, 101), (109, -62, 101))]
+    if "minecraft:air" in ends:
+        raise Fail("an open end is not sealed: the cells beyond it are %s" % ends)
+    return ends
+
+
+def test_canal_flood_bucket(t):
+    """flood() with ONE full water bucket and no water within reach. One bucket can make one source and nothing can
+    refill it (a refill needs a second source), so the honest result is a clear stop after that single source. The
+    50+ other cells cannot be filled this way: this test pins that limit down, it is not a fill that works."""
+    flood_world(t, "canal-flood-bucket")
+    t.cmd("/give @s water_bucket 1", "/give @s dirt 64")
+    time.sleep(1)
+    t.run("canal-flood.txt")
+    t.wait_chat("TEST flood start", 30)
+    t.b.wait(lambda: not t.b("script")["running"], 240, what="flood() to stop")
+    msg = [l for l in t.lines() if "No water source" in l]
+    if not msg:
+        raise Fail("no clear message about the missing water source: %s" % t.lines()[-6:])
+    sources = sum(1 for x in range(100, 109) for y in (-62, -61) for z in range(100, 103)
+                  if "level=0" in t.b("blockstate %d %d %d" % (x, y, z))["state"])
+    if sources != 1:
+        raise Fail("%d water sources in the trench, expected exactly the one the bucket makes" % sources)
+    return "stopped after the one source the bucket allows: %s" % msg[-1].split("] ", 1)[-1][:80]
+
+
+def test_canal_flood_pond(t):
+    """flood() with only empty buckets and a pond 8 blocks away: it fetches the water itself."""
+    flood_world(t, "canal-flood-pond")
+    fill(t, (112, -62, 96, 115, -61, 98), "water")
+    t.cmd("/give @s bucket 16", "/give @s dirt 64")
+    time.sleep(1)
+    line = run_scenario(t, "canal-flood.txt", "TEST flood done", 600)
+    if not line:
+        raise Fail("the script did not finish")
+    ends = flood_check(t, pond=(112, -62, 96, 115, -61, 98))
+    return "54 sources from 16 buckets filled at the pond; ends sealed (%s)" % ", ".join(ends)
+
+
+def test_canal_flood_none(t):
+    """flood() with only empty buckets and no water within reach: it stops with a message, it does not hang."""
+    flood_world(t, "canal-flood-none")
+    t.cmd("/give @s bucket 16", "/give @s dirt 64")
+    time.sleep(1)
+    t.run("canal-flood.txt")
+    t.wait_chat("TEST flood start", 30)
+    t.b.wait(lambda: not t.b("script")["running"], 120, what="flood() to give up")
+    if any("TEST flood done" in l for l in t.lines()):
+        raise Fail("flood() reported done without any water")
+    msg = [l for l in t.lines() if "water" in l.lower()]
+    if not msg:
+        raise Fail("no message about the missing water in the chat: %s" % t.lines()[-6:])
+    wet = sum(layers(t, [(100, -62, 100, 108, -61, 102)])["water"])
+    if wet:
+        raise Fail("water was placed though there is none: %d" % wet)
+    return "stopped with a message: %s" % msg[-1].split("] ", 1)[-1][:90]
+
+
+TWO_A = ((104, -60, 104), (5, 3, 5))
+TWO_B = ((110, -60, 104), (3, 2, 3))
+TWO_B_MODEL = {(x, 0, z): "minecraft:spruce_planks" for x in range(3) for z in range(3)}
+TWO_B_MODEL[(1, 1, 1)] = "minecraft:emerald_block"        # no item for it anywhere
+
+
+def test_canal_schem_two(t):
+    """Two enabled placements, skip mode: items that are only in the main inventory are used, the item with none is left out."""
+    new_world(t, "canal-schem-two", [("house", TWO_A[1], TWO_A[0], schem_model()),
+                                    ("shelf", TWO_B[1], TWO_B[0], TWO_B_MODEL)])
+    t.cmd("/give @s cobblestone 576")          # nine stacks: the whole hotbar
+    t.cmd("/give @s spruce_planks 9", "/give @s stone 25", "/give @s oak_stairs 4", "/give @s oak_slab 4",
+          "/give @s torch 1", "/give @s redstone 1", "/give @s oak_log 1")
+    time.sleep(1)
+    if t.count("spruce_planks") != 9:
+        raise Fail("setup: spruce_planks in the inventory %d" % t.count("spruce_planks"))
+    line = run_scenario(t, "canal-schem-two.txt", "TEST schem2", 420)
+    if not line:
+        raise Fail("the script did not finish")
+    bad_a = model_diff(t, TWO_A[0], TWO_A[1], schem_model())
+    bad_b = model_diff(t, TWO_B[0], TWO_B[1], TWO_B_MODEL, ignore=[(111, -59, 105)])
+    if bad_a:
+        raise Fail("house: %d blocks differ, e.g. %s (%s)" % (len(bad_a), bad_a[:4], line))
+    if bad_b:
+        raise Fail("shelf: %d blocks differ, e.g. %s (%s)" % (len(bad_b), bad_b[:4], line))
+    if t.block((111, -59, 105)).split("|")[0] != "minecraft:air":
+        raise Fail("the emerald block (no item) was placed: %s" % t.block((111, -59, 105)))
+    if "left=1" not in line:
+        raise Fail("expected 1 block left out (the emerald block): %s" % line)
+    report = [l.split("] ", 1)[-1] for l in t.lines() if "emerald" in l]
+    if not report:
+        raise Fail("the emerald block is not reported in the chat")
+    return "both placements built; 1 block left out and reported: %s" % report[-1][:80]
+
+
+def test_canal_schem_needed(t):
+    """schem_needed gives the right map; take_upto takes from a barrel, a shulker box and a chest; after the build the map is empty."""
+    new_world(t, "canal-schem-needed", [("house", (5, 3, 5), (104, -60, 104), schem_model())])
+    chest_with(t, (98, -60, 98), [("oak_stairs", 8), ("oak_slab", 8), ("oak_log", 2), ("torch", 4), ("redstone", 2)])
+    chest_with(t, (97, -60, 98), [("cobblestone", 30)], kind="black_shulker_box")
+    chest_with(t, (96, -60, 98), [("stone", 30)], kind="barrel")
+    time.sleep(1)
+    line = run_scenario(t, "canal-schem-needed.txt", "TEST after build", 240)
+    if not line:
+        raise Fail("the script did not finish")
+    checks = {"stone": 25, "cobblestone": 23, "oak_stairs": 4, "oak_slab": 4, "oak_log": 1, "torch": 1, "redstone": 1}
+    taken = next((l for l in t.lines() if "TEST taken" in l), "")   # counted in the script, before the build used them
+    keys = {"stone": "stone", "cobblestone": "cobble", "oak_stairs": "stairs", "oak_slab": "slab", "oak_log": "log",
+            "torch": "torch", "redstone": "redstone"}
+    got = {k: int(re.search(r"%s=(\d+)" % keys[k], taken).group(1)) if re.search(r"%s=(\d+)" % keys[k], taken) else -1
+           for k in checks}
+    wrong = {k: (got[k], v) for k, v in checks.items() if got[k] != v}
+    if wrong:
+        raise Fail("taken (have, expected): %s" % wrong)
+    need = next((l for l in t.lines() if "TEST needed" in l), "")
+    if "ok=true n=7" not in need:
+        raise Fail("schem_needed map wrong: %s" % need)
+    after = next((l for l in t.lines() if "TEST after build" in l), "")
+    if "after build=0" not in after:
+        raise Fail("schem_needed is not empty after the build: %s" % after)
+    return "map has the 7 items; take_upto from barrel, shulker box and chest; empty after the build"
+
+
+def test_canal_survival_dump(t):
+    """A full inventory triggers dump(storage) and the task goes on; keep("dirt", 256) stays with us; food stays."""
+    new_world(t, "canal-survival-dump")
+    chest_with(t, (96, -60, 96), [])
+    fill(t, (102, -61, 100, 104, -61, 102), "dirt")
+    # kit: pickaxe, shovel, axe (3 slots) and 32 bread; here 288 more bread (320 = 5 slots), 300 dirt (5), 1472 cobblestone (23)
+    t.cmd("/give @s cobblestone 1472", "/give @s dirt 300", "/give @s bread 288")
+    time.sleep(1)
+    if t.count("bread") != 320:
+        raise Fail("setup: bread %d" % t.count("bread"))
+    t.run("canal-survival-dump.txt")
+    t.wait_chat("TEST cleared", 300)
+    t.script_done(60)
+    line = next((l for l in t.lines() if "TEST cleared" in l), "")
+    if t.count("cobblestone") != 0:
+        raise Fail("cobblestone still carried: %d (%s)" % (t.count("cobblestone"), line))
+    if t.count("diamond_pickaxe") != 1 or t.count("diamond_shovel") != 1:
+        raise Fail("the tools were dumped: pickaxe %d, shovel %d" % (t.count("diamond_pickaxe"), t.count("diamond_shovel")))
+    if t.count("bread") != 320:
+        raise Fail("food was dumped: bread %d" % t.count("bread"))
+    if "left=0" not in line:
+        raise Fail("clear_area did not finish: %s" % line)
+    dirt = t.count("dirt")
+    if dirt < 256:
+        raise Fail("dirt %d: the 256 that dump() must keep were not all kept" % dirt)
+    dumped = [l for l in t.lines() if "dump" in l.lower()]
+    return "full -> dump(storage); %d dirt with us (256 kept, pickup of the dug blocks: %d), food kept, task went on" % (dirt, dirt - 256)
+
+
+def test_canal_survival_restock(t):
+    """want("bucket", 4) and want("diamond_pickaxe", 1): restock() fetches them from the supply chest."""
+    new_world(t, "canal-survival-restock", kit=False)     # no pickaxe of our own: the chest's one must come
+    chest_with(t, (96, -60, 97), [("bucket", 8), ("diamond_pickaxe", 1)])
+    time.sleep(1)
+    line = run_scenario(t, "canal-survival-restock.txt", "TEST restocked", 240)
+    if not line:
+        raise Fail("the script did not finish")
+    b, p = t.count("bucket"), t.count("diamond_pickaxe")
+    if b < 4 or p < 1:
+        raise Fail("buckets %d (want 4), pickaxes %d (want 1)" % (b, p))
+    return "restocked: %d buckets, %d diamond pickaxe" % (b, p)
+
+
+TOOLS_BOX = ((110, -61, 100), (112, -60, 102))     # stone at y -61, dirt at y -60 (run_tests.py fills them)
+
+
+def test_canal_tools_schem(t):
+    """The schematic digger breaks stone with the pickaxe and dirt with the shovel (the held item at each break)."""
+    origin = (110, -61, 100)
+    new_world(t, "canal-tools-schem", [("empty box", (3, 2, 3), origin, {})])
+    fill(t, (110, -61, 100, 112, -61, 102), "stone")
+    fill(t, (110, -60, 100, 112, -60, 102), "dirt")
+    time.sleep(1)
+    cells = [(x, y, z) for x in range(110, 113) for y in (-61, -60) for z in range(100, 103)]
+    kind = {p: ("stone" if p[1] == -61 else "dirt") for p in cells}
+    held_at_break = {"stone": [], "dirt": []}
+    t.run("canal-tools-schem.txt")
+    end, gone = time.time() + 300, set()
+    while True:
+        for p in cells:
+            if p in gone:
+                continue
+            if "air" in t.block(p):
+                gone.add(p)
+                held_at_break[kind[p]].append(t.b("held")["item"])
+        if len(gone) == len(cells) or not t.b("script")["running"] or time.time() > end:
+            break
+        time.sleep(0.1)
+    t.script_done(60)
+    line = next((l for l in t.lines() if "TEST tools" in l), None)
+    if len(gone) != len(cells):
+        raise Fail("%d of %d blocks not dug (%s)" % (len(cells) - len(gone), len(cells), line))
+    bad = [(k, h) for k in held_at_break for h in held_at_break[k]
+           if ("pickaxe" if k == "stone" else "shovel") not in h]
+    if bad:
+        raise Fail("broke the wrong tool: %s" % bad[:5])
+    return "stone broken with %s, dirt with %s" % (sorted(set(held_at_break["stone"])), sorted(set(held_at_break["dirt"])))
+
+
+def flood_timed(t, name, items, timeout=600):
+    """flood() on the open trench with these items; returns the seconds it took to finish."""
+    flood_world(t, name)
+    t.cmd(*["/give @s %s" % it for it in items])
+    time.sleep(1)
+    t0 = time.time()
+    line = run_scenario(t, "canal-flood.txt", "TEST flood done", timeout)
+    return time.time() - t0, line
+
+
+def test_canal_flood_two_water(t):
+    """(a) 1 empty bucket + 2 water buckets, no water near: two sources next to each other make a third one between
+    them (it regenerates), so the refills come from the trench itself. Must complete: 54 sources, ends sealed."""
+    secs, line = flood_timed(t, "canal-flood-two-water", ["bucket 1", "water_bucket 2", "dirt 64"])
+    if not line:
+        raise Fail("flood() did not finish in 600 s")
+    ends = flood_check(t)
+    return "54 sources in %.0f s; ends sealed (%s)" % (secs, ", ".join(ends))
+
+
+def test_canal_flood_stack(t):
+    """(b) 16 empty buckets in one stack + 2 water buckets, no water near: the same fill, the buckets refilled in batches.
+    Must complete, and clearly faster than (a) (the time is reported)."""
+    secs, line = flood_timed(t, "canal-flood-stack", ["bucket 16", "water_bucket 2", "dirt 64"])
+    if not line:
+        raise Fail("flood() did not finish in 600 s")
+    ends = flood_check(t)
+    return "54 sources in %.0f s with 16 buckets in one stack; ends sealed (%s)" % (secs, ", ".join(ends))
+
+
+CANAL_TESTS = [("canal_layers", test_canal_layers), ("canal_pillar_scaffold", test_canal_pillar_scaffold),
+               ("canal_scaffold_schem", test_canal_scaffold_schem), ("canal_water_pond", test_canal_water_pond),
+               ("canal_water_river", test_canal_water_river), ("canal_flood_bucket", test_canal_flood_bucket),
+               ("canal_flood_two_water", test_canal_flood_two_water), ("canal_flood_stack", test_canal_flood_stack),
+               ("canal_flood_pond", test_canal_flood_pond), ("canal_flood_none", test_canal_flood_none),
+               ("canal_schem_two", test_canal_schem_two), ("canal_schem_needed", test_canal_schem_needed),
+               ("canal_survival_dump", test_canal_survival_dump), ("canal_survival_restock", test_canal_survival_restock),
+               ("canal_tools_schem", test_canal_tools_schem)]
+
+
 TESTS = [("smoke", test_smoke), ("fill_water", test_fill_water), ("eat", test_eat), ("defend", test_defend), ("clear_resume", test_clear_resume), ("dump", test_dump),
          ("schem_list", test_schem_list), ("schem_add", test_schem_add), ("schem_fix", test_schem_fix), ("schem_fix_wrong", test_schem_fix_wrong), ("schem_exact", test_schem_exact)]
+
+TESTS += CANAL_TESTS
 
 
 # ------------------------------------------------------------------ main
@@ -408,8 +929,9 @@ def enter_world(b):
     return t
 
 
-TEST_TIMEOUT = 420          # seconds; a test that takes longer fails and its game is restarted
-RAM_PER_CLIENT_GB = 3.0
+TEST_TIMEOUT = 300          # seconds; a test that takes longer fails and its game is restarted
+RAM_PER_CLIENT_GB = 3.5     # a game with its 3 GB heap (MANHATTAN_XMX) and its own memory
+MAX_WORKERS = 8             # bridge ports 25700+N for worker N: 25701..25708 (the other harness uses 25599 and 25601..25603)
 LONG_FIRST = ["clear_resume", "schem_exact", "schem_fix_wrong", "schem_fix", "fill_water", "schem_add"]   # start the slow ones first
 
 
@@ -459,6 +981,31 @@ def run_one(t, name, fn, timeout):
             detail += "\n      chat:\n        " + "\n        ".join(chat)
         return False, detail, time.time() - t0, False
     return True, box.get("info", ""), time.time() - t0, False
+
+
+def wait_server(t, timeout=60):
+    """The integrated server answers block queries (it is not there for a moment after a world switch)."""
+    def ok():
+        try:
+            t.b("layers 0 0 0 0 0 0")
+            return True
+        except BridgeError:
+            return False
+    t.b.wait(ok, timeout, step=0.5, what="the world's server")
+
+
+def fresh_world(t, name):
+    """Leaves the current world and opens (creating it flat, creative, cheats on) a world of its own: name."""
+    if t.b("state")["inWorld"]:
+        t.b("leave")
+        t.b.wait(lambda: t.b("state")["screen"].endswith("TitleScreen"), 120, step=1, what="the title screen")
+    r = t.b("world " + name)
+    t.b.wait(lambda: t.b("state")["inWorld"], 300, step=1, what="world %s to load" % name)
+    t.b.wait(lambda: t.b("state")["screen"] == "", 60, step=1, what="the loading screen to close")
+    time.sleep(3)
+    t.cmd("/gamerule advance_time false", "/gamerule advance_weather false", "/gamerule spawn_mobs false",
+          "/difficulty easy", "/gamemode survival", "/time set noon", "/weather clear")
+    return r
 
 
 def start_game(b, attach):
@@ -527,6 +1074,9 @@ def opt(argv, flag, default):
 
 
 def main(argv):
+    if "--help" in argv or "-h" in argv:
+        print(__doc__)
+        return 0
     keep = "--keep-open" in argv
     attach = "--attach" in argv
     timeout = int(opt(argv, "--test-timeout", TEST_TIMEOUT))
@@ -555,11 +1105,12 @@ def main(argv):
             json.dump([list(r) + [k] for r in res], f)
         return 0
 
-    default_workers = max(1, min(3, int(free_ram_gb() // RAM_PER_CLIENT_GB), len(tests)))
+    # up to 8 games at once (MAX_WORKERS), as many as the free RAM allows at RAM_PER_CLIENT_GB each; -j N sets it
+    default_workers = max(1, min(MAX_WORKERS, int(free_ram_gb() // RAM_PER_CLIENT_GB), len(tests)))
     workers = 1 if attach or keep else int(opt(argv, "--workers", opt(argv, "-j", default_workers)))
     workers = max(1, min(workers, len(tests)))
     t0 = time.time()
-    if workers == 1:
+    if attach or keep:   # one game (the copy w1), kept open or attached to
         todo = list(tests)
         res = worker(lambda: todo.pop(0) if todo else None, keep, attach, timeout)
         return summary(res, time.time() - t0, 1)
@@ -577,12 +1128,12 @@ def main(argv):
     for k in range(1, workers + 1):
         home = os.path.join(root, "w%d" % k)
         os.makedirs(home, exist_ok=True)
-        env = dict(os.environ, MANHATTAN_PROFILE=home, MANHATTAN_BRIDGE_PORT=str(25600 + k), MANHATTAN_XMX="3G")
+        env = dict(os.environ, MANHATTAN_PROFILE=home, MANHATTAN_BRIDGE_PORT=str(mc.PORT_BASE + k), MANHATTAN_XMX="3G")
         out = open(os.path.join(root, "w%d.log" % k), "w", encoding="utf-8")
         procs.append((k, subprocess.Popen([sys.executable, "-u", os.path.abspath(__file__), "--worker", str(k), "--queue", qdir,
                                            "--test-timeout", str(timeout)], env=env, stdout=out, stderr=subprocess.STDOUT)))
-        log("worker %d: game dir %s, port %d, log %s" % (k, home, 25600 + k, os.path.join(root, "w%d.log" % k)))
-        time.sleep(15)   # stagger the starts: loading several clients at once is slower than one after the other
+        log("worker %d: game dir %s, port %d, log %s" % (k, home, mc.PORT_BASE + k, os.path.join(root, "w%d.log" % k)))
+        time.sleep(5)    # stagger the starts: loading many clients at once is slower than one after the other
     for k, pr in procs:
         pr.wait()
     res = []
