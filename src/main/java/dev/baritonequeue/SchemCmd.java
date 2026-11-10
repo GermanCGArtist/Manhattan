@@ -1,6 +1,7 @@
 package dev.baritonequeue;
 
 import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import dev.baritonequeue.Schem.Mode;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommands;
@@ -13,7 +14,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * /schem list | build [n|all] [add|fix|exact] [skip|strict] | materials [n|all] [mode] | check [n|all] [mode] | stop
+ * /schem list | build [n|all] [add|fix|exact] [skip|strict] | materials [n|all] [mode] | check [n|all] [mode] | move <n|all> <dx> <dy> <dz> | stop
  * and the same things as script functions (schem_list(), schem_build(...) ...), which call the methods here.
  */
 final class SchemCmd {
@@ -168,11 +169,34 @@ final class SchemCmd {
         }
     }
 
+    /** /schem move <n|all> dx dy dz. Returns 1 when something moved. */
+    static int move(String which, int dx, int dy, int dz) {
+        List<Integer> idx = null;
+        if (!which.equalsIgnoreCase("all")) {
+            try {
+                idx = List.of(Integer.parseInt(which));
+            } catch (NumberFormatException e) {
+                Util.msg("'" + which + "' is not a placement number or \"all\". /schem list shows them.");
+                return 0;
+            }
+        }
+        String err = SchemSource.move(idx, dx, dy, dz);
+        if (err != null) Util.msg(err);
+        return err == null ? 1 : 0;
+    }
+
     static void register(CommandDispatcher<FabricClientCommandSource> d) {
         d.register(ClientCommands.literal("schem")
-                .executes(c -> { Util.msg("/schem list | build [n|all] [add|fix|exact] [skip|strict] | materials [n|all] [mode] | check [n|all] [mode] | stop"); return 1; })
+                .executes(c -> { Util.msg("/schem list | build [n|all] [add|fix|exact] [skip|strict] | materials [n|all] [mode] | check [n|all] [mode] | move <n|all> <dx> <dy> <dz> | stop"); return 1; })
                 .then(ClientCommands.literal("list").executes(c -> list() > 0 ? 1 : 0))
                 .then(ClientCommands.literal("stop").executes(c -> stop()))
+                .then(ClientCommands.literal("move")
+                        .then(ClientCommands.argument("which", StringArgumentType.word())
+                                .then(ClientCommands.argument("dx", IntegerArgumentType.integer())
+                                        .then(ClientCommands.argument("dy", IntegerArgumentType.integer())
+                                                .then(ClientCommands.argument("dz", IntegerArgumentType.integer())
+                                                        .executes(c -> move(StringArgumentType.getString(c, "which"), IntegerArgumentType.getInteger(c, "dx"),
+                                                                IntegerArgumentType.getInteger(c, "dy"), IntegerArgumentType.getInteger(c, "dz"))))))))
                 .then(verb("build", Mode.ADD))
                 .then(verb("materials", Mode.FIX))
                 .then(verb("check", Mode.FIX)));

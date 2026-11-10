@@ -49,16 +49,31 @@ final class FillProcess extends Feature {
      * standing spot lets the water out (our own placer still breaks its temporary blocks itself).
      */
     private void setState(State next) {
-        var s = baritone.api.BaritoneAPI.getSettings();
         if (state == State.IDLE && next != State.IDLE) {
-            breakBefore = s.allowBreak.value;
-            s.allowBreak.value = false;
+            breakBefore = RegionRules.setOwnBreak(false);
         } else if (state != State.IDLE && next == State.IDLE && breakBefore != null) {
-            s.allowBreak.value = breakBefore;
+            RegionRules.setOwnBreak(breakBefore);
             breakBefore = null;
         }
+        if (next == State.IDLE) placeHigh(false);
         state = next;
     }
+
+    /**
+     * Baritone may place blocks while filling to climb out of the trench, but not from the rim up: on the live canal,
+     * walking to cells it could not reach, it pillared dirt up to 36 blocks high out of the water, and a bridge over the
+     * trench at rim height puts dirt into the top layer.
+     */
+    private void placeHigh(boolean high) {
+        if (high && placeBefore == null) {
+            placeBefore = RegionRules.setOwnPlace(false);
+        } else if (!high && placeBefore != null) {
+            RegionRules.setOwnPlace(placeBefore);
+            placeBefore = null;
+        }
+    }
+    private Boolean placeBefore;   // Baritone's allowPlace while it is switched off up high (restored afterwards)
+    private int topY;              // the highest cell to fill
     private final Set<BlockPos> targets = new HashSet<>();     // cells that must become water sources
     private final Set<BlockPos> skipped = new HashSet<>();     // cells we could not reach
     private List<BlockPos> seal = new ArrayList<>();
@@ -235,6 +250,8 @@ final class FillProcess extends Feature {
 
     private void beginFilling() {
         setState(State.FILLING);
+        topY = Integer.MIN_VALUE;
+        for (BlockPos t : targets) topY = Math.max(topY, t.getY());
         cur = null;
         waitTicks = 0;
         pass = 0;
@@ -271,6 +288,8 @@ final class FillProcess extends Feature {
             waitTicks--;
             return pause();
         }
+
+        placeHigh(p.getY() >= topY + 1);   // on the rim or higher: no pillars, no bridges over the open water (both leave dirt in the canal)
 
         // never drown: with the head under water and half the air gone, come up first (the action carries on after)
         if (p.isUnderWater() && p.getAirSupply() < p.getMaxAirSupply() / 2) {

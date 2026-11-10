@@ -33,6 +33,19 @@ final class RegionRules {
         return old;
     }
 
+    /** Sets allowPlace as if the player had (see setOwnBreak). Returns the old value. */
+    static boolean setOwnPlace(boolean v) {
+        var s = BaritoneAPI.getSettings();
+        if (forcedPlace) {
+            boolean old = origPlace;
+            origPlace = v;
+            return old;
+        }
+        boolean old = s.allowPlace.value;
+        s.allowPlace.value = v;
+        return old;
+    }
+
     /** Every few ticks. */
     static void tick(LocalPlayer p) {
         boolean noBreak = false, noPlace = false;

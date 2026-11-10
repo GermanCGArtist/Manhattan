@@ -35,6 +35,13 @@ final class Places {
         return n.isEmpty() || Character.isDigit(n.charAt(0)) ? "spot" : n;
     }
 
+    /** Moves every saved chest by an offset; returns how many. */
+    static int moveChests(int dx, int dy, int dz) {
+        for (int[] c : cfg.chests.values()) { c[0] += dx; c[1] += dy; c[2] += dz; }
+        if (!cfg.chests.isEmpty()) Config.save();
+        return cfg.chests.size();
+    }
+
     static String saveChest(String name, Values.Pos pos) {
         String n = name.trim().toLowerCase();
         if (!n.matches("[a-z0-9_]+")) return "A chest name is letters, digits and _ only, for example: dirt";

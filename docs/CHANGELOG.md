@@ -27,6 +27,13 @@ Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
   - `schem_build(..., "skip")` (default) builds what it has items for and leaves out the rest; the builder takes
     items from the whole inventory; the digger uses the fastest tool; Test checks the world too (chests, bed,
     placements, materials, water for `flood()`).
+  - After the first live canal run: schematic blocks wanted where water is now are placed by our own placer (Baritone's
+    builder stopped the whole bottom layer at "Unreplaceable liquids", so nothing above it was built), and Baritone
+    may not place blocks while `flood()` walks (it pillared dirt 30 blocks up out of the water at cells it could not
+    reach). New tests `canal_schem_water`, `canal_move`; `canal_flood_wide` checks that nothing stands above the trench.
+- `/queue move <dx> <dy> <dz>` moves the whole setup (every saved area, saved chest and Litematica placement) by an
+  offset, to run a test again somewhere else; `/queue area move <name|all> ...` and `/schem move <n|all> ...` move
+  one kind. Positions written into a script as `pos(...)` stay where they are.
 
 ## 2.4.4 – clear_area says why blocks are left (2026-11-09)
 - `clear_area` returned every block left, so `if clear_area() > 0 then #sel ca end` handed the blocks next to the

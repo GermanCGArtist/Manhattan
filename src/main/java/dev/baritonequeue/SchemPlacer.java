@@ -87,7 +87,7 @@ final class SchemPlacer {
             if (clearing) {
                 boolean wrongBlock = !d.isAir() && mode != Mode.ADD && !now.isAir() && !Schem.replaceable(now) && !now.equals(d);
                 if ((d.isAir() && Schem.todo(mode, d, now)) || wrongBlock) queue.addFirst(w);   // top-down: schematic air to dig out, wrong blocks to take away
-            } else if (!d.isAir() && Schem.phaseOf(d) == Phase.ORIENTED && Schem.cost(d) != null && Schem.todo(mode, d, now)) {
+            } else if (!d.isAir() && Schem.phaseAt(plan, plan.idx(x, y, z), d, now) == Phase.ORIENTED && Schem.cost(d) != null && Schem.todo(plan, plan.idx(x, y, z), mode, d, now)) {
                 queue.addLast(w);                                               // bottom-up
             }
         }
@@ -311,6 +311,21 @@ final class SchemPlacer {
         if (ticks > 20 * 90) { fail("took too long"); return false; }
         switch (stage) {
             case APPROACH -> {
+                if (cands == null && !clearing && !Schem.replaceable(level.getBlockState(cur)) && !wantsMerge(level)) {
+                    // a block in the cell (scaffolding put there during the build): take it away first, then aim
+                    if (p.getEyePosition().distanceTo(Vec3.atCenterOf(cur)) <= REACH - 0.3) {
+                        Util.baritone().getPathingBehavior().cancelEverything();
+                        breakPos = cur;
+                        stage = Stage.BREAK;
+                        stageTicks = 0;
+                        return false;
+                    }
+                    if (stageTicks > 20 * 40) { fail("could not get into reach to take away what is in the way"); return false; }
+                    if (stageTicks % 100 == 1 && !Util.baritone().getCustomGoalProcess().isActive()) {
+                        Util.baritone().getCustomGoalProcess().setGoalAndPath(new baritone.api.pathing.goals.GoalNear(cur, 2));
+                    }
+                    return false;
+                }
                 if (cands == null) {
                     cands = candidates(level, p);
                     if (cands.isEmpty()) {

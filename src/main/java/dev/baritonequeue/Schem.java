@@ -49,7 +49,7 @@ final class Schem {
     /** The order things are built in. FLUID is not built yet (listed in the report). */
     enum Phase {
         CLEAR("clear (dig out schematic air)"), FULL("full blocks"), SHAPED("shaped blocks (fences, walls, panes ...)"),
-        ORIENTED("oriented blocks (stairs, top slabs, doors, logs, wall torches ... placed by our own placer)"),
+        ORIENTED("oriented blocks and blocks in water (stairs, top slabs, doors, logs, wall torches ... placed by our own placer)"),
         ATTACHED("attached blocks (torches, doors, signs ...)"), REDSTONE("redstone"), POWER("power sources (levers, buttons, redstone torches ...)"),
         FLUID("fluids");
 
@@ -69,6 +69,28 @@ final class Schem {
             if (prop == BlockStateProperties.SLAB_TYPE) return true;
         }
         return false;
+    }
+
+    /**
+     * The phase for a spot, given what is there now. Baritone's builder will not place into water (it stops the whole
+     * layer with "Unreplaceable liquids", so nothing above gets built): full and shaped blocks wanted where water is
+     * now go to our own placer, which clicks a neighbour like a player and replaces the water.
+     */
+    static Phase phaseAt(BlockState want, BlockState now) {
+        Phase ph = phaseOf(want);
+        if ((ph == Phase.FULL || ph == Phase.SHAPED) && now.getBlock() instanceof LiquidBlock) return Phase.ORIENTED;
+        return ph;
+    }
+
+    /**
+     * phaseAt() for a cell of the plan: a block in a cell that was open when the build started was put there during the
+     * build (Baritone's scaffolding goes into any cell that wants a different block). Baritone would break it and put it
+     * back again and again to stand on; our placer takes it away and places the right block once, at the end.
+     */
+    static Phase phaseAt(Plan plan, int i, BlockState want, BlockState now) {
+        Phase ph = phaseAt(want, now);
+        if ((ph == Phase.FULL || ph == Phase.SHAPED) && plan.wasOpen(i) && !now.isAir() && !replaceable(now) && !norm(now).equals(want)) return Phase.ORIENTED;
+        return ph;
     }
 
     static Phase phaseOf(BlockState st) {
@@ -104,6 +126,28 @@ final class Schem {
         int sx, sy, sz;
         BlockState[] st;
         BitSet excluded;
+        /**
+         * Cells that were open (air, liquid, replaceable) when the build started. In add mode a block that is there now
+         * was put there during the build - Baritone's scaffolding goes into any cell that wants a different block - so
+         * it is replaced like air, not kept as "a block that was already there". null: not known (counted as not open).
+         */
+        BitSet open;
+
+        boolean wasOpen(int i) { return open != null && open.get(i); }
+
+        /** Remembers which cells are open now (called when a build starts). */
+        void markOpen(net.minecraft.world.level.Level level) {
+            open = new BitSet(st.length);
+            BlockPos.MutableBlockPos mp = new BlockPos.MutableBlockPos();
+            for (int y = 0; y < sy; y++) for (int z = 0; z < sz; z++) for (int x = 0; x < sx; x++) {
+                int i = idx(x, y, z);
+                if (st[i] == null) continue;
+                mp.set(min.getX() + x, min.getY() + y, min.getZ() + z);
+                if (!level.hasChunkAt(mp)) continue;
+                BlockState cur = level.getBlockState(mp);
+                if (cur.isAir() || replaceable(cur) || cur.getBlock() instanceof LiquidBlock) open.set(i);
+            }
+        }
         final List<String> notes = new ArrayList<>();      // unknown blocks, regions skipped ...
         final Map<String, Integer> fluids = new LinkedHashMap<>();
 
@@ -289,8 +333,8 @@ final class Schem {
             BlockState d = plan.at(x, y, z);
             if (d == null || plan.excluded.get(plan.idx(x, y, z))) return false;
             if (phase == Phase.CLEAR || phase == Phase.ORIENTED) return false;   // our own placer does these
-            if (d.isAir() || phaseOf(d) != phase) return false;
-            if (!(mode != Mode.ADD || norm(current).equals(d) || replaceable(current))) return false;
+            if (d.isAir() || phaseAt(plan, plan.idx(x, y, z), d, current) != phase) return false;
+            if (!(mode != Mode.ADD || norm(current).equals(d) || replaceable(current) || plan.wasOpen(plan.idx(x, y, z)))) return false;
             if (missing != null && !norm(current).equals(d)) {
                 Object[] cost = cost(d);
                 if (cost != null && missing.get().contains((Item) cost[0])) return false;   // no item for it: build the rest
@@ -311,6 +355,12 @@ final class Schem {
     }
 
     // ------------------------------------------------------------------ counting
+
+    /** todo() for a cell of the plan: in add mode a cell that was open when the build started takes any block away again. */
+    static boolean todo(Plan plan, int i, Mode mode, BlockState d, BlockState cur) {
+        if (mode == Mode.ADD && !d.isAir() && plan.wasOpen(i) && !cur.equals(d)) return true;
+        return todo(mode, d, cur);
+    }
 
     /** Does this position still need work in this mode? (Phase and safe areas are not looked at here.) */
     static boolean todo(Mode mode, BlockState d, BlockState cur) {
@@ -367,8 +417,8 @@ final class Schem {
                 continue;
             }
             if (cur.equals(d)) { c.correct++; continue; }
-            Phase ph = phaseOf(d);
-            boolean needs = todo(mode, d, cur);
+            Phase ph = phaseAt(plan, plan.idx(x, y, z), d, cur);
+            boolean needs = todo(plan, plan.idx(x, y, z), mode, d, cur);
             if (cur.isAir() || replaceable(cur)) c.missing++; else if (needs) { c.wrong++; if (cur.getBlock() == d.getBlock()) c.wrongState++; if (mode != Mode.ADD) c.todoByPhase.merge(Phase.CLEAR, 1, Integer::sum); } else continue;   // add mode leaves foreign blocks alone
             if (!needs) continue;
             c.todoByPhase.merge(ph, 1, Integer::sum);

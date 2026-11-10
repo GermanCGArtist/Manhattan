@@ -115,12 +115,35 @@ public class QueueMod implements ClientModInitializer {
                                             if (err != null) Util.msg(err);
                                             return err == null ? 1 : 0;
                                         })))
+                                .then(ClientCommands.literal("move")
+                                        .then(ClientCommands.argument("name", StringArgumentType.word())
+                                                .then(ClientCommands.argument("dx", IntegerArgumentType.integer())
+                                                        .then(ClientCommands.argument("dy", IntegerArgumentType.integer())
+                                                                .then(ClientCommands.argument("dz", IntegerArgumentType.integer()).executes(ctx -> {
+                                                                    String err = Areas.move(StringArgumentType.getString(ctx, "name"), IntegerArgumentType.getInteger(ctx, "dx"),
+                                                                            IntegerArgumentType.getInteger(ctx, "dy"), IntegerArgumentType.getInteger(ctx, "dz"));
+                                                                    if (err != null) Util.msg(err);
+                                                                    return err == null ? 1 : 0;
+                                                                }))))))
                                 .then(ClientCommands.literal("delete")
                                         .then(ClientCommands.argument("name", StringArgumentType.word()).executes(ctx -> {
                                             String n = StringArgumentType.getString(ctx, "name");
                                             Util.msg(Areas.delete(n) ? "Deleted area '" + n + "'." : "There is no saved area '" + n + "'.");
                                             return 1;
                                         }))))
+                        .then(ClientCommands.literal("move")   // the whole setup: every saved area, saved chest and Litematica placement
+                                .then(ClientCommands.argument("dx", IntegerArgumentType.integer())
+                                        .then(ClientCommands.argument("dy", IntegerArgumentType.integer())
+                                                .then(ClientCommands.argument("dz", IntegerArgumentType.integer()).executes(ctx -> {
+                                                    int dx = IntegerArgumentType.getInteger(ctx, "dx"), dy = IntegerArgumentType.getInteger(ctx, "dy"), dz = IntegerArgumentType.getInteger(ctx, "dz");
+                                                    if (!cfg.areas.isEmpty()) Areas.move("all", dx, dy, dz);
+                                                    int chests = Places.moveChests(dx, dy, dz);
+                                                    if (chests > 0) Util.msg("Moved " + chests + " saved chest" + (chests == 1 ? "" : "s") + ".");
+                                                    String err = SchemSource.move(null, dx, dy, dz);
+                                                    if (err != null) Util.msg(err);
+                                                    Util.msg("Positions written into scripts as pos(...) do not move: add " + dx + " " + dy + " " + dz + " to them.");
+                                                    return 1;
+                                                })))))
                         .then(ClientCommands.literal("stall")
                                 .executes(ctx -> {
                                     Util.msg(cfg.stallMinutes > 0

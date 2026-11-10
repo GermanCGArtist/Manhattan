@@ -1,0 +1,4 @@
+// schematic cells that hold water (run_tests.py canal_schem_water): Baritone stops a layer at water, our placer takes them
+stall(1)
+let left = schem_build(1, "add", "skip")
+print("TEST schemwater left={left}")

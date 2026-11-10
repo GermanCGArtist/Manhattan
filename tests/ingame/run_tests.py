@@ -928,6 +928,9 @@ def test_canal_flood_wide(t):
         raise Fail("%d trench cells hold a block (temporary blocks left?), e.g. %s" % (len(solid), solid[:3]))
     if not_source:
         raise Fail("%d trench cells are not sources, e.g. %s (%s)" % (len(not_source), not_source[:3], line))
+    above = sum(layers(t, [(95, -60, 95, 113, -40, 115)])["solid"])
+    if above:
+        raise Fail("%d blocks above the trench: Baritone pillared or bridged while filling" % above)
     stilts = [l for l in t.lines() if "temporary blocks" in l]
     return "198 sources in %.0f s, nothing outside%s" % (secs, ", temporary blocks used" if stilts else "")
 
@@ -985,6 +988,60 @@ def test_canal_smoke(t):
     return "the whole canal script in %.0f s: %d steps run, trench dug, bricks built, 48 water sources" % (secs, len(steps))
 
 
+WATER_SCHEM = ((100, -62, 100), (5, 2, 3))
+WATER_MODEL = {(x, 0, z): "minecraft:stone_bricks" for x in range(5) for z in range(3)}
+WATER_MODEL.update({(x, 1, 0): "minecraft:smooth_stone" for x in range(5)})
+
+
+def test_canal_schem_water(t):
+    """The live canal run: water had leaked into the trench, Baritone stopped at the bottom layer ("Unreplaceable liquids")
+    and nothing above it was built. A 5x3 floor with water in it and a row on top: everything must be built,
+    the water cells by our own placer."""
+    new_world(t, "canal-schem-water", [("floor", WATER_SCHEM[1], WATER_SCHEM[0], WATER_MODEL)])
+    fill(t, (100, -62, 100, 104, -61, 102), "air")
+    t.cmd("/setblock 101 -62 101 minecraft:water", "/setblock 103 -62 101 minecraft:water", "/setblock 100 -62 100 minecraft:water")
+    t.cmd("/give @s stone_bricks 15", "/give @s smooth_stone 5", "/give @s dirt 32")
+    time.sleep(2)
+    if "water" not in t.block((101, -62, 101)):
+        raise Fail("setup: no water at 101 -62 101")
+    line = run_scenario(t, "canal-schem-water.txt", "TEST schemwater", 300)
+    bad = model_diff(t, WATER_SCHEM[0], WATER_SCHEM[1], WATER_MODEL)
+    if bad:
+        raise Fail("%d blocks differ, e.g. %s (%s)" % (len(bad), bad[:4], line))
+    if "left=0" not in line:
+        raise Fail("expected nothing left: %s" % line)
+    return "floor built over the water and the row on top of it (%s)" % line.split("] ", 1)[-1]
+
+
+MOVE_MODEL = {(x, 0, z): "minecraft:spruce_planks" for x in range(3) for z in range(3)}
+
+
+def test_canal_move(t):
+    """/queue move dx dy dz: every saved area and every Litematica placement moves by the offset (for a second test run
+    elsewhere without setting everything up again); the moved placement is built at its new place."""
+    new_world(t, "canal-move", [("pad", (3, 1, 3), (100, -60, 100), MOVE_MODEL)])
+    run_scenario(t, "canal-move-sel.txt", "TEST selected", 60)
+    t.cmd("/queue area save mvtest")
+    t.cmd("/give @s spruce_planks 9")
+    time.sleep(1)
+    t.start_log()
+    t.cmd("/queue move 10 0 5")
+    time.sleep(2)
+    said = [l.split("] ", 1)[-1] for l in t.lines() if "Moved" in l or "did not move" in l or "Could not" in l]
+    if not any("area 'mvtest'" in l and "from 110 -60 105 to 112 -59 107" in l for l in said):
+        raise Fail("the area did not move: %s" % said)
+    if not any("placement 1" in l and "110, -60, 105" in l for l in said):
+        raise Fail("the placement did not move: %s" % said)
+    line = run_scenario(t, "canal-move-build.txt", "TEST moved", 240)
+    bad = model_diff(t, (110, -60, 105), (3, 1, 3), MOVE_MODEL, region=((99, -60, 99), (114, -60, 109)))
+    if bad:
+        raise Fail("%d blocks differ after the move, e.g. %s (%s)" % (len(bad), bad[:4], line))
+    sel = [l for l in t.lines() if "Area 'mvtest' selected" in l]
+    if not sel or "from 110 -60 105 to 112 -59 107" not in sel[-1]:
+        raise Fail("the saved area was not moved: %s" % sel[-1:])
+    return "area and placement moved by 10 0 5, built at the new place"
+
+
 CANAL_TESTS = [("canal_layers", test_canal_layers), ("canal_pillar_scaffold", test_canal_pillar_scaffold),
                ("canal_scaffold_schem", test_canal_scaffold_schem), ("canal_water_pond", test_canal_water_pond),
                ("canal_water_river", test_canal_water_river), ("canal_flood_bucket", test_canal_flood_bucket),
@@ -992,7 +1049,7 @@ CANAL_TESTS = [("canal_layers", test_canal_layers), ("canal_pillar_scaffold", te
                ("canal_flood_pond", test_canal_flood_pond), ("canal_flood_none", test_canal_flood_none), ("canal_flood_wide", test_canal_flood_wide), ("canal_smoke", test_canal_smoke),
                ("canal_schem_two", test_canal_schem_two), ("canal_schem_needed", test_canal_schem_needed),
                ("canal_survival_dump", test_canal_survival_dump), ("canal_survival_restock", test_canal_survival_restock),
-               ("canal_tools_schem", test_canal_tools_schem)]
+               ("canal_tools_schem", test_canal_tools_schem), ("canal_schem_water", test_canal_schem_water), ("canal_move", test_canal_move)]
 
 
 def test_hotbar_tools(t):

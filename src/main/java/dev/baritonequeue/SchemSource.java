@@ -90,6 +90,84 @@ final class SchemSource {
         return out;
     }
 
+    /**
+     * Moves Litematica placements by an offset, the way its own "move" does (live, so it renders and saves as usual).
+     * which: 1-based placement numbers as /schem list shows them, or null for every placement. Returns an error or null.
+     */
+    static String move(List<Integer> which, int dx, int dy, int dz) {
+        if (!FabricLoader.getInstance().isModLoaded("litematica")) return "Litematica is not installed.";
+        try {
+            Class<?> dm = Class.forName("fi.dy.masa.litematica.data.DataManager");
+            Object mgr = dm.getMethod("getSchematicPlacementManager").invoke(null);
+            Object all = call(mgr, "getAllSchematicsPlacements");
+            if (!(all instanceof List<?> list) || list.isEmpty()) return moveInFile(which, dx, dy, dz);
+            Class<?> consumer = Class.forName("fi.dy.masa.malilib.interfaces.IStringConsumer");
+            List<String> said = new ArrayList<>();
+            Object feedback = java.lang.reflect.Proxy.newProxyInstance(consumer.getClassLoader(), new Class<?>[]{consumer}, (proxy, m, args) -> {
+                switch (m.getName()) {
+                    case "setString" -> { if (args != null && args.length == 1) said.add(String.valueOf(args[0])); return null; }
+                    case "hashCode" -> { return System.identityHashCode(proxy); }
+                    case "equals" -> { return proxy == args[0]; }
+                    case "toString" -> { return "Queue feedback"; }
+                    default -> { return null; }
+                }
+            });
+            List<Integer> idx = new ArrayList<>();
+            if (which == null) for (int i = 1; i <= list.size(); i++) idx.add(i);
+            else idx.addAll(which);
+            for (int n : idx) if (n < 1 || n > list.size()) return "There is no placement " + n + " (there are " + list.size() + "). /schem list shows them.";
+            int moved = 0;
+            for (int n : idx) {
+                Object p = list.get(n - 1);
+                BlockPos from = (BlockPos) call(p, "getOrigin");
+                BlockPos to = from.offset(dx, dy, dz);
+                Method set = p.getClass().getMethod("setOrigin", BlockPos.class, consumer);
+                said.clear();
+                set.invoke(p, to, feedback);
+                BlockPos now = (BlockPos) call(p, "getOrigin");
+                if (now.equals(to)) {
+                    moved++;
+                    Util.msg("Moved placement " + n + " (" + call(p, "getName") + ") from " + from.toShortString() + " to " + to.toShortString() + ".");
+                } else {
+                    Util.msg("Placement " + n + " (" + call(p, "getName") + ") did not move" + (said.isEmpty() ? " (is it locked?)" : ": " + String.join(" ", said)) + ".");
+                }
+            }
+            return moved > 0 ? null : "Nothing was moved.";
+        } catch (Throwable t) {
+            return "Could not move the placements (" + t + ").";
+        }
+    }
+
+    /** No live placements (Litematica has not loaded them): move them in its per-world file, which /schem reads then. */
+    private static String moveInFile(List<Integer> which, int dx, int dy, int dz) {
+        Path p = configFile();
+        if (p == null) return "No Litematica placements found. Load a schematic in Litematica first.";
+        try {
+            JsonObject root;
+            try (Reader r = Files.newBufferedReader(p)) { root = JsonParser.parseReader(r).getAsJsonObject(); }
+            JsonElement pl = root.get("placements");
+            if (pl == null || !pl.isJsonArray() || pl.getAsJsonArray().isEmpty()) return "No Litematica placements found. Load a schematic in Litematica first.";
+            var arr = pl.getAsJsonArray();
+            List<Integer> idx = new ArrayList<>();
+            if (which == null) for (int i = 1; i <= arr.size(); i++) idx.add(i);
+            else idx.addAll(which);
+            for (int n : idx) if (n < 1 || n > arr.size()) return "There is no placement " + n + " (there are " + arr.size() + "). /schem list shows them.";
+            for (int n : idx) {
+                JsonObject o = arr.get(n - 1).getAsJsonObject();
+                BlockPos from = pos(o.getAsJsonArray("origin"));
+                BlockPos to = from.offset(dx, dy, dz);
+                var a = new com.google.gson.JsonArray();
+                a.add(to.getX()); a.add(to.getY()); a.add(to.getZ());
+                o.add("origin", a);
+                Util.msg("Moved placement " + n + " (" + o.get("name").getAsString() + ") from " + from.toShortString() + " to " + to.toShortString() + " (in Litematica's file).");
+            }
+            Files.writeString(p, new com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(root));
+            return null;
+        } catch (Exception ex) {
+            return "Could not move the placements in " + p.getFileName() + " (" + ex + ").";
+        }
+    }
+
     // ------------------------------------------------------------------ config file
 
     private static Rotation rot(String s) {

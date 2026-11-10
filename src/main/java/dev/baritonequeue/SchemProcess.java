@@ -74,11 +74,10 @@ final class SchemProcess {
         String[] err = new String[1];
         Plan p = Schem.plan(pls, err);
         if (p == null) return err[0];
+        p.markOpen(mc.level);
         Schem.Counts c = Schem.count(p, mode, mc.level);
-        phases.clear();
-        for (Phase ph : new Phase[]{Phase.CLEAR, Phase.FULL, Phase.SHAPED, Phase.ORIENTED, Phase.ATTACHED, Phase.REDSTONE, Phase.POWER}) {
-            if (c.todoByPhase.getOrDefault(ph, 0) > 0 && (ph != Phase.CLEAR || mode != Mode.ADD)) phases.add(ph);
-        }
+        choosePhases(c, mode);
+        round = 0;
         plan = p;
         planWorld = Minecraft.getInstance().level;
         this.mode = mode;
@@ -101,6 +100,15 @@ final class SchemProcess {
         working = true;
         startPhase();
         return null;
+    }
+
+    private int round;   // 0: the first time through the phases, 1: once more for what the later phases left (scaffolding ...)
+
+    private void choosePhases(Schem.Counts c, Mode mode) {
+        phases.clear();
+        for (Phase ph : new Phase[]{Phase.CLEAR, Phase.FULL, Phase.SHAPED, Phase.ORIENTED, Phase.ATTACHED, Phase.REDSTONE, Phase.POWER}) {
+            if (c.todoByPhase.getOrDefault(ph, 0) > 0 && (ph != Phase.CLEAR || mode != Mode.ADD)) phases.add(ph);
+        }
     }
 
     private void apply() {
@@ -266,6 +274,26 @@ final class SchemProcess {
         if (left > 0) stuck.add(ph.label + ": " + left + " left" + (why != null ? " - " + why : ""));
         Util.msg("Phase " + ph.label + ": " + phaseResult.get(ph) + ".");
         if (++pi >= phases.size()) {
+            // Once more: a block a later phase was in the way of (water, scaffolding Baritone put into a cell of the
+            // schematic) can be done now. Only when the first round got something done, so a hopeless rest ends quickly.
+            int done = 0;
+            for (var e : phaseResult.entrySet()) if ("done".equals(e.getValue())) done++;
+            if (round == 0 && c.todoTotal() > 0 && done > 0) {
+                List<Phase> before = new ArrayList<>(phases);
+                choosePhases(c, mode);
+                if (!phases.isEmpty()) {
+                    round = 1;
+                    pi = 0;
+                    stuck.clear();
+                    phaseResult.clear();
+                    Util.msg("Once more for " + c.todoTotal() + " blocks left after the first round.");
+                    since = 0;
+                    startPhase();
+                    return;
+                }
+                phases.clear();
+                phases.addAll(before);
+            }
             finish(c);
         } else {
             since = 0;

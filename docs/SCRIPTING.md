@@ -123,7 +123,9 @@ The ones marked **waits** take time in the world: the script waits until they ar
 | `schem_check([n \| "all"] [, mode])` | prints the diff: correct, missing, wrong, to dig out, with examples; returns the blocks that still need work |
 | `schem_stop()` | stops the running build |
 
-The same as chat commands: `/schem list`, `/schem build [n|all] [add|fix|exact] [skip|strict]`, `/schem materials [n|all] [mode]`, `/schem check [n|all] [mode]`, `/schem stop`.
+The same as chat commands: `/schem list`, `/schem build [n|all] [add|fix|exact] [skip|strict]`, `/schem materials [n|all] [mode]`, `/schem check [n|all] [mode]`, `/schem move <n|all> <dx> <dy> <dz>`, `/schem stop`.
+
+To run the same thing somewhere else, `/queue move <dx> <dy> <dz>` moves every saved area, saved chest and Litematica placement by that offset (`/queue area move <name|all> <dx> <dy> <dz>` only the areas). Positions written into the script as `pos(...)` do not move: add the offset to them.
 A script line `/schem build 1 add` works too (the script waits while it builds).
 
 * **add** (default for build): schematic air is ignored; blocks that are already there are left alone; only empty or replaceable spots (air, water, grass ...) are filled.
