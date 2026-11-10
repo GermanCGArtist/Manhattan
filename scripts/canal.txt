@@ -1,0 +1,126 @@
+// Canal test: dig, make the water safe, dig the water trench, build the schematics, fill with water.
+// Needs the saved areas trench_a, trench_canal_waterplecae, trench_canal (/queue area save <name>)
+// and the two schematic placements in Litematica (both enabled; /schem list shows them).
+
+// ------------------------------------------------------------------ places
+let storage = pos(-706, 70, 360)       // dug blocks go here; also the dirt for scaffolding and water plugs
+let tools = pos(-702, 66, 360)         // pickaxes, shovels, 16 buckets (+ 1 water bucket for the first fill!)
+let tool_return = pos(-702, 66, 365)   // worn-out tools
+let bed = pos(-699, 66, 360)
+let supply_a = pos(-698, 65, 359)      // build item area (chests, barrels, shulker boxes)
+let supply_b = pos(-693, 66, 365)
+
+let scaffold = "dirt"                  // throwaway block: bridges, pillars, water plugs, sealing the canal ends
+let mode = "add"                       // the trench is dug already, so only fill empty spots
+
+// ------------------------------------------------------------------ survival
+option("survival.bed", bed)
+option("survival.supply", tools)
+option("survival.returnChest", tool_return)
+want("_pickaxe", 2)
+want("_shovel", 2)
+want("bucket", 16)
+want("food", 32)
+keep(scaffold, 256)                    // dump() leaves this much for scaffolding
+enable("eat", "sleep", "defence", "restock", "escape")
+on full do dump(storage) end
+on restock_needed do restock() end
+
+#acceptableThrowawayItems {scaffold}
+#allowInventory true
+restock()
+
+// ------------------------------------------------------------------ 1. dig trench_a, 2 layers at a time
+print("1/5: digging trench_a")
+#buildInLayers true
+#layerOrder true
+#layerHeight 2
+area("trench_a")
+#sel ca
+collect_scaffold()
+
+// ------------------------------------------------------------------ 2. make the existing water safe
+// every water cell in the area is filled with dirt (bottom up), fetched from the storage chest
+print("2/5: plugging the water in trench_canal_waterplecae")
+area("trench_canal_waterplecae")
+let wet = fill_water(scaffold, storage)
+if wet > 0 then print("{wet} wet cells are left; check them before going on") end
+
+// ------------------------------------------------------------------ 3. dig the water trench
+print("3/5: digging trench_canal")
+area("trench_canal")
+#sel ca
+collect_scaffold()
+#buildInLayers false
+dump(storage)
+
+// ------------------------------------------------------------------ 4. build both schematics
+print("4/5: building the schematics")
+let chests = []
+let p = null
+let b = null
+for x in range(min(supply_a.x, supply_b.x), max(supply_a.x, supply_b.x) + 1)
+  for y in range(min(supply_a.y, supply_b.y), max(supply_a.y, supply_b.y) + 1)
+    for z in range(min(supply_a.z, supply_b.z), max(supply_a.z, supply_b.z) + 1)
+      p = pos(x, y, z)
+      b = block(p)
+      if b != null and b != "ender_chest" and (contains(b, "chest") or b == "barrel" or contains(b, "shulker_box")) then push(chests, p) end
+    end
+  end
+end
+print("{len(chests)} supply chests found")
+if len(chests) == 0 then stop("No chests in the build item area.") end
+
+let unavailable = []
+func fetch()
+  let need = schem_needed("all", mode)
+  let seen = null
+  for item in keys(need)
+    if contains(unavailable, item) then continue end
+    for c in chests
+      if count(item) >= need[item] or full then break end
+      seen = chest_contents(c)
+      if seen == null or contains(keys(seen), item) then
+        try
+          take_upto(c, item, need[item])
+        catch err
+        end
+      end
+    end
+    if count(item) == 0 and not full then
+      push(unavailable, item)
+      print("No {item} in the supply chests: those {need[item]} blocks are left out.")
+    end
+  end
+end
+
+let left = -1
+let now_left = 0
+let stuck = 0
+loop
+  take_upto(storage, scaffold, 128)
+  fetch()
+  now_left = schem_build("all", mode, "skip")
+  if now_left == 0 then break end
+  if now_left == left then
+    stuck += 1
+    if stuck >= 2 then break end
+  else
+    stuck = 0
+  end
+  left = now_left
+end
+collect_scaffold()
+schem_check("all", mode)
+if now_left > 0 then print("Schematics: {now_left} blocks left out. Missing: {join(unavailable, ', ')}") end
+
+// ------------------------------------------------------------------ 5. fill the trench with water
+// flood() fills every air cell of the selection, bottom up: seals open sides first (with dirt),
+// then a source on every second cell, then the gaps; the bucket is refilled from the new sources.
+print("5/5: filling trench_canal with water")
+dump(storage)
+take_upto(storage, scaffold, 256)      // for sealing the open ends
+restock()                              // the buckets
+area("trench_canal")
+flood()
+print("Canal done.")
