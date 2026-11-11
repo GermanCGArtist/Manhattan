@@ -2,6 +2,10 @@
 
 Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
 
+## 2.7.2 – count("food") (2026-11-11)
+- `count("food")` and `has("food")` counted items with "food" in their name, so always 0. They now count anything
+  edible, as `want("food")` and `hotbar(9, "food")` already did.
+
 ## 2.7.1 – sleep from far away (2026-11-11)
 - `sleep()` said "No bed at ... (it was removed?)" every minute while working ~250 blocks from the bed, and never
   went: a chunk that far away can read as loaded without its blocks. A missing bed is now only believed within 48

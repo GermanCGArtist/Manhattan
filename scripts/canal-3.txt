@@ -63,9 +63,8 @@ on full and not building
 end
 
 restock()
-let food_with_me = count("food")
-if food_with_me < 8 then
-  stop("Only {food_with_me} food with me after restocking: put food (bread, steak, golden carrots ...) into the tool chest at 1786 74 -841, then run again.")
+if not hotbar(9, "food") then      // hotbar() knows "food" = anything edible (and puts it in slot 9)
+  stop("No food with me after restocking: put food (bread, steak, golden carrots ...) into the tool chest at 1786 74 -841, then run again.")
 end
 take_upto(scaffold_chest, scaffold, 256)
 

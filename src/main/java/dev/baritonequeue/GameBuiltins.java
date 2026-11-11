@@ -115,6 +115,10 @@ final class GameBuiltins {
     private static int count(LocalPlayer p, String what) {
         int n = 0;
         String w = what.toLowerCase();
+        if (w.equals("food") || w.equals("@food")) {   // anything edible, like want("food") and hotbar(9, "food")
+            for (int k = 0; k < 36; k++) if (matchesItem(p.getInventory().getItem(k), "food")) n += p.getInventory().getItem(k).getCount();
+            return n;
+        }
         for (int k = 0; k < 36; k++) {
             ItemStack st = p.getInventory().getItem(k);
             if (st.isEmpty()) continue;
