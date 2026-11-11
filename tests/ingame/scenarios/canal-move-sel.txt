@@ -1,0 +1,5 @@
+// selects a box for /queue area save (run_tests.py canal_move)
+#sel clear
+#sel pos1 100 -60 100
+#sel pos2 102 -59 102
+print("TEST selected")

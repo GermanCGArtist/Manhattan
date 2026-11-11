@@ -154,11 +154,13 @@ final class ChestProcess implements IBaritoneProcess {
                     timer = 0;
                     return pause();
                 }
+                if (timer == 1) Util.readyToOpen(p);   // never place a block on top of it or pour a bucket
                 if (timer == 4) {   // let the player come to a stop first
+                    Util.readyToOpen(p);
                     BlockHitResult hit = new BlockHitResult(Vec3.atCenterOf(chest), Direction.UP, chest, false);
                     mc.gameMode.useItemOn(p, InteractionHand.MAIN_HAND, hit);
                 }
-                if (++timer > OPEN_TIMEOUT) return fail("Could not open the chest " + op.chest + ".");
+                if (++timer > OPEN_TIMEOUT) return fail("Could not open the chest " + op.chest + "." + Util.blockedText(mc.level, chest));
                 return pause();
             }
             case TRANSFER -> {
@@ -183,6 +185,22 @@ final class ChestProcess implements IBaritoneProcess {
                 Slot s = h.slots.get(index);
                 int before = s.getItem().getCount();
                 if (before == 0) return pause();
+                int still = needed == Integer.MAX_VALUE ? Integer.MAX_VALUE : needed - moved;
+                if (op.kind == ChestOp.Kind.GET && still > 0 && still < before) {
+                    // take exactly what is still needed: all of the stack onto the cursor, one into an empty
+                    // slot of ours each click, the rest back into its slot (a quick move would take the whole stack)
+                    Slot target = null;
+                    for (Slot sl : h.slots) {
+                        if (sl.container == p.getInventory() && sl.getItem().isEmpty()) { target = sl; break; }
+                    }
+                    if (target == null) return fail("No free slot in the inventory for " + still + " of " + before + " in the chest.");
+                    mc.gameMode.handleContainerInput(h.containerId, s.index, 0, ContainerInput.PICKUP, p);
+                    for (int k = 0; k < still; k++) mc.gameMode.handleContainerInput(h.containerId, target.index, 1, ContainerInput.PICKUP, p);
+                    mc.gameMode.handleContainerInput(h.containerId, s.index, 0, ContainerInput.PICKUP, p);
+                    moved += still;
+                    todo.clear();
+                    return pause();
+                }
                 mc.gameMode.handleContainerInput(h.containerId, s.index, 0, ContainerInput.QUICK_MOVE, p);
                 int delta = before - s.getItem().getCount();   // the client already applied the move
                 if (delta <= 0) {

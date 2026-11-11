@@ -1,0 +1,5 @@
+// builds the moved placement and selects the moved area (run_tests.py canal_move)
+stall(1)
+let left = schem_build(1, "add", "skip")
+area("mvtest")
+print("TEST moved left={left}")

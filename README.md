@@ -8,7 +8,7 @@ are Baritone commands, lines starting with `/` are chat commands.
 
 The built-in helpers that used to be separate addons (SurvivalKit, BuildTools, LoadChest) are part of this mod and
 only act when the script tells them to: `defend()`, `eat()`, `sleep()`, `restock()`, `fill_water()`, `clear_area()`,
-`dump()`, `protect()`, chests, areas, and more.
+`dump()`, `protect()`, chests, areas, Litematica schematics (`schem_build()`, `/schem build`), and more.
 
 ```
 let dirt_chest = pos(1794, 74, -840)
@@ -42,6 +42,7 @@ install.bat
 copies (and the old addon jars) to `mods-disabled`. It refuses while that profile is running.
 
 In-game tests (start the game on the "Manhatten Testing" profile, run scripts, check the world, close it):
-`tests\ingameun.bat`. See [docs/TESTING.md](docs/TESTING.md).
+`tests\ingame
+un.bat`. See [docs/TESTING.md](docs/TESTING.md).
 
 Requires Fabric Loader, Fabric API and Baritone (API build 1.18.0) for 26.1.1.

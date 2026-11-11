@@ -54,6 +54,21 @@ public final class Api {
         return BuildToolsMod.fill.busy() ? null : "Could not start filling with water (see the message above).";
     }
 
+    /** Why the last flood stopped early (its message is in chat too), or null. */
+    public static String floodFailure() {
+        return BuildToolsMod.fill.failure();
+    }
+
+    /** An "on" block interrupts flood(): pause it (keeps its cells and skips). */
+    public static void pauseFlooding() {
+        BuildToolsMod.fill.suspendRun();
+    }
+
+    /** After the "on" block: carry on; null = going, "" = nothing to carry on, else an error. */
+    public static String resumeFlooding() {
+        return BuildToolsMod.fill.carryOn();
+    }
+
     public static boolean flooding() {
         return BuildToolsMod.fill.busy();
     }
@@ -78,6 +93,12 @@ public final class Api {
     public static int scaffoldCount() {
         return Scaffold.count();
     }
+
+    /**
+     * Set by the schematic builder: true when a throwaway block placed at this spot is NOT part of the schematic being
+     * built, so it is scaffolding and is recorded even while Baritone's builder runs. null = no schematic build.
+     */
+    public static volatile java.util.function.BiPredicate<net.minecraft.core.BlockPos, net.minecraft.world.level.block.Block> scaffoldOutsideSchematic;
 
     public static void forgetScaffold() {
         Scaffold.spots().clear();

@@ -62,6 +62,40 @@ Adding a test: write a scenario script in `tests/ingame/scenarios/` that prints 
 `t.wait_chat("TEST …", seconds)`, check with `t.block((x, y, z))`, `t.count("item")`, `t.state()`, raise `Fail`)
 and put it in `TESTS`.
 
+## Parallel runs, schematic tests, no focus stealing (2.5.0)
+
+`tests\ingame
+un.bat` starts several games at once when there is RAM for it (about 3 GB each, at most 3; `-j N` /
+`--workers N` sets it, `-j 1` is one game in the "Manhatten Testing" profile as before). Each worker is its own game:
+game dir `tmp\ingame\wN` (own `config/`, `saves/`, `logs/`, `options.txt`, Litematica placements), bridge port
+25600+N, log `tmp\ingame\wN.log`. Workers take tests from a queue (slow ones first), each test has a hard limit
+(`--test-timeout`, default 420 s): a stuck test fails and that worker's own game is closed through its own bridge and
+restarted. Only games the harness started (matched by their game dir) are ever closed. One combined summary at the end.
+Render distance 4, 30 fps, no vsync and an 854x480 window keep the load low.
+
+Test games must not take your mouse or focus: the window is shown without activation, the test bridge jar (which
+exists only in test profiles) creates the window with `GLFW_FOCUSED` / `GLFW_FOCUS_ON_SHOW` off through a mixin
+(only with `-Dmanhattan.tests=true`) and lets go of the mouse whenever the game grabs it. `tests\ingameocuswatch.py
+<seconds> <file>` records the foreground window while a run is going.
+
+Litematica and malilib are copied (read only) from the Bestes_projekt profile into the test profiles when they are
+there; the Litematica printer is never installed.
+
+| test | what it checks |
+|---|---|
+| `schem_list` | `/schem list` finds the placement, `/schem materials` counts stone 25, cobblestone 23, stairs 4, slabs 4, redstone 1 |
+| `schem_add` | a 5x3x5 house (stairs facing four ways, two upside down, slabs, a log, a wall torch, redstone dust) is built; a wrong block already on a floor spot and a block inside schematic air are left alone |
+| `schem_fix` | the wrong floor block is replaced; schematic air is left alone |
+| `schem_fix_wrong` | wrong blocks on the redstone, stair, torch, log and slab spots, and a stair with the wrong facing and half, are all replaced; every block is compared with facing, half, type and axis |
+| `schem_exact` | built into a hill of dirt: schematic air is dug out top-down, wrong dirt is replaced, everything matches |
+| `canal_layers` | 8 adjacent boxes (4 and 3 deep) of trench_a dug into a dirt plateau by `clear_area(2)`: everything dug, top layers first, nothing around or below touched |
+| `canal_scaffold_schem` | a schematic floating above the ground built on dirt scaffolding; `collect_scaffold()` takes the scaffolding down and leaves the schematic whole |
+| `canal_water_pond`, `canal_water_river` | `fill_water("dirt", chest)` dries a pond (fetching dirt from the chest) and a flowing river |
+| `canal_flood_*` | `flood()` on a 2-deep trench open at both ends: with 2 water buckets, with 16 stacked buckets, 11 wide (temporary blocks where nothing can be clicked), no water outside, ends sealed; with one bucket or none it stops with a clear message |
+| `canal_schem_two`, `canal_schem_needed`, `canal_tools_schem` | two placements with one item missing (skipped and reported), `schem_needed` and `take_upto` from chest/barrel/shulker box, the digger takes pickaxe and shovel |
+| `canal_survival_dump`, `canal_survival_restock` | a full inventory triggers `dump(storage)` and the task goes on; `restock()` fetches buckets and tools |
+| `canal_smoke` | the whole `scripts/canal.txt` (from "survival" on) on a small copy of the canal: dig, plug the water, dig the water trench, build two placements from a shulker box, fill with water |
+
 ## How it works
 
 ### The testing profile

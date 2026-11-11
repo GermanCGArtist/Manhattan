@@ -185,6 +185,7 @@ final class SleepProcess extends Feature {
                 }
                 if (timer % 15 == 1) {   // try every 0.75 s, the server answers a tick or two later
                     if (tries++ >= MAX_TRIES) return fail("Could not sleep (monsters nearby, or the server refused).");
+                    Util.readyToOpen(p);   // sneaking with a block in hand would place it on the bed
                     BlockHitResult hit = new BlockHitResult(Vec3.atCenterOf(bed), Direction.UP, bed, false);
                     mc.gameMode.useItemOn(p, InteractionHand.MAIN_HAND, hit);
                 }

@@ -64,8 +64,8 @@ final class CaptureScreen extends Screen {
         nameBox.setResponder(v -> Capture.name = v);
         addRenderableWidget(nameBox);
         schemButton = addRenderableWidget(Button.builder(Component.literal(""), b -> {
-            List<String> files = Capture.schematics();
-            if (files.isEmpty()) { say("No schematics in " + Capture.schematicsDir() + ".", true); return; }
+            List<String> files = Capture.placements();
+            if (files.isEmpty()) { say("Litematica has no placements (load a schematic in Litematica first).", true); return; }
             openList(b, files, i -> { Capture.schematic = files.get(i); refresh(); });
         }).bounds(left + tw + 120 + 2 * gap, y, width0 - tw - 120 - 2 * gap, 20).build());
 
@@ -74,7 +74,7 @@ final class CaptureScreen extends Screen {
         int bw = (width0 - 3 * gap) / 4;
         addRenderableWidget(Button.builder(Component.literal("Fetch looked-at"), b -> {
             String r = Capture.capture(target);
-            say(r, r.startsWith("Look") || r.startsWith("Pick"));
+            say(r, r.startsWith("Look") || r.startsWith("Pick") || r.startsWith("Litematica"));
             syncBox();
         }).bounds(left, y, bw, 20).build());
         addRenderableWidget(Button.builder(Component.literal("Aim in world (J)"), b -> {
@@ -165,7 +165,7 @@ final class CaptureScreen extends Screen {
         boolean named = t == Capture.Type.SPOT || t == Capture.Type.AREA;
         nameBox.setHint(Component.literal(named ? "name" : t.kind == Capture.Kind.AREA ? "name (same = more boxes)" : "name (optional)"));
         schemButton.visible = t.kind == Capture.Kind.SCHEMATIC;
-        schemButton.setMessage(Component.literal(Capture.schematic == null ? "Schematic file... ▾" : Capture.schematic + " ▾"));
+        schemButton.setMessage(Component.literal(Capture.schematic == null ? "Litematica placement... ▾" : Capture.schematic + " ▾"));
         rapidButton.setMessage(Component.literal("Rapid: " + (cfg.captureRapid ? "on" : "off")));
         showButton.setMessage(Component.literal("Show in world: " + (cfg.captureShow ? "on" : "off")));
     }

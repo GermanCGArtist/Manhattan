@@ -7,12 +7,17 @@
   "license": "MIT",
   "environment": "client",
   "entrypoints": {
-    "client": ["dev.baritonequeue.TestBridge"]
+    "client": [
+      "dev.baritonequeue.TestBridge"
+    ]
   },
   "depends": {
     "fabricloader": ">=0.19.3",
     "fabric-api": "*",
     "minecraft": "~26.1.1",
     "baritonequeue": "*"
-  }
+  },
+  "mixins": [
+    "manhattan-testbridge.mixins.json"
+  ]
 }

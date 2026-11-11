@@ -100,4 +100,35 @@ final class Util {
                 || b.getExploreProcess().isActive() || b.getGetToBlockProcess().isActive()
                 || b.getFollowProcess().isActive() || b.getCustomGoalProcess().isActive();
     }
+
+    /**
+     * Right-clicking a chest while sneaking, with a block or a bucket in hand, places the block on top of it (or pours
+     * the bucket) instead of opening it - and a block on top of a chest keeps it shut for good. On the live canal a
+     * stone brick ended up on the tools chest that way and every restock after it failed. So: stand up, and hold
+     * something harmless.
+     */
+    static void readyToOpen(net.minecraft.client.player.LocalPlayer p) {
+        baritone().getInputOverrideHandler().setInputForceState(baritone.api.utils.input.Input.SNEAK, false);
+        p.setShiftKeyDown(false);
+        var inv = p.getInventory();
+        if (!placesSomething(inv.getItem(inv.getSelectedSlot()))) return;
+        for (int i = 0; i < 9; i++) {
+            if (!placesSomething(inv.getItem(i))) { inv.setSelectedSlot(i); return; }
+        }
+    }
+
+    private static boolean placesSomething(net.minecraft.world.item.ItemStack s) {
+        var it = s.getItem();
+        return it instanceof net.minecraft.world.item.BlockItem || it instanceof net.minecraft.world.item.BucketItem
+                || it instanceof net.minecraft.world.item.SpawnEggItem || it instanceof net.minecraft.world.item.FlintAndSteelItem;
+    }
+
+    /** Why a chest at pos may not open: something solid on top of it (a chest, not a barrel or shulker box). */
+    static String blockedText(net.minecraft.world.level.Level level, net.minecraft.core.BlockPos pos) {
+        if (!(level.getBlockState(pos).getBlock() instanceof net.minecraft.world.level.block.ChestBlock)) return "";
+        var above = pos.above();
+        if (!level.getBlockState(above).isRedstoneConductor(level, above)) return "";
+        return " A " + net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(level.getBlockState(above).getBlock()).getPath()
+                + " is on top of it (" + above.toShortString() + "): a chest does not open with a block on top. Take it away.";
+    }
 }

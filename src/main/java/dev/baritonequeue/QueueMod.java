@@ -23,6 +23,7 @@ public class QueueMod implements ClientModInitializer {
     static final Runner runner = new Runner();
     static final ChestProcess chest = new ChestProcess();
     static final ClearProcess clear = new ClearProcess();
+    static final SchemProcess schem = new SchemProcess();
     static KeyMapping open, capture;
     private boolean registered = false;
     private int noPlayer, areaTick;
@@ -37,6 +38,7 @@ public class QueueMod implements ClientModInitializer {
         open = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.baritonequeue.open", 74 /* GLFW_KEY_J */, category));
         capture = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.baritonequeue.capture", 75 /* GLFW_KEY_K */, category));
 
+        ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> SchemCmd.register(dispatcher));
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
                 dispatcher.register(ClientCommands.literal("queue")
                         .executes(ctx -> list())
@@ -135,12 +137,35 @@ public class QueueMod implements ClientModInitializer {
                                             if (err != null) Util.msg(err);
                                             return err == null ? 1 : 0;
                                         })))
+                                .then(ClientCommands.literal("move")
+                                        .then(ClientCommands.argument("name", StringArgumentType.word())
+                                                .then(ClientCommands.argument("dx", IntegerArgumentType.integer())
+                                                        .then(ClientCommands.argument("dy", IntegerArgumentType.integer())
+                                                                .then(ClientCommands.argument("dz", IntegerArgumentType.integer()).executes(ctx -> {
+                                                                    String err = Areas.move(StringArgumentType.getString(ctx, "name"), IntegerArgumentType.getInteger(ctx, "dx"),
+                                                                            IntegerArgumentType.getInteger(ctx, "dy"), IntegerArgumentType.getInteger(ctx, "dz"));
+                                                                    if (err != null) Util.msg(err);
+                                                                    return err == null ? 1 : 0;
+                                                                }))))))
                                 .then(ClientCommands.literal("delete")
                                         .then(ClientCommands.argument("name", StringArgumentType.word()).executes(ctx -> {
                                             String n = StringArgumentType.getString(ctx, "name");
                                             Util.msg(Areas.delete(n) ? "Deleted area '" + n + "'." : "There is no saved area '" + n + "'.");
                                             return 1;
                                         }))))
+                        .then(ClientCommands.literal("move")   // the whole setup: every saved area, saved chest and Litematica placement
+                                .then(ClientCommands.argument("dx", IntegerArgumentType.integer())
+                                        .then(ClientCommands.argument("dy", IntegerArgumentType.integer())
+                                                .then(ClientCommands.argument("dz", IntegerArgumentType.integer()).executes(ctx -> {
+                                                    int dx = IntegerArgumentType.getInteger(ctx, "dx"), dy = IntegerArgumentType.getInteger(ctx, "dy"), dz = IntegerArgumentType.getInteger(ctx, "dz");
+                                                    if (!cfg.areas.isEmpty()) Areas.move("all", dx, dy, dz);
+                                                    int chests = Places.moveChests(dx, dy, dz);
+                                                    if (chests > 0) Util.msg("Moved " + chests + " saved chest" + (chests == 1 ? "" : "s") + ".");
+                                                    String err = SchemSource.move(null, dx, dy, dz);
+                                                    if (err != null) Util.msg(err);
+                                                    Util.msg("Positions written into scripts as pos(...) do not move: add " + dx + " " + dy + " " + dz + " to them.");
+                                                    return 1;
+                                                })))))
                         .then(ClientCommands.literal("stall")
                                 .executes(ctx -> {
                                     Util.msg(cfg.stallMinutes > 0
@@ -309,6 +334,7 @@ public class QueueMod implements ClientModInitializer {
         }
         Capture.tick(mc);
         clear.tick();
+        schem.tick();
         if (PauseWatch.paused) return;   // #pause: the script holds still
         try {
             runner.tick();

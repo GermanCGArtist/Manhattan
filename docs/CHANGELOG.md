@@ -2,7 +2,7 @@
 
 Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
 
-## 2.5.0 � capture menu (2026-11-11)
+## 2.6.0 – capture menu (2026-11-11)
 - New capture menu (key K, `/queue capture`, or Capture... in the editor): pick a role (dump, supply / tools, return,
   material, scaffolding, bed, mine / fill / building block / safe area, other spot or area by name, schematic), then
   **Fetch looked-at** or **Aim in world** and J. Rapid mode keeps you in the world, one line per J press. Areas take
@@ -11,9 +11,50 @@ Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
   the menu, `//` switches a line off. Copy full context adds the world, inventory, want-list, area contents, wrong
   lines and the built-in functions for an LLM (also written to `<world>_<set>.context.txt`).
 - Captured places and areas are marked with particles in the world; a chest or bed that is gone shows in flames.
-- New functions `area_box("name", c1, c2)` (an area written in the script), `schematic("file", origin)` and
-  `build(...)`.
+- New function `area_box("name", c1, c2)`: an area written in the script.
+- Merged with the Litematica schematic builder (2.5.0). The capture menu's schematic role lists the Litematica
+  placements and writes `let canal = "canal"`; `schem_build`, `schem_check`, `schem_materials` and `schem_needed`
+  now also take a placement's name instead of its number.
 - Not tested in game yet.
+
+## 2.5.0 – build Litematica placements with Baritone (step 1) (2026-11-09)
+- `/schem list | build [n|all] [add|fix|exact] | materials | check | stop` and the script functions `schem_list()`,
+  `schem_build()`, `schem_materials()`, `schem_check()`, `schem_stop()`. See [SCRIPTING.md](SCRIPTING.md).
+- The placement (position, rotation, mirror, sub-regions, enabled) is read from the running Litematica by reflection
+  (the mod still loads without it), else from Litematica's per-world file. The `.litematic` is read by the mod itself.
+- The placement is wrapped in our own `ISchematic` and handed to Baritone's builder, one phase per run (clear,
+  full, shaped, attached, redstone, power), bottom-up per layer. Fluids are listed, not built yet. Safe areas are left out.
+- New in-game tests `schem_list`, `schem_add`, `schem_fix`, `schem_exact`; the test profile gets Litematica and
+  malilib (copied from the Bestes_projekt profile) and never the Litematica printer.
+- New presets, all in the current language and parsed at build time: the canal, building a schematic with materials from
+  chests, digging top down with `clear_area(2)`, filling with water (`flood()`), filling water with dirt from a chest.
+  The digging presets use `clear_area` instead of `#layerOrder true` + `#sel ca` (which gets stuck), "Remove water
+  (layers)" is gone (use the water fill), the helpers use `enable(...)` and `on bed_time`. On the first start, presets
+  you never changed are replaced; edited ones stay as "name (yours)".
+- Canal work (tested end to end by the new `canal_smoke` test, which runs `scripts/canal.txt` on a small canal):
+  - `flood()` works in trenches of any width: it stands or swims in the water (head always dry, comes up for air),
+    puts water on temporary blocks where there is nothing to click against, empties a bucket only when the line of
+    sight really ends on the intended face (no more water on the rim), never lets Baritone dig while filling, takes
+    out blocks Baritone pillared into the trench, refills several buckets per trip and checks every scoop.
+  - `clear_area(2)`: 2 layers per pass (Baritone's own `#layerOrder` top-down `#sel ca` gets stuck).
+  - `collect_scaffold()` never digs through a fresh build (Baritone only walks while it collects); `fill_water` steps
+    out of the last wet cell when it stands in it; `take_upto` takes exactly the count still needed.
+  - `schem_build(..., "skip")` (default) builds what it has items for and leaves out the rest; the builder takes
+    items from the whole inventory; the digger uses the fastest tool; Test checks the world too (chests, bed,
+    placements, materials, water for `flood()`).
+  - After the first live canal run: schematic blocks wanted where water is now are placed by our own placer (Baritone's
+    builder stopped the whole bottom layer at "Unreplaceable liquids", so nothing above it was built), and Baritone
+    may not place blocks while `flood()` walks (it pillared dirt 30 blocks up out of the water at cells it could not
+    reach). New tests `canal_schem_water`, `canal_move`; `canal_flood_wide` checks that nothing stands above the trench.
+  - After the second live run (9 hours on the last step, nothing filled): a chest is never opened while sneaking with a
+    block or bucket in hand (that put a stone brick on top of the tools chest, which then never opened again; the
+    message now says when a block is on top); a restock trip that cannot reach or open the chest waits 1, 2, 4 ... 30
+    minutes and `restock_needed` waits as long; `flood()` carries on after an `on` block with the same cells and skips
+    instead of starting over; where Baritone finds no path (it never walks through flowing water) `flood()` walks or
+    swims the last few blocks itself; our schematic placer may stand in water. New test `canal_flood_resume`.
+- `/queue move <dx> <dy> <dz>` moves the whole setup (every saved area, saved chest and Litematica placement) by an
+  offset, to run a test again somewhere else; `/queue area move <name|all> ...` and `/schem move <n|all> ...` move
+  one kind. Positions written into a script as `pos(...)` stay where they are.
 
 ## 2.4.4 – clear_area says why blocks are left (2026-11-09)
 - `clear_area` returned every block left, so `if clear_area() > 0 then #sel ca end` handed the blocks next to the

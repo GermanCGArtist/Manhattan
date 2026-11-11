@@ -50,7 +50,7 @@ final class Capture {
         SAFE("safe", "safe area", "protect", Kind.AREA, "Baritone never breaks or places blocks here"),
         SPOT("spot", "other spot (named)", "spot", Kind.POINT, ""),
         AREA("area", "other area (named)", "area", Kind.AREA, ""),
-        SCHEMATIC("schematic", "schematic", "schematic", Kind.SCHEMATIC, "build() builds it here");
+        SCHEMATIC("schematic", "schematic (Litematica)", "schematic", Kind.SCHEMATIC, "schem_build() builds it");
 
         final String id, label, base, hint;
         final Kind kind;
@@ -79,7 +79,7 @@ final class Capture {
     static boolean aiming;
     /** The first corner of the box being captured (null: none yet). */
     static Values.Pos corner1;
-    /** The name typed in the menu ("" = automatic) and the schematic file picked there. */
+    /** The name typed in the menu ("" = automatic) and the Litematica placement picked there. */
     static String name = "";
     static String schematic = null;
     /** Captured since aiming started (for the hint). */
@@ -231,21 +231,15 @@ final class Capture {
 
     /** Takes the block for the chosen role; returns what happened (for the chat or the menu). */
     static String capture(Places.Target t) {
-        if (t == null) return "Look at a block first.";
         Type ty = type();
+        if (ty.kind == Kind.SCHEMATIC) return addPlacement(schematic);
+        if (t == null) return "Look at a block first.";
         String sheet = text();
         Set<String> taken = CaptureSheet.names(sheet);
         Values.Pos p = t.pos();
         switch (ty.kind) {
             case SCHEMATIC -> {
-                if (schematic == null) return "Pick a schematic file in the menu first.";
-                String base = CaptureSheet.cleanName(schematic.replaceAll("\\.[A-Za-z]+$", ""));
-                String n = nameFor(ty, base.isEmpty() ? "schematic" : base, taken);
-                Values.Pos o = t.front();
-                setText(CaptureSheet.add(sheet, CaptureSheet.SCHEMATICS, "let " + n + " = schematic(\"" + schematic + "\", "
-                        + CaptureSheet.pos(o.x(), o.y(), o.z()) + ")   // schematic: build(" + n + ") builds it with its lowest corner here"));
-                captured++;
-                return "Schematic " + schematic + " as '" + n + "', lowest corner at " + o + ".";
+                return addPlacement(schematic);
             }
             case AREA -> {
                 if (corner1 == null) {
@@ -277,6 +271,42 @@ final class Capture {
                 return "Captured " + n + " at " + p + warn + ".";
             }
         }
+    }
+
+    /** A Litematica placement as a line: let canal = "canal"   // schematic: ...; schem_build(canal) builds it. */
+    static String addPlacement(String placement) {
+        if (placement == null) return "Pick a Litematica placement in the menu first.";
+        SchemSource.Placement pl = null;
+        for (SchemSource.Placement p : SchemSource.list()) if (p.name().equals(placement)) pl = p;
+        if (pl == null) return "Litematica has no placement '" + placement + "' (any more).";
+        String sheet = text();
+        Set<String> taken = CaptureSheet.names(sheet);
+        String base = CaptureSheet.cleanName(placement);
+        String n = nameFor(Type.SCHEMATIC, base.isEmpty() ? "schematic" : base, taken);
+        setText(CaptureSheet.add(sheet, CaptureSheet.SCHEMATICS, "let " + n + " = \"" + placement.replace("\"", "") + "\"   // " + describe(pl)
+                + "; schem_build(" + n + ") builds it"));
+        captured++;
+        return "Schematic '" + placement + "' as " + n + ".";
+    }
+
+    /** "schematic: Litematica placement at x y z, rotated ..., 2 regions" */
+    private static String describe(SchemSource.Placement p) {
+        var o = p.origin();
+        return "schematic: Litematica placement at " + o.getX() + " " + o.getY() + " " + o.getZ()
+                + (p.rotation() != net.minecraft.world.level.block.Rotation.NONE ? ", " + p.rotation().name().toLowerCase() : "")
+                + (p.mirror() != net.minecraft.world.level.block.Mirror.NONE ? ", mirror " + p.mirror().name().toLowerCase() : "")
+                + ", " + p.subs().size() + " region" + (p.subs().size() == 1 ? "" : "s") + (p.enabled() ? "" : ", off in Litematica");
+    }
+
+    /** The names of the Litematica placements (empty without Litematica). */
+    static List<String> placements() {
+        List<String> out = new ArrayList<>();
+        try {
+            for (SchemSource.Placement p : SchemSource.list()) out.add(p.name());
+        } catch (Throwable t) {
+            // no Litematica, or its file cannot be read
+        }
+        return out;
     }
 
     private static String addBox(Type ty, int x1, int y1, int z1, int x2, int y2, int z2) {
@@ -334,31 +364,17 @@ final class Capture {
             n++;
         }
         setText(sheet);
-        return n == 0 ? "Nothing new: the sheet has every saved chest and area." : "Imported " + n + " saved chest" + (n == 1 ? "" : "s") + " and areas.";
-    }
-
-    // ------------------------------------------------------------------ schematics
-
-    static Path schematicsDir() {
-        return Minecraft.getInstance().gameDirectory.toPath().resolve("schematics");
-    }
-
-    static List<String> schematics() {
-        List<String> out = new ArrayList<>();
-        try (var s = Files.list(schematicsDir())) {
-            s.map(p -> p.getFileName().toString())
-                    .filter(n -> n.matches("(?i).*\\.(schem|schematic|litematic)$"))
-                    .sorted(String.CASE_INSENSITIVE_ORDER).forEach(out::add);
-        } catch (IOException ignored) {}
-        return out;
-    }
-
-    /** The file name in the schematics folder ("house" finds house.schem); null when there is none. */
-    static String schematicFile(String name) {
-        Path d = schematicsDir();
-        if (Files.isRegularFile(d.resolve(name))) return name;
-        for (String ext : new String[]{".schem", ".litematic", ".schematic"}) if (Files.isRegularFile(d.resolve(name + ext))) return name + ext;
-        return null;
+        Set<String> inSheet = new java.util.HashSet<>();   // placements already in the sheet, by their name in quotes
+        for (String line : sheet.split("\n")) {
+            var m = java.util.regex.Pattern.compile("=\\s*\"([^\"]*)\"\\s*//\\s*schematic").matcher(line);
+            if (m.find()) inSheet.add(m.group(1));
+        }
+        for (String pl : placements()) {
+            if (inSheet.contains(pl.replace("\"", ""))) continue;
+            addPlacement(pl);
+            n++;
+        }
+        return n == 0 ? "Nothing new: the sheet has every saved chest, area and Litematica placement." : "Imported " + n + " saved chests, areas and placements.";
     }
 
     // ------------------------------------------------------------------ checks
@@ -501,8 +517,13 @@ final class Capture {
             sb.append("// check these, the block is not what the line says:\n");
             for (String s : stale) sb.append("//   ").append(s).append('\n');
         }
-        List<String> files = schematics();
-        if (!files.isEmpty()) sb.append("// schematics folder: ").append(String.join(", ", files)).append('\n');
+        try {
+            List<SchemSource.Placement> pls = SchemSource.list();
+            if (!pls.isEmpty()) {
+                sb.append("// Litematica placements (schem_build(n or \"name\")):\n");
+                for (int i = 0; i < pls.size(); i++) sb.append("//   ").append(i + 1).append(". \"").append(pls.get(i).name()).append("\" ").append(describe(pls.get(i))).append('\n');
+            }
+        } catch (Throwable ignored) {}
         sb.append("\n").append(text().strip()).append("\n\n");
         sb.append("// --- built-in functions (name(args): what it does)\n");
         for (Builtins.Builtin b : Builtins.all().values()) {

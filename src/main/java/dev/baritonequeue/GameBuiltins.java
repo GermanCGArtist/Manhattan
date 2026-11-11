@@ -34,6 +34,47 @@ import static dev.baritonequeue.Values.toNum;
 final class GameBuiltins {
     private GameBuiltins() {}
 
+    /** {selection or null, mode, "skip"|"strict"} from schem_*(n, "mode", "strict") in any order. */
+    private static String[] schemArgs(List<Object> a, String fn, int line, String defaultMode) {
+        String sel = null, mode = defaultMode, missing = "skip";
+        for (Object o : a) {
+            if (o == null) continue;
+            String s = o instanceof Double d ? String.valueOf((int) Math.floor(d)) : str(o);
+            if (Schem.Mode.of(s) != null) mode = s.toLowerCase();
+            else if (s.equalsIgnoreCase("all") || s.matches("[0-9]+")) sel = s;
+            else if (s.equalsIgnoreCase("skip") || s.equalsIgnoreCase("strict")) missing = s.toLowerCase();
+            else if (sel == null && !s.isBlank()) sel = s;   // a placement name
+            else throw error(fn + ": '" + s + "' is neither a placement (number or name), \"all\", a mode (add, fix, exact), nor \"skip\" / \"strict\".", line);
+        }
+        return new String[]{sel, mode, missing};
+    }
+
+    private static void schem() {
+        String g = "schem";
+        def(g, "schem_list", 0, 0, "schem_list()", "list the Litematica placements in chat; returns how many there are", (in, a, l) -> (double) SchemCmd.list());
+        def(g, "schem_materials", 0, 2, "schem_materials([n | \"name\" | \"all\"] [, mode])", "print the items still needed for the placement (minus what is built); returns how many items the inventory lacks", (in, a, l) -> {
+            String[] sm = schemArgs(a, "schem_materials()", l, "fix");
+            return (double) SchemCmd.materials(sm[0], Schem.Mode.of(sm[1]));
+        });
+        def(g, "schem_needed", 0, 2, "schem_needed([n | \"name\" | \"all\"] [, mode])", "the items the placement still needs (minus what is built, not minus the inventory): a map item -> count", (in, a, l) -> {
+            String[] sm = schemArgs(a, "schem_needed()", l, "fix");
+            String[] err = new String[1];
+            var pls = SchemCmd.select(sm[0], err);
+            if (pls == null) throw error(err[0], l);
+            Schem.Plan plan = Schem.plan(pls, err);
+            if (plan == null) throw error(err[0], l);
+            Schem.Counts c = Schem.count(plan, Schem.Mode.of(sm[1]), level(l));
+            Map<Object, Object> out = Values.newMap();
+            c.items.forEach((it, n) -> out.put(Schem.itemName(it), (double) n));
+            return out;
+        });
+        def(g, "schem_check", 0, 2, "schem_check([n | \"name\" | \"all\"] [, mode])", "print what differs between the schematic and the world; returns the blocks that still need work", (in, a, l) -> {
+            String[] sm = schemArgs(a, "schem_check()", l, "fix");
+            return (double) SchemCmd.check(sm[0], Schem.Mode.of(sm[1]));
+        });
+        def(g, "schem_stop", 0, 0, "schem_stop()", "stop the running schematic build", (in, a, l) -> (double) SchemCmd.stop());
+    }
+
     private static LocalPlayer player(int line) {
         LocalPlayer p = Minecraft.getInstance().player;
         if (p == null) throw error("Not in a world.", line);
@@ -141,6 +182,7 @@ final class GameBuiltins {
         areas();
         helpers();
         settings();
+        schem();
     }
 
     // ------------------------------------------------------------------ what the player and the world look like
@@ -232,28 +274,6 @@ final class GameBuiltins {
             String cmd = c;
             return in.await(() -> new Actions.BaritoneCommand(cmd), cmd, l);
         });
-        def(g, "schematic", 2, 2, "schematic(\"file\", origin)", "a schematic from the schematics folder and where its lowest corner goes; build() builds it", (in, a, l) -> {
-            String file = Capture.schematicFile(str(a.get(0)));
-            if (file == null) throw error("There is no schematic '" + str(a.get(0)) + "' in the schematics folder (" + Capture.schematicsDir() + ").", l);
-            Map<Object, Object> m = Values.newMap();
-            m.put("file", file);
-            m.put("origin", toPos(a, 1, "schematic()", l));
-            return m;
-        });
-        def(g, "build", 1, 4, "build(schematic) | build(\"file\", origin)", "build a schematic with Baritone (#build) and wait until it is done", (in, a, l) -> {
-            String file;
-            Pos at;
-            if (a.get(0) instanceof Map<?, ?> m && m.get("file") instanceof String f && m.get("origin") instanceof Pos p) {
-                file = f;
-                at = p;
-            } else {
-                file = Capture.schematicFile(str(a.get(0)));
-                if (file == null) throw error("There is no schematic '" + str(a.get(0)) + "' in the schematics folder (" + Capture.schematicsDir() + ").", l);
-                at = toPos(a, 1, "build()", l);
-            }
-            String cmd = "build " + file + " " + at.x() + " " + at.y() + " " + at.z();
-            return in.await(() -> new Actions.BaritoneCommand(cmd), cmd, l);
-        });
         def(g, "chat", 1, 1, "chat(\"/command\")", "run a chat command and wait for it (same as a / line)", (in, a, l) -> {
             String c = str(a.get(0)).trim();
             if (c.startsWith("/")) c = c.substring(1);
@@ -314,9 +334,25 @@ final class GameBuiltins {
                 Util.msg("Another round: " + Values.num(left) + " water left.");
             }
         });
-        def(g, "clear_area", 0, 0, "clear_area()", "mine out the selection from the top, 3 layers per pass, everything in reach at each stop, picking up drops on the way; returns the blocks left (finish those with #sel ca)", (in, a, l) ->
+        def(g, "schem_build", 0, 3, "schem_build([n | \"name\" | \"all\"] [, \"add\" | \"fix\" | \"exact\"] [, \"skip\" | \"strict\"])", "build the Litematica placement n (or all enabled ones) with Baritone's builder, phase by phase (clear, full blocks, shaped, attached, redstone, power); add = only fill empty spots, fix = also replace wrong blocks, exact = also dig out schematic air; skip (default) = blocks you have no item for are left out and the rest is built, strict = stop when an item is missing; waits; returns the blocks still wrong (0 = done)", (in, a, l) -> {
+            String[] sm = schemArgs(a, "schem_build()", l, "add");
+            QueueMod.schem.skipMissing(!"strict".equals(sm[2]));
+            Object r = in.await(() -> new Actions.Feature(
+                    () -> {
+                        String[] err = new String[1];
+                        var pls = SchemCmd.select(sm[0], err);
+                        if (pls == null) return err[0];
+                        return QueueMod.schem.begin(pls, Schem.Mode.of(sm[1]));
+                    },
+                    QueueMod.schem::working,
+                    QueueMod.schem::cancel,
+                    () -> QueueMod.schem.failure() != null ? new Modules.Failure(QueueMod.schem.failure()) : (Object) QueueMod.schem.result())
+                    .resumable(QueueMod.schem::suspendRun, QueueMod.schem::carryOn), "schem_build", l);
+            return r instanceof Double d ? d : 0.0;
+        });
+        def(g, "clear_area", 0, 1, "clear_area([layers])", "mine out the selection from the top, 3 layers per pass (or 2: clear_area(2)), everything in reach at each stop, picking up drops on the way; returns the blocks left (finish those with #sel ca)", (in, a, l) ->
                 in.await(() -> new Actions.Feature(
-                        () -> QueueMod.clear.begin(),
+                        () -> QueueMod.clear.begin(a.isEmpty() ? 3 : toInt(a.get(0), "The layers of clear_area()", l)),
                         QueueMod.clear::working,
                         QueueMod.clear::cancel,
                         () -> QueueMod.clear.failure() != null ? new Modules.Failure(QueueMod.clear.failure()) : (Object) QueueMod.clear.result())
@@ -325,7 +361,11 @@ final class GameBuiltins {
         def(g, "drain", 0, 0, "drain()", "remove the flowing water that blocks the builder (selection, or 8 blocks around you)", (in, a, l) ->
                 in.await(() -> new Actions.Feature(dev.buildtools.Api::drainNow, dev.buildtools.Api::draining, dev.buildtools.Api::stopDraining, () -> true), "drain", l));
         def(g, "flood", 0, 0, "flood()", "fill the selection WITH water, using buckets (seals the open sides first)", (in, a, l) ->
-                in.await(() -> new Actions.Feature(dev.buildtools.Api::floodNow, dev.buildtools.Api::flooding, dev.buildtools.Api::stopFlooding, () -> true), "flood", l));
+                in.await(() -> new Actions.Feature(dev.buildtools.Api::floodNow, dev.buildtools.Api::flooding, dev.buildtools.Api::stopFlooding,
+                        () -> {   // a stop with a reason (no water to refill from, cells out of reach ...) fails the script
+                            String why = dev.buildtools.Api.floodFailure();
+                            return why == null ? (Object) Boolean.TRUE : new Modules.Failure(why);
+                        }).resumable(dev.buildtools.Api::pauseFlooding, dev.buildtools.Api::resumeFlooding), "flood", l));
         def(g, "collect_scaffold", 0, 0, "collect_scaffold()", "take down the blocks Baritone placed to reach things, and pick them up", (in, a, l) ->
                 in.await(() -> new Actions.Feature(dev.buildtools.Api::collectScaffoldNow, dev.buildtools.Api::collectingScaffold, dev.buildtools.Api::stopCollectingScaffold, () -> true), "collect_scaffold", l));
 

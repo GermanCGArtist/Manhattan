@@ -82,6 +82,28 @@ final class Areas {
         return null;
     }
 
+    /** Moves a saved area (or every one: "all") by an offset; the selection moves along when it is that area. Returns an error or null. */
+    static String move(String name, int dx, int dy, int dz) {
+        List<String> names = new ArrayList<>();
+        if (name.equalsIgnoreCase("all")) names.addAll(cfg.areas.keySet());
+        else if (cfg.areas.containsKey(name)) names.add(name);
+        else return "There is no saved area '" + name + "'. /queue area list shows them.";
+        if (names.isEmpty()) return "There are no saved areas.";
+        List<int[]> sel = read();
+        boolean selMoved = false;
+        for (String n : names) {
+            List<int[]> boxes = cfg.areas.get(n);
+            boolean isSel = !sel.isEmpty() && same(sel, boxes);
+            List<int[]> out = new ArrayList<>();
+            for (int[] b : boxes) out.add(new int[]{b[0] + dx, b[1] + dy, b[2] + dz, b[3] + dx, b[4] + dy, b[5] + dz});
+            cfg.areas.put(n, out);
+            if (isSel && !selMoved) { apply(out); selMoved = true; }
+            Util.msg("Moved area '" + n + "': " + describe(out));
+        }
+        Config.save();
+        return null;
+    }
+
     static boolean delete(String name) {
         boolean had = cfg.areas.remove(name) != null;
         if (had) Config.save();

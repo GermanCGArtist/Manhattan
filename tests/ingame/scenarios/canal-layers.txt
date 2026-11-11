@@ -1,0 +1,16 @@
+// canal 1: trench_a of 8 ADJACENT boxes (4 and 3 deep, like the real one) dug INTO a dirt plateau (run_tests.py builds it), clear_area(2): top down, 2 layers per pass
+stall(1)     // a Baritone task with no progress for 1 minute is skipped: a stuck test fails fast
+select(pos(100, -61, 99), pos(101, -58, 101))
+add_box(pos(102, -60, 99), pos(103, -58, 101))
+add_box(pos(104, -61, 99), pos(105, -58, 101))
+add_box(pos(106, -60, 99), pos(107, -58, 101))
+add_box(pos(108, -61, 99), pos(109, -58, 101))
+add_box(pos(110, -60, 99), pos(111, -58, 101))
+add_box(pos(112, -61, 99), pos(113, -58, 101))
+add_box(pos(114, -60, 99), pos(115, -58, 101))
+save_area("trench_a")
+area("trench_a")
+print("TEST layers start")
+let left = clear_area(2)
+print("TEST layers left={left}")
+print("TEST layers done")

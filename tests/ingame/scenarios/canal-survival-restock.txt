@@ -1,0 +1,11 @@
+// canal 7b: want() and restock(): buckets and a pickaxe come from the supply chest (run_tests.py fills it)
+stall(1)     // a Baritone task with no progress for 1 minute is skipped: a stuck test fails fast
+option("survival.supply", pos(96, -60, 97))
+want("bucket", 4)
+want("diamond_pickaxe", 1)
+enable("restock")
+on restock_needed do restock() end
+wait until count("bucket") >= 4 and count("diamond_pickaxe") >= 1
+let buckets = count("bucket")
+let pickaxe = count("diamond_pickaxe")
+print("TEST restocked buckets={buckets} pickaxe={pickaxe}")

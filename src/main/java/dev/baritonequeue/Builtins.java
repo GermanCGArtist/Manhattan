@@ -59,7 +59,7 @@ final class Builtins {
         }
 
         private boolean onGameThread() {
-            return group.equals("areas") || group.equals("helpers") || group.equals("settings") || name.equals("cancel");
+            return group.equals("areas") || group.equals("helpers") || group.equals("settings") || group.equals("schem") || name.equals("cancel");
         }
     }
 

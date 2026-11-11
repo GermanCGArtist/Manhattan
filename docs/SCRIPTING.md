@@ -1,6 +1,6 @@
 # Manhattan – the script language
 
-Open the editor with **J**. **Run** starts the script, **Test** checks it without running it, **Stop** ends it, **Skip** ends the action that runs now and carries on, **Pick block** lets you aim at a block and put its position into the script.
+Open the editor with **J**. **Run** starts the script, **Test** checks it without running it (the script itself, and, in a world, what it will meet: whether there is a chest, barrel or shulker box at every `pos(…)` used with take/put/dump/fill_water and the survival chests, a bed at `survival.bed`, whether the Litematica placements named in `schem_*` exist and are enabled, which items a `schem_build` needs that are in neither your inventory nor any chest seen open, chests seen open that lack an item `take`/`take_upto` asks for, and a bucket and a first water source for `flood()`; positions that are not loaded are reported, not checked), **Stop** ends it, **Skip** ends the action that runs now and carries on, **Pick block** lets you aim at a block and put its position into the script.
 
 The helpers that used to be the SurvivalKit, BuildTools and LoadChest addons are built in. Everything they did is a script function (below); their chat commands (`/survival …`, `/buildtools …`, `/loadchest …`) still work for doing things by hand. None of them acts on its own unless the script switches it on.
 
@@ -90,17 +90,19 @@ Instead of copying every chest, bed and corner by hand, the capture menu collect
 script that can be pasted into a script, or handed to an LLM to write the script around it.
 
 * **Role** (drop-down): dump, supply / tools, return chest, material chest, scaffolding chest, bed, mine area, fill
-  area, building block area, safe area, other spot, other area, schematic. **Name** is optional (other spot and other
+  area, building block area, safe area, other spot, other area, schematic (Litematica). **Name** is optional (other spot and other
   area use it as their name; an area with a name you used before gets one more box).
 * **Fetch looked-at** takes the block you were looking at when you opened the menu.
 * **Aim in world (J)** closes the menu: look at a block and press J. With **Rapid: on** every press adds a line and
   you stay in the world (chest after chest); K brings the menu back, and so does J while looking at the sky.
 * Areas take two corners (Fetch or J, twice); the box being made shows in sparks while you aim.
   **Use selection** takes the current `#sel` selection instead.
-* **Import saved** adds the chests and areas saved with `/queue chest set` and `/queue area save`.
+* **Schematic**: pick a Litematica placement in the second drop-down, then Fetch: it adds `let canal = "canal"`, so
+  the script can say `schem_build(canal)`. **Import saved** adds the chests and areas saved with `/queue chest set`
+  and `/queue area save`, and every Litematica placement the sheet does not have yet.
 * **Copy** puts the sheet on the clipboard. **Copy full context** adds what an LLM needs: the world, where you stand,
   the inventory, the want-list, what each area holds (air, water cells, the most common blocks), lines that look
-  wrong (a "chest" that is now air), the schematics folder and the list of built-in functions.
+  wrong (a "chest" that is now air), the Litematica placements and the list of built-in functions.
 * **Show in world** marks the captured places (green; flames when the block is no longer a chest or bed) and the
   areas (white edges, safe areas in small flames).
 * **Set**: several sheets per world (main base, outpost ...): type a name, **Open set**.
@@ -124,7 +126,7 @@ area_box("mine_1", pos(1700, 60, -900), pos(1720, 74, -880))   // mine: clear_ar
 protect("protect_1", pos(1779, 68, -844), pos(1797, 80, -832))   // safe: Baritone never breaks or places blocks here
 
 // --- schematics
-let house = schematic("house.schem", pos(1750, 64, -850))   // schematic: build(house) builds it with its lowest corner here
+let canal = "canal"   // schematic: Litematica placement at 1750 64 -850, 2 regions; schem_build(canal) builds it
 ```
 
 ## Functions
@@ -148,14 +150,37 @@ The ones marked **waits** take time in the world: the script waits until they ar
 | function | |
 |---|---|
 | `fill_water(["dirt" [, chest [, per_trip]]])` | waits; fills the selection's water. With a chest it fetches more (512 per trip) whenever the blocks run out. Returns the number of wet cells left (0 = done) |
-| `clear_area()` | waits; mines out the selection itself instead of Baritone's builder (details below). Returns the blocks left that it could not get at (not counting the ones next to water or lava, or protected) |
+| `clear_area([layers])` | waits; mines out the selection itself instead of Baritone's builder, from the top, 3 layers per pass (or 2: `clear_area(2)`; details below). Returns the blocks left that it could not get at (not counting the ones next to water or lava, or protected) |
 | `drain()` | waits; removes flowing water that blocks the builder |
 | `flood()` | waits; fills the selection with water, using buckets |
-| `schematic("house.schem", origin)` | a schematic from the `schematics` folder and where its lowest corner goes ("house" finds house.schem / .litematic / .schematic) |
-| `build(house)` / `build("house", origin)` | waits; builds it with Baritone (`#build`) |
 | `collect_scaffold()` | waits; takes down the blocks Baritone placed to reach things |
 | `protect("name" [, corner1, corner2])` | safe area: Baritone never breaks or places there (no corners = the selection) |
 | `unprotect("name")` | |
+
+**Litematica schematics** (2.5.0): builds your Litematica placements with Baritone's own builder (never the Litematica printer).
+A placement is its number in `schem_list()`, or (2.6.0) its name in Litematica: `schem_build("canal")`.
+
+| function | |
+|---|---|
+| `schem_list()` | lists the placements in chat; returns how many |
+| `schem_build([n \| "name" \| "all"] [, "add" \| "fix" \| "exact"] [, "skip" \| "strict"])` | waits; builds placement n (or all enabled ones; with only one enabled you can leave n out). **skip** (default): blocks you carry no item for are left out and the rest is built; **strict**: the phase stops as soon as an item is missing. Returns the blocks still wrong (0 = done) |
+| `schem_materials([n \| "name" \| "all"] [, mode])` | prints the items still needed (minus what is built) against the inventory; returns how many items are missing |
+| `schem_needed([n \| "name" \| "all"] [, mode])` | the items still needed (minus what is built, not minus the inventory) as a map item → count, e.g. `{stone: 120, oak_stairs: 8}`; use it to fetch from chests |
+| `schem_check([n \| "name" \| "all"] [, mode])` | prints the diff: correct, missing, wrong, to dig out, with examples; returns the blocks that still need work |
+| `schem_stop()` | stops the running build |
+
+The same as chat commands: `/schem list`, `/schem build [n|all] [add|fix|exact] [skip|strict]`, `/schem materials [n|all] [mode]`, `/schem check [n|all] [mode]`, `/schem move <n|all> <dx> <dy> <dz>`, `/schem stop`.
+
+To run the same thing somewhere else, `/queue move <dx> <dy> <dz>` moves every saved area, saved chest and Litematica placement by that offset (`/queue area move <name|all> <dx> <dy> <dz>` only the areas). Positions written into the script as `pos(...)` do not move: add the offset to them.
+A script line `/schem build 1 add` works too (the script waits while it builds).
+
+* **add** (default for build): schematic air is ignored; blocks that are already there are left alone; only empty or replaceable spots (air, water, grass ...) are filled.
+* **fix**: schematic air is ignored; wrong blocks are broken and replaced.
+* **exact**: like fix, and schematic air is dug out first (its own phase, top-down), for example to build into a hill.
+* Phases, each one a Baritone builder run, bottom-up layer by layer: clear (exact only) → full blocks → shaped (stairs, slabs, fences, panes ...) → attached (torches, doors, signs, carpets, plants ...) → redstone (dust, repeaters, pistons ...) → power sources (levers, buttons, plates, redstone torches). Fluids are not built yet; they are listed in the report.
+* The material list counts what is still missing: a double slab is 2 slabs, a door or bed 1 item, redstone dust is `redstone`, water or lava a (reusable) bucket.
+* Blocks inside safe areas (`protect`) are never built or dug.
+* Placements come from the running Litematica (found by reflection; the mod also works without it) or, failing that, from Litematica's own file in `config/litematica/`. Position, rotation, mirror, enabled state and sub-regions are used; where placements overlap, the later one in the list wins (air never overwrites a block).
 
 How `fill_water` works (2.1.0): a **wet cell** is anything holding water that is not solid, so plain water, seagrass, kelp and bubble columns all count. A cell is only filled when **no wet cell is left below it in its column**. Kelp is broken first.
 
@@ -164,7 +189,7 @@ It looks through the **whole selection** for the nearest cell it can do next. Af
 Deeper cells are done in **dive mode** (on by default; switch it off with `option("buildtools.dive", false)`). It picks a spot on the bottom next to the cell, with open water straight up to the surface, so it is never under a roof. It walks to the shore, swims there on the surface, sinks down, places what it can reach lowest first, and comes up when its air drops below about a third. It never builds in the column it dives in. Sand or gravel (`fill_water("sand", chest)`) sink to the bottom by themselves.
 
 **clear_area** (2.2.0):
-* It works from the top in passes 3 layers thick, walking lanes along the long side 6 blocks apart and stopping every 3 blocks.
+* It works from the top in passes 3 layers thick (`clear_area(2)`: 2 layers per pass), walking lanes along the long side 6 blocks apart and stopping every 3 blocks.
 * At every stop it breaks everything in reach, highest first. Blocks that break at once (Haste + Efficiency) go at one per tick, others as fast as the game allows. It takes the fastest tool, but not one the item saver protects.
 * Short level steps it walks itself and picks up drops right away. Longer or awkward moves go to Baritone, which may dig while clear_area runs.
 * It leaves blocks next to water or lava alone (no flooding), and respects safe areas and Baritone's do-not-break list.
@@ -221,6 +246,18 @@ options("survival")
 
 **General:** `print`, `log`, `str`, `num`, `int`, `type`, `len`, `range`, `push`, `pop`, `insert`, `remove`, `contains`, `index_of`, `keys`, `values`, `join`, `split`, `upper`, `lower`, `trim`, `replace`, `starts_with`, `ends_with`, `sort`, `reverse`, `copy`, `sum`, `min`, `max`, `abs`, `floor`, `ceil`, `round`, `sqrt`, `random`, `error`, `assert`, `now`, `stop`.
 `list.push(x)` is the same as `push(list, x)`; that works for every function.
+
+## Presets
+
+**Presets...** in the editor inserts ready-made scripts at the cursor. The ones that come with the mod (2.5.0): the canal
+(dig, plug the old water, build the schematics, fill with water), building a Litematica schematic with materials from
+chests, digging an area top down (`clear_area(2)`), mining an area or several areas in a row, the water job (fill with
+dirt from a chest, then mine), filling water with dirt, filling an area with water (`flood()`), clearing trees, the
+survival helpers, staying fed and sleeping, emptying into a chest when full, and the mining, farming and travel ones.
+Positions are placeholders: put the cursor on a `pos(...)` and use Pick block.
+
+When a new version brings new presets, the old ones you never changed are replaced; ones you edited stay, next to the
+new one as "name (yours)", and your own presets are never touched.
 
 ## Old scripts
 
