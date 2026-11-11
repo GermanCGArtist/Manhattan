@@ -94,6 +94,8 @@ there; the Litematica printer is never installed.
 | `canal_flood_*` | `flood()` on a 2-deep trench open at both ends: with 2 water buckets, with 16 stacked buckets, 11 wide (temporary blocks where nothing can be clicked), no water outside, ends sealed; with one bucket or none it stops with a clear message |
 | `canal_schem_two`, `canal_schem_needed`, `canal_tools_schem` | two placements with one item missing (skipped and reported), `schem_needed` and `take_upto` from chest/barrel/shulker box, the digger takes pickaxe and shovel |
 | `canal_survival_dump`, `canal_survival_restock` | a full inventory triggers `dump(storage)` and the task goes on; `restock()` fetches buckets and tools |
+| `trees_small` | an oak and a birch, no chest: `clear_trees()` leaves no log and no dirt in the area, reports the logs, all 64 dirt come back |
+| `trees_forest` | oak, birch, fancy oak, 2x2 mega spruce, dark oak, jungle, mangrove, two huge mushrooms and a bee nest; `clear_trees(chest)`: nothing of them left, no scaffolding, the logs in the chest (needs `--test-timeout 1500`: about 11 min) |
 | `canal_smoke` | the whole `scripts/canal.txt` (from "survival" on) on a small copy of the canal: dig, plug the water, dig the water trench, build two placements from a shulker box, fill with water |
 
 ## How it works

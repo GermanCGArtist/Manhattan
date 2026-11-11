@@ -13,7 +13,7 @@ import java.util.Map;
 final class Presets {
     private Presets() {}
 
-    static final int VERSION = 7;
+    static final int VERSION = 8;
 
     /** The current default presets (2.5.0). */
     static Map<String, List<String>> defaults() {
@@ -176,10 +176,12 @@ final class Presets {
                 "#acceptableThrowawayItems dirt",
                 "flood()")));
         p.put("Clear trees", new ArrayList<>(List.of(
-                "// Logs, then leaves (select the area first)",
-                "#sel replace oak_log birch_log spruce_log jungle_log acacia_log dark_oak_log mangrove_log cherry_log pale_oak_log air",
-                "#sel replace oak_leaves birch_leaves spruce_leaves jungle_leaves acacia_leaves dark_oak_leaves mangrove_leaves cherry_leaves pale_oak_leaves azalea_leaves flowering_azalea_leaves air",
-                "collect_scaffold()   // take down what Baritone placed to reach the tops")));
+                "// Select the forest first (area(\"name\") or #sel pos1 / pos2). Tree by tree, nearest first; the leaves",
+                "// decay by themselves. Carry dirt for scaffolding: it is taken down again after every tree.",
+                "#acceptableThrowawayItems dirt",
+                "let wood_chest = pos(100, 64, -20)   // Pick block on the chest; logs, saplings, sticks and apples go in",
+                "let got = clear_trees(wood_chest)",
+                "print(\"Gained: {got}\")")));
         p.put("Survival helpers", new ArrayList<>(List.of(
                 "// The helpers act while the script runs (until it ends): eat, sleep, fight, restock, escape water.",
                 "// Their settings stay saved: options(\"survival\") lists them.",
@@ -356,13 +358,21 @@ final class Presets {
     }
 
     /** Brings a user's presets up to date: old untouched defaults out, current defaults in, own presets kept. */
+    /** Defaults of presetsVersion 7 (2.5.0 - 2.6.0) that changed since: an unedited copy is replaced on upgrade. */
+    private static final Map<String, List<String>> V7 = Map.of("Clear trees", List.of(
+            "// Logs, then leaves (select the area first)",
+            "#sel replace oak_log birch_log spruce_log jungle_log acacia_log dark_oak_log mangrove_log cherry_log pale_oak_log air",
+            "#sel replace oak_leaves birch_leaves spruce_leaves jungle_leaves acacia_leaves dark_oak_leaves mangrove_leaves cherry_leaves pale_oak_leaves azalea_leaves flowering_azalea_leaves air",
+            "collect_scaffold()   // take down what Baritone placed to reach the tops"));
+
     static Map<String, List<String>> upgrade(Map<String, List<String>> user) {
         Map<String, List<String>> old = v6();
         Map<String, List<String>> out = new LinkedHashMap<>();
         defaults().forEach(out::put);
         user.forEach((name, lines) -> {
-            List<String> was = old.get(name);
+            List<String> was = old.get(name), was7 = V7.get(name);
             if (was != null && was.equals(lines)) return;              // an untouched old default: replaced or gone
+            if (was7 != null && was7.equals(lines)) return;            // the same, from 2.5.0 - 2.6.0 (presetsVersion 7)
             if (out.containsKey(name) && !out.get(name).equals(lines)) {
                 out.put(name + " (yours)", lines);                     // edited by the user: kept beside the new one
             } else {

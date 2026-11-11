@@ -1,0 +1,14 @@
+// trees_small: an oak and a birch, no chest. clear_trees() mines both, takes the scaffolding down, returns what it got
+stall(2)
+#acceptableThrowawayItems dirt
+select(pos(92, -60, 92), pos(110, -30, 110))
+let wood = ["oak_log", "birch_log"]
+let before = count_blocks(wood)
+print("TEST trees start logs={before}")
+let got = clear_trees()
+let left = count_blocks(wood)
+let dirt = count_blocks("dirt")
+let oak = got["oak_log"]
+let birch = got["birch_log"]
+let carried = count("oak_log")
+print("TEST trees done left={left} scaffold={dirt} oak={oak} birch={birch} carried={carried}")

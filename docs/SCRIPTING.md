@@ -151,6 +151,7 @@ The ones marked **waits** take time in the world: the script waits until they ar
 |---|---|
 | `fill_water(["dirt" [, chest [, per_trip]]])` | waits; fills the selection's water. With a chest it fetches more (512 per trip) whenever the blocks run out. Returns the number of wet cells left (0 = done) |
 | `clear_area([layers])` | waits; mines out the selection itself instead of Baritone's builder, from the top, 3 layers per pass (or 2: `clear_area(2)`; details below). Returns the blocks left that it could not get at (not counting the ones next to water or lava, or protected) |
+| `clear_trees([chest])` | waits; (2.7.0) mines every tree in the selection, one at a time, nearest first (details below). Returns what was gained as a map item → count, what went into the chest included |
 | `drain()` | waits; removes flowing water that blocks the builder |
 | `flood()` | waits; fills the selection with water, using buckets |
 | `collect_scaffold()` | waits; takes down the blocks Baritone placed to reach things |
@@ -196,6 +197,23 @@ Deeper cells are done in **dive mode** (on by default; switch it off with `optio
 * At the end it prints what is left and why (next to water or lava, protected, could not get at) and where the time
   went. It returns only the blocks it could not get at; the wet and protected ones are never worth another go. Don't
   hand the rest to `#sel ca`: Baritone's builder will not break next to water either and walks back and forth.
+
+**clear_trees** (2.7.0):
+* A tree is every log, wood, stem, mangrove root, mushroom stem / cap and nether wart block that touches another one
+  (also diagonally); vines, bee nests, cocoa and hanging moss within 3 blocks of it go with it. Every log in the
+  selection counts, player-built ones too. Leaves are not mined: they decay by themselves.
+* Per tree: a selection of just that tree and `#sel replace <its blocks> air` with `buildInLayers` off, so Baritone
+  goes for the tree as a whole and climbs on scaffolding (`#acceptableThrowawayItems`, e.g. dirt) where it must.
+  Then it picks up the drops and takes its own scaffolding down before going on, so no towers stay behind.
+  Scaffolding is every throwaway block that was not there before the tree (or the run) began, so pillars that
+  Baritone builds to reach drops lying on the leaves go too; grass that turned to dirt under a pillar stays.
+  A tree that is not all gone gets a second try, then it is left and named in chat.
+* At the end it waits up to 60 s for leaves that no longer touch a log, then walks the area once (one stop per 24x24
+  blocks that had a tree) and picks up saplings, sticks and apples.
+* With a chest (`clear_trees(pos(...))` or a saved chest's name), a nearly full inventory (fewer than 6 free slots)
+  is emptied into it between trees, and once more at the end; the scaffolding blocks stay with you. Without one,
+  everything stays in the inventory.
+* The selection and `buildInLayers` are put back as they were. The chat line at the end lists what was gained.
 
 **Survival:**
 

@@ -2,6 +2,17 @@
 
 Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
 
+## 2.7.0 – clear_trees (2026-11-11)
+- New function `clear_trees([chest])`: mines the selection's trees one by one, nearest first, each with its own
+  `#sel replace … air` and `buildInLayers` off; picks up the drops and takes the scaffolding down after every tree;
+  leaves are left to decay, then one sweep collects saplings, sticks and apples. Logs, mangrove roots, huge
+  mushrooms, nether stems, vines and bee nests. With a chest, a full inventory and the end go into it (scaffolding
+  blocks are kept). Returns and prints what was gained.
+- The "Clear trees" preset uses it (an unedited old copy is replaced on upgrade).
+- Scaffolding is found by comparing with the world before each tree and before the run, so pillars BuildTools'
+  recorder missed (climbing to drops on the leaves) are taken down too.
+- In-game tests `trees_small` and `trees_forest` pass (forest: 9 trees, 399 blocks, 11 min, nothing left).
+
 ## 2.6.0 – capture menu (2026-11-11)
 - New capture menu (key K, `/queue capture`, or Capture... in the editor): pick a role (dump, supply / tools, return,
   material, scaffolding, bed, mine / fill / building block / safe area, other spot or area by name, schematic), then

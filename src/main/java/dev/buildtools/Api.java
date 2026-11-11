@@ -100,6 +100,11 @@ public final class Api {
      */
     public static volatile java.util.function.BiPredicate<net.minecraft.core.BlockPos, net.minecraft.world.level.block.Block> scaffoldOutsideSchematic;
 
+    /** Marks a block as scaffolding, so collect_scaffold() takes it down (clear_trees finds pillars the recorder missed). */
+    public static void addScaffold(net.minecraft.core.BlockPos pos, net.minecraft.world.level.block.Block block) {
+        Scaffold.spots().put(pos.immutable(), block);
+    }
+
     public static void forgetScaffold() {
         Scaffold.spots().clear();
     }

@@ -1130,10 +1130,103 @@ def test_clear_wet(t):
 
 
 
+def plant(t, feature, p):
+    """/place feature at p; returns False (and says why in the log) when the game could not place it."""
+    mark = t.b("chatlog 0")["next"]
+    t.cmd("/place feature minecraft:%s %d %d %d" % (feature, p[0], p[1], p[2]))
+    time.sleep(0.5)
+    bad = [l for l in t.b("chatlog %d" % mark)["lines"] if "ailed" in l or "nknown" in l or "rror" in l]
+    if bad:
+        log("plant %s at %s: %s" % (feature, p, bad[0][:120]))
+    return not bad
+
+
+def kv(line, key):
+    m = re.search(r"\b%s=(-?[0-9.]+|null)" % key, line)
+    if not m:
+        raise Fail("no %s= in '%s'" % (key, line))
+    return None if m.group(1) == "null" else float(m.group(1))
+
+
+def dirt_at(t, a, b):
+    """Where dirt stands in the box (slow: one bridge call per cell; only used to explain a failure)."""
+    return [(x, y, z) for y in range(a[1], b[1] + 1) for x in range(a[0], b[0] + 1) for z in range(a[2], b[2] + 1)
+            if "minecraft:dirt" == t.block((x, y, z)).split("|")[0]][:10]
+
+
+def test_trees_small(t):
+    """clear_trees() on an oak and a birch, no chest: no log left, no scaffolding left, the logs are carried and
+    reported, the 64 dirt for scaffolding are all back."""
+    new_world(t, "trees-small")
+    t.cmd("/tp @s 100 -60 100 0 0")
+    time.sleep(2)
+    planted = [f for f, p in (("oak", (96, -60, 96)), ("birch", (104, -60, 104))) if plant(t, f, p)]
+    if not planted:
+        raise Fail("no tree could be planted")
+    t.cmd("/give @s dirt 64")
+    time.sleep(1)
+    line = run_scenario(t, "trees-small.txt", "TEST trees done", 400)
+    start = next((l for l in t.lines() if "TEST trees start" in l), "")
+    if kv(line, "left") != 0:
+        raise Fail("logs left standing: %s (%s)" % (line, start))
+    if kv(line, "scaffold") != 0:
+        raise Fail("scaffolding left in the area: %s at %s" % (line, dirt_at(t, (92, -60, 92), (110, -52, 110))))
+    oak = kv(line, "oak") or 0
+    if "oak" in planted and (oak <= 0 or kv(line, "carried") < oak):
+        raise Fail("the oak logs were not reported / carried: %s" % line)
+    dirt = t.count("dirt")
+    if dirt < 64:
+        raise Fail("only %d of the 64 scaffolding dirt came back" % dirt)
+    return "%s cleared (%s); %s; %d dirt back" % ("+".join(planted), start.split("TEST trees ")[-1], line.split("done ")[-1], dirt)
+
+
+FOREST = [("oak", (92, -60, 92)), ("birch", (102, -60, 92)), ("fancy_oak", (114, -60, 94)), ("mega_spruce", (92, -60, 106)),
+          ("dark_oak", (106, -60, 108)), ("jungle_tree", (118, -60, 108)), ("mangrove", (96, -60, 120)),
+          ("huge_red_mushroom", (110, -60, 122)), ("huge_brown_mushroom", (120, -60, 122))]
+
+
+def test_trees_forest(t):
+    """clear_trees(chest) on a mixed forest (2x2 mega spruce, dark oak, jungle with vines, mangrove with roots, huge
+    mushrooms, a bee nest): nothing of the trees left, no scaffolding left, the logs end up in the chest, the report
+    counts them."""
+    new_world(t, "trees-forest")
+    t.cmd("/tp @s 105 -60 105 0 0")
+    time.sleep(3)
+    planted = [f for f, p in FOREST if plant(t, f, p)]
+    if len(planted) < 5:
+        raise Fail("only %s could be planted" % planted)
+    if "oak" in planted:
+        t.cmd("/setblock 93 -58 92 minecraft:bee_nest")
+    chest_with(t, (100, -60, 84), [])
+    t.cmd("/give @s dirt 128", "/tp @s 100 -60 100 0 0")
+    time.sleep(1)
+    line = run_scenario(t, "trees-forest.txt", "TEST forest done", 1500)
+    start = next((l for l in t.lines() if "TEST forest start" in l), "")
+    chest = next((l for l in t.lines() if "TEST forest chest" in l), "")
+    got = next((l for l in t.lines() if "TEST forest got" in l), "")
+    if kv(line, "left") != 0:
+        raise Fail("tree blocks left standing: %s (%s)" % (line, start))
+    if kv(line, "scaffold") != 0:
+        raise Fail("scaffolding left in the area: %s at %s" % (line, dirt_at(t, (86, -60, 88), (124, -55, 128))))
+    if kv(line, "logs") < 50:
+        raise Fail("too few logs reported: %s / %s" % (line, got))
+    if kv(line, "carried_logs") > 0:
+        raise Fail("logs still carried, not in the chest: %s" % line)
+    if "log" not in chest:
+        raise Fail("no logs in the chest: %s" % chest)
+    if kv(line, "dirt_carried") < 100:
+        raise Fail("scaffolding dirt went missing (or into the chest): %s / %s" % (line, chest))
+    return "planted %s; %s; %s" % (",".join(planted), start.split("TEST forest ")[-1], line.split("done ")[-1])
+
+
+TREE_TESTS = [("trees_small", test_trees_small), ("trees_forest", test_trees_forest)]
+
+
 TESTS = [("smoke", test_smoke), ("fill_water", test_fill_water), ("eat", test_eat), ("defend", test_defend), ("clear_resume", test_clear_resume), ("dump", test_dump), ("hotbar_tools", test_hotbar_tools), ("air", test_air), ("clear_wet", test_clear_wet),
          ("schem_list", test_schem_list), ("schem_add", test_schem_add), ("schem_fix", test_schem_fix), ("schem_fix_wrong", test_schem_fix_wrong), ("schem_exact", test_schem_exact)]
 
 TESTS += CANAL_TESTS
+TESTS += TREE_TESTS
 
 
 # ------------------------------------------------------------------ main
@@ -1161,7 +1254,7 @@ def enter_world(b):
 TEST_TIMEOUT = 300          # seconds; a test that takes longer fails and its game is restarted
 RAM_PER_CLIENT_GB = 3.5     # a game with its 3 GB heap (MANHATTAN_XMX) and its own memory
 MAX_WORKERS = 8             # bridge ports 25700+N for worker N: 25701..25708 (the other harness uses 25599 and 25601..25603)
-LONG_FIRST = ["clear_resume", "schem_exact", "schem_fix_wrong", "schem_fix", "fill_water", "schem_add"]   # start the slow ones first
+LONG_FIRST = ["trees_forest", "trees_small", "clear_resume", "schem_exact", "schem_fix_wrong", "schem_fix", "fill_water", "schem_add"]   # start the slow ones first
 
 
 def free_ram_gb():

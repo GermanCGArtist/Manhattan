@@ -358,6 +358,10 @@ final class GameBuiltins {
                         () -> QueueMod.clear.failure() != null ? new Modules.Failure(QueueMod.clear.failure()) : (Object) QueueMod.clear.result())
                         .resumable(QueueMod.clear::suspendRun, QueueMod.clear::carryOn)
                         .withEstimate(Estimate.solid()), "clear_area", l));
+        def(g, "clear_trees", 0, 1, "clear_trees([chest])", "mine every tree in the selection, one by one, nearest first (logs, mangrove roots, huge mushrooms, vines, bee nests; leaves are left to decay), picking up the drops and taking the scaffolding down after each tree, then sweeping for saplings; with a chest, a full inventory and the end go into it; returns what was gained (item -> count)", (in, a, l) -> {
+            Object[] c = a.isEmpty() || a.get(0) == null ? null : chest(a.get(0), "clear_trees()", l);
+            return TreeClear.run(in, l, c == null ? null : (BlockPos) c[0], c == null ? null : (String) c[1]);
+        });
         def(g, "drain", 0, 0, "drain()", "remove the flowing water that blocks the builder (selection, or 8 blocks around you)", (in, a, l) ->
                 in.await(() -> new Actions.Feature(dev.buildtools.Api::drainNow, dev.buildtools.Api::draining, dev.buildtools.Api::stopDraining, () -> true), "drain", l));
         def(g, "flood", 0, 0, "flood()", "fill the selection WITH water, using buckets (seals the open sides first)", (in, a, l) ->
