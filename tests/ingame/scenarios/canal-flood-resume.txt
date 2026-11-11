@@ -1,0 +1,12 @@
+// canal 4r (run_tests.py canal_flood_resume): the live run's 9-hour loop. The supply chest cannot be opened (a block
+// on top) and the want-list asks for more buckets than there are: restock keeps failing. flood() must carry on after
+// each interruption (same cells, same skips) and finish, and restock_needed must not fire every minute.
+stall(2)
+option("survival.supply", pos(96, -60, 96))
+want("bucket", 40)
+enable("restock")
+on restock_needed do restock() end
+select(pos(100, -62, 100), pos(108, -61, 110))
+print("TEST flood start")
+flood()
+print("TEST flood done")

@@ -1,6 +1,7 @@
 package dev.buildtools;
 
 import baritone.api.pathing.goals.GoalNear;
+import baritone.api.utils.input.Input;
 import baritone.api.process.IBuilderProcess;
 import baritone.api.process.PathingCommand;
 import baritone.api.process.PathingCommandType;
@@ -55,7 +56,7 @@ final class FillProcess extends Feature {
             RegionRules.setOwnBreak(breakBefore);
             breakBefore = null;
         }
-        if (next == State.IDLE) placeHigh(false);
+        if (next == State.IDLE) { placeHigh(false); stopWalking(); }
         state = next;
     }
 
@@ -113,6 +114,7 @@ final class FillProcess extends Feature {
         LocalPlayer p = mc.player;
         if (p == null || mc.level == null) return;
         if (state != State.IDLE) { Util.msg("Already busy with a fill."); return; }
+        suspended = false;
         failure = null;
         Level level = mc.level;
 
@@ -168,6 +170,52 @@ final class FillProcess extends Feature {
         if (state == State.SEALING) Util.baritone().getBuilderProcess().onLostControl();
         setState(State.IDLE);
         cur = null;
+        suspended = false;
+    }
+
+    private boolean suspended;      // paused by an "on" block (restock, eat, bed ...): carry on, do not start over
+    private State suspendedIn;
+
+    /** An "on" block takes over: stop, keep the cells, the skipped ones and the counts. */
+    void suspendRun() {
+        if (state == State.IDLE) return;
+        if (state == State.SEALING) Util.baritone().getBuilderProcess().onLostControl();
+        suspendedIn = state;
+        suspended = true;
+        setState(State.IDLE);
+    }
+
+    /**
+     * After the "on" block: on with the same fill (a restart forgot which cells could not be reached and walked to the
+     * same one again every time). null = carrying on, "" = nothing to carry on.
+     */
+    String carryOn() {
+        if (!suspended) return "";
+        suspended = false;
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null || mc.level == null) return "Not in a world.";
+        failure = null;
+        if (suspendedIn == State.SEALING) {
+            setState(State.SEALING);
+            seal = computeSeal(mc.level);
+            if (seal.isEmpty()) beginFilling(); else startSeal();
+        } else {
+            setState(State.FILLING);
+            waitTicks = 0;
+            noPlaceable = 0;
+            flowWaits = 0;
+            cur = null;
+            if (stiltStage > 0 && stilt != null) {   // a temporary block may be standing: take it away first
+                stiltStage = 3;
+                cur = stilt;
+                curMode = Placer.Mode.BREAK;
+                placer.start(stilt, Placer.Mode.BREAK);
+            }
+        }
+        int left = 0;
+        for (BlockPos t : targets) if (!skipped.contains(t) && !Util.isSourceWater(mc.level.getBlockState(t))) left++;
+        Util.msg("Carrying on with the water fill: " + left + " cells left" + (skipped.isEmpty() ? "." : ", " + skipped.size() + " skipped."));
+        return null;
     }
 
     /** Open cells next to the target cells (sides and below - water never flows up) that water would run into. */
@@ -282,6 +330,7 @@ final class FillProcess extends Feature {
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer p = mc.player;
         if (state != State.FILLING || p == null || mc.level == null || mc.gameMode == null) return defer();
+        calcFailedNow = calcFailed;
         Level level = mc.level;
 
         if (waitTicks > 0) {
@@ -330,7 +379,8 @@ final class FillProcess extends Feature {
                     return pause();
                 }
                 default -> {
-                    return placer.canReach(mc, p) ? pause() : walkTo(cur);
+                    if (placer.canReach(mc, p)) { stopWalking(); return pause(); }
+                    return walkTo(cur);
                 }
             }
         }
@@ -555,8 +605,45 @@ final class FillProcess extends Feature {
     /** Walks to a dry spot from which the cell can be clicked (not just "3 blocks away": that may be a wall). */
     private PathingCommand walkTo(BlockPos pos) {
         Minecraft mc = Minecraft.getInstance();
-        BlockPos stand = mc.level == null || mc.player == null ? null : standNear(mc.level, mc.player, pos);
+        LocalPlayer p = mc.player;
+        BlockPos stand = mc.level == null || p == null ? null : standNear(mc.level, p, pos);
+        // Baritone never paths through flowing water: once the first bucket runs over the floor of a trench it finds no
+        // way back in from the rim (after a restock trip, or with a river flowing in). A spot that close we walk or swim
+        // to ourselves.
+        if (stand != null && p != null && (calcFailedNow || manualTicks > 0) && Vec3.atBottomCenterOf(stand).distanceTo(p.position()) < 8) {
+            if (manualTicks <= 0) {
+                manualTicks = 20 * 6;
+                System.out.println("[BuildTools] fill: no Baritone path to " + stand.toShortString() + " (flowing water?), walking there directly");
+            }
+            manualTicks--;
+            var input = Util.baritone().getInputOverrideHandler();
+            Vec3 to = Vec3.atBottomCenterOf(stand);
+            double hd = Math.hypot(to.x - p.getX(), to.z - p.getZ());
+            boolean there = hd < 0.35 && Math.abs(p.getY() - stand.getY()) < 1.0;
+            if (there || manualTicks <= 0) {
+                stopWalking();
+                return pause();
+            }
+            Util.aimAt(p, new Vec3(to.x, p.getEyeY(), to.z));
+            input.setInputForceState(Input.MOVE_FORWARD, true);
+            input.setInputForceState(Input.JUMP, p.isInWater() ? stand.getY() >= p.getBlockY() : stand.getY() > p.getBlockY());
+            walkingByHand = true;
+            return pause();
+        }
+        if (walkingByHand) stopWalking();
         return new PathingCommand(stand == null ? new GoalNear(pos, 3) : new GoalBlock(stand), PathingCommandType.SET_GOAL_AND_PATH);
+    }
+
+    private boolean calcFailedNow, walkingByHand;
+    private int manualTicks;
+
+    private void stopWalking() {
+        manualTicks = 0;
+        if (!walkingByHand) return;
+        walkingByHand = false;
+        var input = Util.baritone().getInputOverrideHandler();
+        input.setInputForceState(Input.MOVE_FORWARD, false);
+        input.setInputForceState(Input.JUMP, false);
     }
 
     /**

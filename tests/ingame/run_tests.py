@@ -1042,6 +1042,31 @@ def test_canal_move(t):
     return "area and placement moved by 10 0 5, built at the new place"
 
 
+def test_canal_flood_resume(t):
+    """The live run's loop: restock kept failing (supply chest it could not open), "on restock_needed" fired every 30 s
+    and flood() started over each time, walking to the same unreachable cell: 9 hours, nothing filled. Here the supply
+    chest has a block on top and 40 buckets are wanted: flood() must carry on after interruptions and fill all 198."""
+    new_world(t, "canal-flood-resume")
+    fill(t, (100, -62, 100, 108, -61, 110), "air")
+    t.cmd("/setblock 96 -60 96 minecraft:chest", "/setblock 96 -59 96 minecraft:stone")
+    t.cmd("/give @s bucket 16", "/give @s water_bucket 2", "/give @s dirt 64")
+    time.sleep(1)
+    t0 = time.time()
+    line = run_scenario(t, "canal-flood-resume.txt", "TEST flood done", 900)
+    secs = time.time() - t0
+    n = layers(t, [(100, -62, 100, 108, -61, 110)])["water"]
+    if sum(n) != 198:
+        raise Fail("%d water blocks in the trench, expected 198 (%s)" % (sum(n), line))
+    starts = [l for l in t.lines() if "Filling 198 cells" in l]
+    carried = [l for l in t.lines() if "Carrying on with the water fill" in l]
+    fired = [l for l in t.lines() if "restock_needed" in l and "fired" in l]
+    if len(starts) > 1:
+        raise Fail("flood() started over %d times instead of carrying on" % len(starts))
+    if len(fired) > 4:
+        raise Fail("restock_needed fired %d times in %.0f s" % (len(fired), secs))
+    return "198 sources in %.0f s; restock_needed fired %d times, carried on %d times" % (secs, len(fired), len(carried))
+
+
 CANAL_TESTS = [("canal_layers", test_canal_layers), ("canal_pillar_scaffold", test_canal_pillar_scaffold),
                ("canal_scaffold_schem", test_canal_scaffold_schem), ("canal_water_pond", test_canal_water_pond),
                ("canal_water_river", test_canal_water_river), ("canal_flood_bucket", test_canal_flood_bucket),
@@ -1049,7 +1074,7 @@ CANAL_TESTS = [("canal_layers", test_canal_layers), ("canal_pillar_scaffold", te
                ("canal_flood_pond", test_canal_flood_pond), ("canal_flood_none", test_canal_flood_none), ("canal_flood_wide", test_canal_flood_wide), ("canal_smoke", test_canal_smoke),
                ("canal_schem_two", test_canal_schem_two), ("canal_schem_needed", test_canal_schem_needed),
                ("canal_survival_dump", test_canal_survival_dump), ("canal_survival_restock", test_canal_survival_restock),
-               ("canal_tools_schem", test_canal_tools_schem), ("canal_schem_water", test_canal_schem_water), ("canal_move", test_canal_move)]
+               ("canal_tools_schem", test_canal_tools_schem), ("canal_schem_water", test_canal_schem_water), ("canal_move", test_canal_move), ("canal_flood_resume", test_canal_flood_resume)]
 
 
 def test_hotbar_tools(t):

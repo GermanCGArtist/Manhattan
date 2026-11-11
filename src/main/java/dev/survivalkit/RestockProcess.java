@@ -240,6 +240,7 @@ final class RestockProcess extends Feature {
 
     /** One chest is done: on to the next if something is still missing, else wrap the trip up. */
     private PathingCommand finishChest(Minecraft mc, String text) {
+        failStreak = 0;   // the chest was open
         Util.msg(text);
         boolean missing = shortHere.values().stream().anyMatch(a -> a[0] < a[1]);
         if (missing && routeIdx + 1 < route.size()) {
@@ -319,11 +320,13 @@ final class RestockProcess extends Feature {
                     queue = null;
                     return pause();
                 }
+                if (timer == 1) Util.readyToOpen(p);   // never place a block on top of it or pour a bucket
                 if (timer == 4) {   // let the player come to a stop first
+                    Util.readyToOpen(p);
                     BlockHitResult hit = new BlockHitResult(Vec3.atCenterOf(chest), Direction.UP, chest, false);
                     mc.gameMode.useItemOn(p, InteractionHand.MAIN_HAND, hit);
                 }
-                if (++timer > OPEN_TIMEOUT) return fail("Could not open the " + chestName() + ".");
+                if (++timer > OPEN_TIMEOUT) return fail("Could not open the " + chestName() + "." + Util.blockedText(mc.level, chest));
                 return pause();
             }
             case TAKING -> {
@@ -355,10 +358,25 @@ final class RestockProcess extends Feature {
         }
     }
 
+    private int failStreak;   // trips in a row that did not get to open the chest
+
+    /**
+     * The chest could not be reached or opened: 1, 2, 4 ... up to 30 minutes until the next try, and the script's
+     * "on restock_needed" waits as long (on the live canal it fired every 30 s for 9 hours and kept interrupting the
+     * water fill, which then never got anywhere).
+     */
     private PathingCommand fail(String why) {
-        Util.msg(why + " Trying again in 1 minute.");
+        long wait = Math.min(RETRY_MAX, 20L * 60 * (1L << Math.min(5, failStreak++)));
+        LocalPlayer p = Minecraft.getInstance().player;
+        if (p != null) {
+            for (Map.Entry<String, Integer> e : cfg.want.entrySet()) {
+                int have = Util.countHave(p, e.getKey());
+                if (have < e.getValue()) exhausted.put(e.getKey(), Math.max(exhausted.getOrDefault(e.getKey(), 0L), now + wait));
+            }
+        }
+        Util.msg(why + " Trying again in " + Math.max(1, wait / (20 * 60)) + " min" + (failStreak > 2 ? " (it keeps failing: check the way to the chest, and that nothing is on top of it)." : "."));
         state = State.IDLE;
-        cooldown = 20 * 60;
+        cooldown = (int) wait;
         return pause();
     }
 

@@ -31,6 +31,12 @@ Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
     builder stopped the whole bottom layer at "Unreplaceable liquids", so nothing above it was built), and Baritone
     may not place blocks while `flood()` walks (it pillared dirt 30 blocks up out of the water at cells it could not
     reach). New tests `canal_schem_water`, `canal_move`; `canal_flood_wide` checks that nothing stands above the trench.
+  - After the second live run (9 hours on the last step, nothing filled): a chest is never opened while sneaking with a
+    block or bucket in hand (that put a stone brick on top of the tools chest, which then never opened again; the
+    message now says when a block is on top); a restock trip that cannot reach or open the chest waits 1, 2, 4 ... 30
+    minutes and `restock_needed` waits as long; `flood()` carries on after an `on` block with the same cells and skips
+    instead of starting over; where Baritone finds no path (it never walks through flowing water) `flood()` walks or
+    swims the last few blocks itself; our schematic placer may stand in water. New test `canal_flood_resume`.
 - `/queue move <dx> <dy> <dz>` moves the whole setup (every saved area, saved chest and Litematica placement) by an
   offset, to run a test again somewhere else; `/queue area move <name|all> ...` and `/schem move <n|all> ...` move
   one kind. Positions written into a script as `pos(...)` stay where they are.

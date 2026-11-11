@@ -59,6 +59,16 @@ public final class Api {
         return BuildToolsMod.fill.failure();
     }
 
+    /** An "on" block interrupts flood(): pause it (keeps its cells and skips). */
+    public static void pauseFlooding() {
+        BuildToolsMod.fill.suspendRun();
+    }
+
+    /** After the "on" block: carry on; null = going, "" = nothing to carry on, else an error. */
+    public static String resumeFlooding() {
+        return BuildToolsMod.fill.carryOn();
+    }
+
     public static boolean flooding() {
         return BuildToolsMod.fill.busy();
     }

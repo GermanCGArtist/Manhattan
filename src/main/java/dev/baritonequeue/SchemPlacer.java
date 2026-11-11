@@ -202,10 +202,14 @@ final class SchemPlacer {
             BlockPos s = cur.offset(dx, dy, dz);
             if (s.equals(cur) || s.above().equals(cur)) continue;
             if (!level.getBlockState(s).getCollisionShape(level, s).isEmpty() || !level.getBlockState(s.above()).getCollisionShape(level, s.above()).isEmpty()) continue;
-            if (level.getBlockState(s.below()).getCollisionShape(level, s.below()).isEmpty()) continue;
-            if (!level.getFluidState(s).isEmpty()) continue;
+            // dry ground, or in water with the head out (wading on the floor, or swimming at the surface): a block wanted
+            // under water (a flooded trench) has no dry spot near it
+            boolean wet = !level.getFluidState(s).isEmpty();
+            if (!level.getFluidState(s.above()).isEmpty()) continue;
+            if (level.getBlockState(s.below()).getCollisionShape(level, s.below()).isEmpty() && !wet) continue;
             if (badSpots.contains(s)) continue;
-            double d = s.distSqr(p.blockPosition()) + 40.0 * Math.max(0, s.getY() - p.blockPosition().getY());   // climbing is expensive
+            double d = s.distSqr(p.blockPosition()) + 40.0 * Math.max(0, s.getY() - p.blockPosition().getY())   // climbing is expensive
+                    + (wet ? 12 : 0);
             if (d >= bestD) continue;
             Vec3 eye = new Vec3(s.getX() + 0.5, s.getY() + 1.62, s.getZ() + 0.5);
             if (clearing) {   // the way may need digging: only the distance counts

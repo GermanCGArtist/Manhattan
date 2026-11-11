@@ -364,7 +364,7 @@ final class GameBuiltins {
                         () -> {   // a stop with a reason (no water to refill from, cells out of reach ...) fails the script
                             String why = dev.buildtools.Api.floodFailure();
                             return why == null ? (Object) Boolean.TRUE : new Modules.Failure(why);
-                        }), "flood", l));
+                        }).resumable(dev.buildtools.Api::pauseFlooding, dev.buildtools.Api::resumeFlooding), "flood", l));
         def(g, "collect_scaffold", 0, 0, "collect_scaffold()", "take down the blocks Baritone placed to reach things, and pick them up", (in, a, l) ->
                 in.await(() -> new Actions.Feature(dev.buildtools.Api::collectScaffoldNow, dev.buildtools.Api::collectingScaffold, dev.buildtools.Api::stopCollectingScaffold, () -> true), "collect_scaffold", l));
 
