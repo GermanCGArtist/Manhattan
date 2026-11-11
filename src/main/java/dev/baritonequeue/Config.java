@@ -26,6 +26,13 @@ final class Config {
     java.util.Map<String, List<int[]>> areas = new java.util.LinkedHashMap<>();
     List<int[]> lastArea = new ArrayList<>();
 
+    /** Capture sheets (the capture menu, key K): folder ("" = <game folder>/manhattan-context), the open set, options. */
+    String captureDir = "";
+    String captureSet = "main";
+    boolean captureShow = true;
+    boolean captureRapid = false;
+    String captureType = "dump";
+
     /** Which default presets were already offered; newer ones are added once on load (deleted ones stay deleted). */
     int presetsVersion = 1;
 
@@ -177,6 +184,9 @@ final class Config {
                     if (cfg.presets == null) cfg.presets = defaultPresets();
                     if (cfg.chests == null) cfg.chests = new java.util.LinkedHashMap<>();
                     if (cfg.areas == null) cfg.areas = new java.util.LinkedHashMap<>();
+                    if (cfg.captureDir == null) cfg.captureDir = "";
+                    if (cfg.captureSet == null || cfg.captureSet.isBlank()) cfg.captureSet = "main";
+                    if (cfg.captureType == null) cfg.captureType = "dump";
                     if (cfg.lastArea == null) cfg.lastArea = new ArrayList<>();
                 }
                 if (cfg.scriptVersion < 2) migrate();

@@ -84,6 +84,49 @@ Note: the script ends after its last line, and the `on` blocks end with it. To k
 * **Pick block button:** the editor closes. Aim at any block and press **J**. The editor comes back with the position put in. On an empty line it writes `let chest = pos(…)   // chest` (or `bed`, `barrel` …). Pressing J while looking at the sky goes back without inserting anything.
 * **Tab with nothing shown** asks for completions, like in chat. If there is only one choice it is taken. **Ctrl+Space** lists everything.
 
+## Capture menu (key K): places and areas for the script, or for an LLM
+
+Instead of copying every chest, bed and corner by hand, the capture menu collects them into a **sheet**: plain
+script that can be pasted into a script, or handed to an LLM to write the script around it.
+
+* **Role** (drop-down): dump, supply / tools, return chest, material chest, scaffolding chest, bed, mine area, fill
+  area, building block area, safe area, other spot, other area, schematic. **Name** is optional (other spot and other
+  area use it as their name; an area with a name you used before gets one more box).
+* **Fetch looked-at** takes the block you were looking at when you opened the menu.
+* **Aim in world (J)** closes the menu: look at a block and press J. With **Rapid: on** every press adds a line and
+  you stay in the world (chest after chest); K brings the menu back, and so does J while looking at the sky.
+* Areas take two corners (Fetch or J, twice); the box being made shows in sparks while you aim.
+  **Use selection** takes the current `#sel` selection instead.
+* **Import saved** adds the chests and areas saved with `/queue chest set` and `/queue area save`.
+* **Copy** puts the sheet on the clipboard. **Copy full context** adds what an LLM needs: the world, where you stand,
+  the inventory, the want-list, what each area holds (air, water cells, the most common blocks), lines that look
+  wrong (a "chest" that is now air), the schematics folder and the list of built-in functions.
+* **Show in world** marks the captured places (green; flames when the block is no longer a chest or bed) and the
+  areas (white edges, safe areas in small flames).
+* **Set**: several sheets per world (main base, outpost ...): type a name, **Open set**.
+
+The sheet is a file, one per world and set: `<game folder>/manhattan-context/<world>_<set>.txt`, and the full context
+next to it as `<world>_<set>.context.txt`, so an LLM with file access can read it directly. `/queue capture dir
+<folder>` puts them somewhere else (`/queue capture dir default` back). Edits in the menu are saved to the file; when
+the file is changed outside, the menu shows the new text.
+
+A sheet looks like this; `//` in front of a line switches it off:
+
+```
+// --- places
+let dump_chest = pos(1787, 74, -837)   // dump: dump() puts the inventory in here; chest; holds: 640 cobblestone
+let dirt_chest = pos(1794, 74, -840)   // material: blocks for fill_water / building; chest; holds: 1728 dirt
+let bed = pos(1791, 74, -839)   // bed: sleep() uses it; red_bed
+
+// --- areas
+area_box("mine_1", pos(1700, 60, -900), pos(1720, 74, -880))   // mine: clear_area() mines it out; 21x15x21 = 6615 blocks
+// area_box("fill_1", pos(1730, 50, -900), pos(1750, 62, -880))   // fill: switched off
+protect("protect_1", pos(1779, 68, -844), pos(1797, 80, -832))   // safe: Baritone never breaks or places blocks here
+
+// --- schematics
+let house = schematic("house.schem", pos(1750, 64, -850))   // schematic: build(house) builds it with its lowest corner here
+```
+
 ## Functions
 
 The ones marked **waits** take time in the world: the script waits until they are finished. When one fails (for example the chest has no dirt), the script stops with the line number, unless it is inside `try`.
@@ -108,6 +151,8 @@ The ones marked **waits** take time in the world: the script waits until they ar
 | `clear_area()` | waits; mines out the selection itself instead of Baritone's builder (details below). Returns the blocks left that it could not get at (not counting the ones next to water or lava, or protected) |
 | `drain()` | waits; removes flowing water that blocks the builder |
 | `flood()` | waits; fills the selection with water, using buckets |
+| `schematic("house.schem", origin)` | a schematic from the `schematics` folder and where its lowest corner goes ("house" finds house.schem / .litematic / .schematic) |
+| `build(house)` / `build("house", origin)` | waits; builds it with Baritone (`#build`) |
 | `collect_scaffold()` | waits; takes down the blocks Baritone placed to reach things |
 | `protect("name" [, corner1, corner2])` | safe area: Baritone never breaks or places there (no corners = the selection) |
 | `unprotect("name")` | |
@@ -163,7 +208,8 @@ options("survival")
 | `goto(pos)` | waits |
 | `cancel()` | stops Baritone's task (the script goes on) |
 | `set("allowPlace", false)` / `setting("allowPlace")` | Baritone settings |
-| `area("1")` | selects a saved area (`/queue area save 1`) |
+| `area("1")` | selects a saved area (`/queue area save 1`, or written by `area_box`) |
+| `area_box("mine_1", corner1, corner2)` | an area written in the script itself (the capture menu writes these). The first `area_box` of a name in a run replaces what was saved under it, more of the same name add boxes. It does not select it: `area("mine_1")` does |
 | `select(corner1, corner2)`, `add_box(…)`, `clear_selection()`, `save_area("x")`, `selection()`, `areas()` | |
 | `timeout(600)` / `timeout(null)` | longest time one action may take |
 | `stall(30)` / `stall(null)` | a Baritone task without progress this many minutes is skipped |

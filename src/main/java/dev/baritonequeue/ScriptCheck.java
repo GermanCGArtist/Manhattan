@@ -29,6 +29,7 @@ final class ScriptCheck {
 
     private final List<Entry> out = new ArrayList<>();
     private final Set<String> defined = new HashSet<>();
+    private final Set<String> boxAreas = new HashSet<>();   // areas the script writes itself with area_box()
     private int errors, warnings;
 
     static List<Entry> run(List<String> script) {
@@ -39,6 +40,8 @@ final class ScriptCheck {
         try {
             List<Ast.Stmt> program = Parser.parse(text);
             c.defined.addAll(Suggest.definedNames(text));
+            var m = java.util.regex.Pattern.compile("(?m)^\\s*area_box\\s*\\(\\s*\"([^\"]+)\"").matcher(text);
+            while (m.find()) c.boxAreas.add(m.group(1));
             c.collect(program);
             c.block(program);
         } catch (Parser.ParseError e) {
@@ -146,7 +149,7 @@ final class ScriptCheck {
                         add(Level.ERROR, e.line, "'" + s + "' is not a Baritone setting.");
                     }
                     if (v.name.equals("area") && n > 0 && c.args.get(0) instanceof Ast.Lit l && l.value instanceof String s
-                            && !s.equalsIgnoreCase("last") && !Config.cfg.areas.containsKey(s)) {
+                            && !s.equalsIgnoreCase("last") && !Config.cfg.areas.containsKey(s) && !boxAreas.contains(s)) {
                         add(Level.ERROR, e.line, "There is no saved area '" + s + "' (yet). /queue area save " + s + " saves the current selection.");
                     }
                 }

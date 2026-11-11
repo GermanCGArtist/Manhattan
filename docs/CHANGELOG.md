@@ -2,6 +2,19 @@
 
 Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
 
+## 2.5.0 – capture menu (2026-11-11)
+- New capture menu (key K, `/queue capture`, or Capture... in the editor): pick a role (dump, supply / tools, return,
+  material, scaffolding, bed, mine / fill / building block / safe area, other spot or area by name, schematic), then
+  **Fetch looked-at** or **Aim in world** and J. Rapid mode keeps you in the world, one line per J press. Areas take
+  two corners or the `#sel` selection; saved chests and areas can be imported.
+- The sheet is plain script, kept as a file per world and set (`manhattan-context/<world>_<set>.txt`), editable in
+  the menu, `//` switches a line off. Copy full context adds the world, inventory, want-list, area contents, wrong
+  lines and the built-in functions for an LLM (also written to `<world>_<set>.context.txt`).
+- Captured places and areas are marked with particles in the world; a chest or bed that is gone shows in flames.
+- New functions `area_box("name", c1, c2)` (an area written in the script), `schematic("file", origin)` and
+  `build(...)`.
+- Not tested in game yet.
+
 ## 2.4.4 â€“ clear_area says why blocks are left (2026-11-09)
 - `clear_area` returned every block left, so `if clear_area() > 0 then #sel ca end` handed the blocks next to the
   water to Baritone, whose builder will not break them either: on the AFK run it walked back and forth for 15 min.

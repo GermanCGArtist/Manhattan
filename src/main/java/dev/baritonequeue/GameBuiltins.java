@@ -232,6 +232,28 @@ final class GameBuiltins {
             String cmd = c;
             return in.await(() -> new Actions.BaritoneCommand(cmd), cmd, l);
         });
+        def(g, "schematic", 2, 2, "schematic(\"file\", origin)", "a schematic from the schematics folder and where its lowest corner goes; build() builds it", (in, a, l) -> {
+            String file = Capture.schematicFile(str(a.get(0)));
+            if (file == null) throw error("There is no schematic '" + str(a.get(0)) + "' in the schematics folder (" + Capture.schematicsDir() + ").", l);
+            Map<Object, Object> m = Values.newMap();
+            m.put("file", file);
+            m.put("origin", toPos(a, 1, "schematic()", l));
+            return m;
+        });
+        def(g, "build", 1, 4, "build(schematic) | build(\"file\", origin)", "build a schematic with Baritone (#build) and wait until it is done", (in, a, l) -> {
+            String file;
+            Pos at;
+            if (a.get(0) instanceof Map<?, ?> m && m.get("file") instanceof String f && m.get("origin") instanceof Pos p) {
+                file = f;
+                at = p;
+            } else {
+                file = Capture.schematicFile(str(a.get(0)));
+                if (file == null) throw error("There is no schematic '" + str(a.get(0)) + "' in the schematics folder (" + Capture.schematicsDir() + ").", l);
+                at = toPos(a, 1, "build()", l);
+            }
+            String cmd = "build " + file + " " + at.x() + " " + at.y() + " " + at.z();
+            return in.await(() -> new Actions.BaritoneCommand(cmd), cmd, l);
+        });
         def(g, "chat", 1, 1, "chat(\"/command\")", "run a chat command and wait for it (same as a / line)", (in, a, l) -> {
             String c = str(a.get(0)).trim();
             if (c.startsWith("/")) c = c.substring(1);
@@ -389,6 +411,12 @@ final class GameBuiltins {
         String g = "areas";
         def(g, "area", 1, 1, "area(\"name\")", "select a saved area (save one with /queue area save <name>)", (in, a, l) -> {
             String err = Areas.load(str(a.get(0)));
+            if (err != null) throw error(err, l);
+            return null;
+        });
+        def(g, "area_box", 3, 3, "area_box(\"name\", corner1, corner2)", "an area written in the script: the first area_box of a name replaces what was saved under it, more of the same name add boxes; area(\"name\") selects it", (in, a, l) -> {
+            Pos p = toPos(a, 1, "area_box()", l), q = toPos(a, 2, "area_box()", l);
+            String err = Areas.box(str(a.get(0)), p.x(), p.y(), p.z(), q.x(), q.y(), q.z());
             if (err != null) throw error(err, l);
             return null;
         });

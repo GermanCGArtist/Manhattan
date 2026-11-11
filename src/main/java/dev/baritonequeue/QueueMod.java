@@ -23,7 +23,7 @@ public class QueueMod implements ClientModInitializer {
     static final Runner runner = new Runner();
     static final ChestProcess chest = new ChestProcess();
     static final ClearProcess clear = new ClearProcess();
-    static KeyMapping open;
+    static KeyMapping open, capture;
     private boolean registered = false;
     private int noPlayer, areaTick;
 
@@ -35,6 +35,7 @@ public class QueueMod implements ClientModInitializer {
         Config.load();
         KeyMapping.Category category = KeyMapping.Category.register(Identifier.fromNamespaceAndPath("baritonequeue", "main"));
         open = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.baritonequeue.open", 74 /* GLFW_KEY_J */, category));
+        capture = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.baritonequeue.capture", 75 /* GLFW_KEY_K */, category));
 
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
                 dispatcher.register(ClientCommands.literal("queue")
@@ -54,6 +55,27 @@ public class QueueMod implements ClientModInitializer {
                                     return 1;
                                 })))
                         .then(ClientCommands.literal("list").executes(ctx -> list()))
+                        .then(ClientCommands.literal("capture")
+                                .executes(ctx -> {
+                                    Minecraft mc = Minecraft.getInstance();
+                                    mc.execute(() -> mc.setScreen(new CaptureScreen()));
+                                    return 1;
+                                })
+                                .then(ClientCommands.literal("dir")
+                                        .executes(ctx -> {
+                                            Util.msg("Capture sheets go to " + Capture.dir() + ". /queue capture dir <folder> changes it, /queue capture dir default puts it back.");
+                                            return 1;
+                                        })
+                                        .then(ClientCommands.argument("folder", StringArgumentType.greedyString()).executes(ctx -> {
+                                            String d = StringArgumentType.getString(ctx, "folder").trim();
+                                            if (d.startsWith("\"") && d.endsWith("\"") && d.length() > 1) d = d.substring(1, d.length() - 1);
+                                            Capture.save();
+                                            cfg.captureDir = d.equalsIgnoreCase("default") ? "" : d;
+                                            Config.save();
+                                            Capture.save();
+                                            Util.msg("Capture sheets now go to " + Capture.dir() + ".");
+                                            return 1;
+                                        }))))
                         .then(ClientCommands.literal("run").executes(ctx -> run()))
                         .then(ClientCommands.literal("start").executes(ctx -> run()))
                         .then(ClientCommands.literal("stop").executes(ctx -> {
@@ -151,8 +173,22 @@ public class QueueMod implements ClientModInitializer {
         // and the hint while a block is being picked for the editor.
         HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("baritonequeue", "progress"), (g, delta) -> {
             Minecraft mc = Minecraft.getInstance();
-            if (mc.options.hideGui || mc.screen instanceof QueueScreen) return;
+            if (mc.options.hideGui || mc.screen instanceof QueueScreen || mc.screen instanceof CaptureScreen) return;
             int sw = mc.getWindow().getGuiScaledWidth();
+            if (Capture.aiming) {
+                Places.Target t = Places.target();
+                Capture.Type ty = Capture.type();
+                String step = ty.kind == Capture.Kind.AREA ? (Capture.corner1 == null ? " (corner 1)" : " (corner 2; corner 1 at " + Capture.corner1 + ")") : "";
+                String a = "Capture " + ty.label + step + ": look at a block, press " + open.getTranslatedKeyMessage().getString()
+                        + ".  " + capture.getTranslatedKeyMessage().getString() + " = back to the menu";
+                String b = (t == null ? "Looking at nothing (the key now goes back to the menu)" : "Looking at: " + t.name() + " at " + t.pos())
+                        + (cfg.captureRapid ? "   |   rapid: " + Capture.captured + " captured" : "");
+                int w = Math.max(mc.font.width(a), mc.font.width(b)) + 12;
+                g.fill(sw / 2 - w / 2, 28, sw / 2 + w / 2, 54, 0xAA000000);
+                g.centeredText(mc.font, a, sw / 2, 32, 0xFF60E0FF);
+                g.centeredText(mc.font, b, sw / 2, 43, 0xFFE0E0E0);
+                return;
+            }
             if (picking) {
                 Places.Target t = Places.target();
                 String a = "Look at a block and press " + open.getTranslatedKeyMessage().getString() + " to put its position into the script.";
@@ -221,6 +257,7 @@ public class QueueMod implements ClientModInitializer {
         Util.flush();
         if (mc.player == null) {
             picking = false;
+            Capture.tick(mc);   // ends aiming
             // a dropped connection that the reconnect helper brings back: keep the script and carry on afterwards
             if (runner.running() && (System.getProperty("survivalkit.recovering") != null || ++noPlayer < 60)) runner.holdForReconnect();
             else runner.reset();
@@ -237,7 +274,23 @@ public class QueueMod implements ClientModInitializer {
             registered = true;
         }
         while (open.consumeClick()) {
-            if (picking) {
+            if (Capture.aiming) {
+                Places.Target t = Places.target();
+                if (t == null) {   // the sky: back to the menu
+                    Capture.aiming = false;
+                    Capture.corner1 = null;
+                    mc.setScreen(new CaptureScreen());
+                    continue;
+                }
+                String r = Capture.capture(t);
+                Util.msg(r);
+                boolean waiting = Capture.corner1 != null || r.startsWith("Pick");
+                if (!cfg.captureRapid && !waiting) {
+                    Capture.aiming = false;
+                    mc.setScreen(new CaptureScreen());
+                }
+            } else if (picking) {
+
                 picking = false;
                 Places.Target t = Places.target();
                 QueueScreen.pickResult(t);
@@ -246,6 +299,15 @@ public class QueueMod implements ClientModInitializer {
                 mc.setScreen(new QueueScreen());
             }
         }
+        while (capture.consumeClick()) {
+            if (Capture.aiming) {
+                Capture.aiming = false;
+                mc.setScreen(new CaptureScreen());
+            } else if (mc.screen == null) {
+                mc.setScreen(new CaptureScreen());
+            }
+        }
+        Capture.tick(mc);
         clear.tick();
         if (PauseWatch.paused) return;   // #pause: the script holds still
         try {

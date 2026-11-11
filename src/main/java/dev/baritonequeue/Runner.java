@@ -167,6 +167,7 @@ final class Runner {
         stepTimeout = 0;
         actions = 0;
         awaitRecovery = false;
+        Areas.scripted.clear();
         Areas.restoreIfNeeded(text);
         globals = new Ast.Env(Builtins.root());
         main = new Fiber("queue-script", () -> Ast.run(program, mainIn, globals));

@@ -13,7 +13,12 @@ final class Places {
 
     private static final double RANGE = 96;
 
-    record Target(Values.Pos pos, String name) {}
+    /** The block, its name, and the cell in front of the face that was looked at (where a block placed there would go). */
+    record Target(Values.Pos pos, String name, Values.Pos front) {
+        Target(Values.Pos pos, String name) {
+            this(pos, name, pos);
+        }
+    }
 
     /** The block under the crosshair up to 96 blocks away, or null when looking at the sky. */
     static Target target() {
@@ -23,7 +28,8 @@ final class Places {
         HitResult hit = cam.pick(RANGE, 1.0f, false);
         if (!(hit instanceof BlockHitResult b) || hit.getType() != HitResult.Type.BLOCK) return null;
         var block = mc.level.getBlockState(b.getBlockPos()).getBlock();
-        return new Target(Values.Pos.of(b.getBlockPos()), BuiltInRegistries.BLOCK.getKey(block).getPath());
+        return new Target(Values.Pos.of(b.getBlockPos()), BuiltInRegistries.BLOCK.getKey(block).getPath(),
+                Values.Pos.of(b.getBlockPos().relative(b.getDirection())));
     }
 
     /** A short variable name for a picked block: "chest", "bed", "barrel" ... */

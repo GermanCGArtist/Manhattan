@@ -54,6 +54,40 @@ public class LangTest {
         System.out.println("FAIL " + name + "\n  expected: " + expected + "\n  got:      " + got);
     }
 
+    static void same(String name, Object got, Object expected) {
+        if (String.valueOf(got).equals(String.valueOf(expected))) { passes++; return; }
+        fails++;
+        System.out.println("FAIL " + name + "\n  expected: " + expected + "\n  got:      " + got);
+    }
+
+    /** The capture sheet's text handling. */
+    static void sheet() {
+        String t = CaptureSheet.header("w", "main");
+        t = CaptureSheet.add(t, CaptureSheet.PLACES, "let dump_chest = pos(1, 2, 3)   // dump: x; chest");
+        t = CaptureSheet.add(t, CaptureSheet.AREAS, "area_box(\"mine_1\", pos(5, 6, 7), pos(1, 2, 3))   // mine; 5x5x5");
+        t = CaptureSheet.add(t, CaptureSheet.PLACES, "// let bed = pos(4, 5, 6)   // bed");
+        same("sheet sections", t, CaptureSheet.header("w", "main")
+                + "\n// --- places\nlet dump_chest = pos(1, 2, 3)   // dump: x; chest\n// let bed = pos(4, 5, 6)   // bed\n\n// --- areas\n"
+                + "area_box(\"mine_1\", pos(5, 6, 7), pos(1, 2, 3))   // mine; 5x5x5\n");
+        same("sheet names", CaptureSheet.names(t), "[dump_chest, bed, mine_1]");
+        same("sheet unique", CaptureSheet.unique("mine", CaptureSheet.names(t), true) + " " + CaptureSheet.unique("dump_chest", CaptureSheet.names(t), false)
+                + " " + CaptureSheet.unique("tool_chest", CaptureSheet.names(t), false), "mine_2 dump_chest_2 tool_chest");
+        var es = CaptureSheet.entries(t);
+        same("sheet entries", es.size(), 3);
+        same("sheet point", es.get(0).name() + " " + es.get(0).role() + " " + es.get(0).active() + " " + java.util.Arrays.toString(es.get(0).pos()), "dump_chest dump true [1, 2, 3]");
+        same("sheet off", es.get(1).name() + " " + es.get(1).role() + " " + es.get(1).active(), "bed bed false");
+        same("sheet box", es.get(2).name() + " " + es.get(2).role() + " " + java.util.Arrays.toString(es.get(2).box()), "mine_1 mine [1, 2, 3, 5, 6, 7]");
+        same("sheet clean", CaptureSheet.cleanName(" Storage East! ") + " " + CaptureSheet.cleanName("2nd"), "storage_east _2nd");
+        // the sheet is plain script: it parses
+        try {
+            Parser.parse(t.replace("area_box", "out"));
+            passes++;
+        } catch (Parser.ParseError e) {
+            fails++;
+            System.out.println("FAIL sheet parses: " + e.getMessage());
+        }
+    }
+
     public static void main(String[] a) {
         check("arith", "out(1 + 2 * 3, (1 + 2) * 3, 7 / 2, 7 % 3, -2 * 3)", "7 9 3.5 1 -6");
         check("strings", "let n = 5\nout(\"n is {n}, twice {n * 2}\", 'x{y}', \"a\" + 1)", "n is 5, twice 10 x{y} a1");
@@ -130,6 +164,7 @@ public class LangTest {
             fails++;
             System.out.println("FAIL converted script does not parse: line " + e.line + ": " + e.getMessage());
         }
+        sheet();
         System.out.println(passes + " passed, " + fails + " failed");
         System.exit(fails == 0 ? 0 : 1);
     }

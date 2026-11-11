@@ -68,6 +68,20 @@ final class Areas {
         return null;
     }
 
+    /** Names an area_box() of the running script has written to; the first box of a run replaces what was saved. */
+    static final java.util.Set<String> scripted = new java.util.HashSet<>();
+
+    /** area_box("name", corner1, corner2): the area is written in the script itself; returns an error text or null. */
+    static String box(String name, int x1, int y1, int z1, int x2, int y2, int z2) {
+        String n = name.trim();
+        if (n.isEmpty() || n.equalsIgnoreCase("last")) return "area_box() needs a name for the area, for example \"mine_1\".";
+        List<int[]> boxes = scripted.add(n) ? new ArrayList<>() : new ArrayList<>(cfg.areas.getOrDefault(n, List.of()));
+        boxes.add(new int[]{Math.min(x1, x2), Math.min(y1, y2), Math.min(z1, z2), Math.max(x1, x2), Math.max(y1, y2), Math.max(z1, z2)});
+        cfg.areas.put(n, boxes);
+        Config.save();
+        return null;
+    }
+
     static boolean delete(String name) {
         boolean had = cfg.areas.remove(name) != null;
         if (had) Config.save();

@@ -108,10 +108,15 @@ final class QueueScreen extends Screen {
 
         // preset row
         int py = panelY + PANEL_H + 16;
-        presetName = new EditBox(font, left, py, width0 - 2 * 84 - 8, 20, Component.literal("Preset name"));
+        presetName = new EditBox(font, left, py, width0 - 3 * 84 - 12, 20, Component.literal("Preset name"));
         presetName.setHint(Component.literal("preset name"));
         presetName.setMaxLength(40);
         addRenderableWidget(presetName);
+        addRenderableWidget(Button.builder(Component.literal("Capture..."), b -> {
+            store(box.getValue());
+            Config.save();
+            minecraft.setScreen(new CaptureScreen());
+        }).bounds(left + width0 - 3 * 84 - 8, py, 84, 20).build());
         addRenderableWidget(Button.builder(Component.literal("Save preset"), b -> savePreset())
                 .bounds(left + width0 - 2 * 84 - 4, py, 84, 20).build());
         addRenderableWidget(Button.builder(Component.literal("Presets..."), b -> {

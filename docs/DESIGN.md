@@ -36,6 +36,8 @@ acts on its own: the script starts them. The packages talk through small `Api` c
   `option("group.field", v)`.
 - Editor: `QueueScreen`, `Syntax` (colours from the lexer), `Suggest` (Tab completion, looked-at block as `pos(…)`),
   `ScriptCheck` (Test), `Places` (raycast up to 96 blocks), `Estimate` / `ProgressView` (time and progress).
+- Capture menu: `CaptureScreen` (the menu), `Capture` (roles, sheet files per world and set, rapid aiming,
+  particle outlines, full context), `CaptureSheet` (the sheet's text without the game; tested in `LangTest`).
 - `Migrate` converts pre-2.0 scripts and presets once on load.
 
 ## Water fill (`dev.buildtools.TerminatorProcess`)
@@ -55,7 +57,8 @@ blocks, highest-then-nearest visible block first, drops picked up along the way,
 - `build.bat` – builds `build/libs/baritonequeue-<version>.jar` and runs the offline checks
   (`src/test/.../LangTest.java`: the language through the real parser and interpreter; `ParseFile`: every
   `scripts/*.txt` parses).
-- `tests\ingameun.bat` – the in-game tests on the "Manhatten Testing" profile, driven through the test-only
+- `tests\ingame
+un.bat` – the in-game tests on the "Manhatten Testing" profile, driven through the test-only
   bridge mod in `src/ingame` (see [TESTING.md](TESTING.md)).
 - `install.bat` – into the "26.1.1 AFK" Modrinth profile; refuses while that profile runs. Older jars go to
   `mods-disabled`.
