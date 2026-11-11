@@ -1,0 +1,185 @@
+// Canal at bestesproject118: plug the old water in area 3 with dirt, mine area 3, build the canal schematic (add only), fill area 3 with water.
+// Needs: saved area "3" (/queue area save 3), the canal placement enabled in Litematica (/schem list),
+// buckets + 2 water buckets in the tool chest, food in the tool chest.
+
+// ------------------------------------------------------------------ places (from the capture sheet "main")
+let dump_chest = pos(1786, 74, -837)       // dump() puts the inventory in here
+let tool_chest = pos(1786, 74, -841)       // restock(): tools, food, buckets
+let return_chest = pos(1789, 74, -841)     // worn-out tools
+let scaffold_chest = pos(1794, 74, -840)   // 1852 dirt
+let bed = pos(1791, 74, -839)
+
+// the build material chests: every chest, barrel or shulker box inside build_1
+area_box("build_1", pos(1766, 67, -848), pos(1771, 69, -839))
+let mat_a = pos(1766, 67, -848)
+let mat_b = pos(1771, 69, -839)
+
+// the base: Baritone never breaks or places blocks in here
+protect("protect_1", pos(1783, 65, -844), pos(1800, 80, -832))
+
+let schem = "all"        // all enabled Litematica placements; put the placement's name here to build only that one
+let mode = "add"         // the schematics are only additive: only empty spots are filled, nothing is broken
+let scaffold = "dirt"
+
+// ------------------------------------------------------------------ survival
+option("survival.supply", tool_chest)
+option("survival.returnChest", return_chest)
+option("survival.bed", bed)
+option("survival.respawn", true)
+option("survival.resume", true)
+option("survival.reconnect", true)
+set("itemSaver", true)
+set("itemSaverThreshold", 50)
+
+want("diamond_pickaxe", 1)
+want("diamond_axe", 1)
+want("diamond_sword", 1)        // the one in the inventory: dump() keeps it (no spare in the tool chest)
+want("diamond_shovel", 1)
+want("bucket", 8)
+want("food", 32)
+keep(scaffold, 256)             // dump() leaves this much dirt for scaffolding
+hotbar(9, "food")
+
+#acceptableThrowawayItems {scaffold}
+#allowInventory true
+
+// higher up wins: a fight interrupts eating, eating interrupts sleeping and restocking
+on mobs > 0
+  defend()
+end
+on food < 14
+  eat()
+end
+on bed_time
+  sleep()
+end
+on restock_needed
+  restock()
+  hotbar(9, "food")
+end
+let building = false           // while true the inventory holds build materials: never dump them
+on full and not building
+  dump(dump_chest)
+end
+
+restock()
+let food_with_me = count("food")
+if food_with_me < 8 then
+  stop("Only {food_with_me} food with me after restocking: put food (bread, steak, golden carrots ...) into the tool chest at 1786 74 -841, then run again.")
+end
+take_upto(scaffold_chest, scaffold, 256)
+
+// ------------------------------------------------------------------ 0. plug the old water in area 3
+// every wet cell is filled with dirt (bottom up), fetched from the scaffold chest; step 1 mines it out again
+print("0/3: plugging the water in area 3")
+area("3")
+let wet = fill_water(scaffold, scaffold_chest)
+if wet > 0 then print("{wet} wet cells in area 3 are left: the blocks next to them stay while mining") end
+take_upto(scaffold_chest, scaffold, 256)
+
+// ------------------------------------------------------------------ 1. mine area 3
+print("1/3: mining area 3")
+area("3")
+let left_dig = clear_area(2)        // top down, 2 layers per pass; blocks next to water stay
+if left_dig > 0 then print("Area 3: {left_dig} blocks could not be reached yet; another go after the build.") end
+collect_scaffold()
+dump(dump_chest)
+
+// ------------------------------------------------------------------ 2. build the canal schematic
+print("2/3: building the canal")
+let chests = []
+let p = null
+let b = null
+for x in range(min(mat_a.x, mat_b.x) - 1, max(mat_a.x, mat_b.x) + 2)
+  for y in range(min(mat_a.y, mat_b.y) - 1, max(mat_a.y, mat_b.y) + 2)
+    for z in range(min(mat_a.z, mat_b.z) - 1, max(mat_a.z, mat_b.z) + 2)
+      p = pos(x, y, z)
+      b = block(p)
+      if b != null and b != "ender_chest" and (contains(b, "chest") or b == "barrel" or contains(b, "shulker_box")) then push(chests, p) end
+    end
+  end
+end
+print("{len(chests)} material chests found")
+if len(chests) == 0 then stop("No chests in build_1: are the material chests there?") end
+push(chests, dump_chest)       // materials from earlier runs ended up in the dump chest
+
+// takes what the build still needs, but always leaves 4 slots free (a full inventory must not stop the build)
+let unavailable = []
+func fetch()
+  let need = schem_needed(schem, mode)
+  let seen = null
+  let room = 0
+  for item in keys(need)
+    if contains(unavailable, item) then continue end
+    for c in chests
+      room = (free_slots - 4) * 64
+      if count(item) >= need[item] or room <= 0 then break end
+      seen = chest_contents(c)
+      if seen == null or contains(keys(seen), item) then
+        try
+          take_upto(c, item, min(need[item], count(item) + room))
+        catch err
+        end
+      end
+    end
+    if count(item) == 0 and free_slots > 4 then
+      push(unavailable, item)
+      print("No {item} in the material chests: those {need[item]} blocks are left out.")
+    end
+  end
+end
+
+let left = -1
+let now_left = 0
+let stuck = 0
+building = true
+set("allowBreak", false)        // add mode: Baritone may not dig through blocks that are already there
+loop
+  take_upto(scaffold_chest, scaffold, 128)
+  fetch()
+  now_left = schem_build(schem, mode, "skip")
+  if now_left == 0 then break end
+  if now_left == left then
+    stuck += 1
+    if stuck >= 2 then break end    // nothing more can be built with what the chests hold
+  else
+    stuck = 0
+  end
+  left = now_left
+end
+set("allowBreak", true)
+building = false
+collect_scaffold()
+schem_check(schem, mode)
+if now_left > 0 then print("Canal: {now_left} blocks left out. Missing: {join(unavailable, ', ')}") end
+
+// ------------------------------------------------------------------ 2b. mine area 3 again
+// clear_area never stands where there is nothing solid under its feet: above the old water at y 59 it left
+// blocks. The canal floor is built now, so it has somewhere to stand.
+print("2b/3: mining what is left in area 3")
+dump(dump_chest)
+take_upto(scaffold_chest, scaffold, 256)
+area("3")
+let left_dig2 = clear_area(2)
+collect_scaffold()
+dump(dump_chest)
+if left_dig2 > 0 then
+  stop("Area 3 still has {left_dig2} blocks it cannot get at. Not filling with water: check them first, then run again.")
+end
+
+// ------------------------------------------------------------------ 3. fill area 3 with water
+// flood() fills every air cell of the selection bottom up (open sides are sealed with dirt first)
+print("3/3: filling area 3 with water")
+dump(dump_chest)
+take_upto(scaffold_chest, scaffold, 256)
+restock()                               // the empty buckets
+try
+  take_upto(tool_chest, "water_bucket", 2)   // the first water (one source alone never refills)
+catch err
+  print("No water buckets in the tool chest: flood() needs water within 16 blocks then")
+end
+area("3")
+flood()
+collect_scaffold()
+dump(dump_chest)
+print("Canal done.")

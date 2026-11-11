@@ -106,10 +106,21 @@ final class SleepProcess extends Feature {
         start(mc);
     }
 
+    /** Only this close is a missing bed believed: further away the chunk can be unloaded or not yet sent. */
+    private static final double TRUST_BED_WITHIN = 48;
+
+    /** The bed is certainly not there: its chunk is loaded, it is close by, and the block is not a bed. */
+    private boolean bedGone(Minecraft mc, LocalPlayer p) {
+        if (!mc.level.hasChunkAt(bed)) return false;
+        if (bed.distSqr(p.blockPosition()) > TRUST_BED_WITHIN * TRUST_BED_WITHIN) return false;
+        return !(mc.level.getBlockState(bed).getBlock() instanceof BedBlock);
+    }
+
     private void start(Minecraft mc) {
         bed = Util.pos(cfg.bed);
-        // far away the bed's chunk is not loaded and reads as air: that says nothing, so walk there and look then
-        if (mc.level.hasChunkAt(bed) && !(mc.level.getBlockState(bed).getBlock() instanceof BedBlock)) {
+        // far away the bed's chunk may not be loaded (or not filled in yet) and reads as air: that says nothing,
+        // so walk there and look then
+        if (bedGone(mc, mc.player)) {
             Util.msg("No bed at " + bed.toShortString() + " (it was removed?). Checking again in 2 minutes.");
             cooldown = 20 * 120;
             return;
@@ -146,7 +157,7 @@ final class SleepProcess extends Feature {
         switch (state) {
             case PATHING -> {
                 if (timer > pathTimeout) return fail("Could not reach the bed in time.");
-                if (mc.level.hasChunkAt(bed) && !(mc.level.getBlockState(bed).getBlock() instanceof BedBlock)) {
+                if (bedGone(mc, p)) {
                     return fail("There is no bed at " + bed.toShortString() + ".");
                 }
                 if (calcFailed) return fail("Baritone found no path to the bed.");

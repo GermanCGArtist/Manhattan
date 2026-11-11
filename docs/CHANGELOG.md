@@ -2,6 +2,11 @@
 
 Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
 
+## 2.7.1 – sleep from far away (2026-11-11)
+- `sleep()` said "No bed at ... (it was removed?)" every minute while working ~250 blocks from the bed, and never
+  went: a chunk that far away can read as loaded without its blocks. A missing bed is now only believed within 48
+  blocks; further away it walks there and looks then.
+
 ## 2.7.0 – clear_trees (2026-11-11)
 - New function `clear_trees([chest])`: mines the selection's trees one by one, nearest first, each with its own
   `#sel replace … air` and `buildInLayers` off; picks up the drops and takes the scaffolding down after every tree;
