@@ -24,7 +24,7 @@ public class QueueMod implements ClientModInitializer {
     static final ChestProcess chest = new ChestProcess();
     static final ClearProcess clear = new ClearProcess();
     static final SchemProcess schem = new SchemProcess();
-    static KeyMapping open, capture;
+    static KeyMapping open, capture, spike;
     private boolean registered = false;
     private int noPlayer, areaTick;
 
@@ -37,6 +37,7 @@ public class QueueMod implements ClientModInitializer {
         KeyMapping.Category category = KeyMapping.Category.register(Identifier.fromNamespaceAndPath("baritonequeue", "main"));
         open = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.baritonequeue.open", 74 /* GLFW_KEY_J */, category));
         capture = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.baritonequeue.capture", 75 /* GLFW_KEY_K */, category));
+        spike = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.baritonequeue.imgui", 298 /* GLFW_KEY_F9 */, category));
 
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> SchemCmd.register(dispatcher));
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
@@ -185,6 +186,23 @@ public class QueueMod implements ClientModInitializer {
                                     Util.msg("A Baritone task with no progress for " + cfg.stallMinutes + " min is now skipped.");
                                     return 1;
                                 })))
+                        .then(ClientCommands.literal("ui")
+                                .executes(ctx -> {
+                                    Util.msg("UI mode is '" + cfg.uiMode + "'. /queue ui <vanilla|docked> changes it.");
+                                    return 1;
+                                })
+                                .then(ClientCommands.literal("vanilla").executes(ctx -> {
+                                    cfg.uiMode = "vanilla";
+                                    Config.save();
+                                    Util.msg("UI mode set to 'vanilla'.");
+                                    return 1;
+                                }))
+                                .then(ClientCommands.literal("docked").executes(ctx -> {
+                                    cfg.uiMode = "docked";
+                                    Config.save();
+                                    Util.msg("UI mode set to 'docked'.");
+                                    return 1;
+                                })))
                         .then(ClientCommands.literal("clear").executes(ctx -> {
                             cfg.script.clear();
                             Config.save();
@@ -331,6 +349,9 @@ public class QueueMod implements ClientModInitializer {
             } else if (mc.screen == null) {
                 mc.setScreen(new CaptureScreen());
             }
+        }
+        while (spike.consumeClick()) {
+            ImGuiManager.toggleSpike();
         }
         Capture.tick(mc);
         clear.tick();

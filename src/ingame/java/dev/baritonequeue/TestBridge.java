@@ -278,6 +278,7 @@ public class TestBridge implements ClientModInitializer {
                 if (a.length > 0 && a[0].equals("close")) mc.setScreen(null);
                 return ok("\"screen\":" + q(mc.screen == null ? "" : mc.screen.getClass().getName()));
             });
+            case "imgui": return onGame(() -> handleImGui(mc, a));
             case "quit": return onGame(() -> {
                 if (mc.level != null) mc.disconnectWithSavingScreen();
                 mc.stop();
@@ -311,6 +312,96 @@ public class TestBridge implements ClientModInitializer {
         }
         b.append(",\"script\":").append(QueueMod.runner.running());
         return ok(b.toString());
+    }
+
+    private static String handleImGui(Minecraft mc, String[] a) throws Exception {
+        long win = mc.getWindow().handle();
+        if (a.length > 0) {
+            switch (a[0]) {
+                case "toggle" -> ImGuiManager.toggleSpike();
+                case "open" -> ImGuiManager.setSpikeOpen(true);
+                case "close" -> ImGuiManager.setSpikeOpen(false);
+                case "stop" -> ImGuiManager.triggerStop();
+                case "key" -> {
+                    int key = Integer.parseInt(a[1]);
+                    int action = a.length > 2 ? Integer.parseInt(a[2]) : 1;
+                    int mods = a.length > 3 ? Integer.parseInt(a[3]) : 0;
+                    var m = net.minecraft.client.KeyboardHandler.class.getDeclaredMethod("keyPress", long.class, int.class, net.minecraft.client.input.KeyEvent.class);
+                    m.setAccessible(true);
+                    m.invoke(mc.keyboardHandler, win, action, new net.minecraft.client.input.KeyEvent(key, 0, mods));
+                }
+                case "char" -> {
+                    int cp = Integer.parseInt(a[1]);
+                    var m = net.minecraft.client.KeyboardHandler.class.getDeclaredMethod("charTyped", long.class, net.minecraft.client.input.CharacterEvent.class);
+                    m.setAccessible(true);
+                    m.invoke(mc.keyboardHandler, win, new net.minecraft.client.input.CharacterEvent(cp));
+                }
+                case "move" -> {
+                    double x = Double.parseDouble(a[1]);
+                    double y = Double.parseDouble(a[2]);
+                    var move = net.minecraft.client.MouseHandler.class.getDeclaredMethod("onMove", long.class, double.class, double.class);
+                    move.setAccessible(true);
+                    move.invoke(mc.mouseHandler, win, x, y);
+                }
+                case "press" -> {
+                    double x = Double.parseDouble(a[1]);
+                    double y = Double.parseDouble(a[2]);
+                    int btn = a.length > 3 ? Integer.parseInt(a[3]) : 0;
+                    var move = net.minecraft.client.MouseHandler.class.getDeclaredMethod("onMove", long.class, double.class, double.class);
+                    var button = net.minecraft.client.MouseHandler.class.getDeclaredMethod("onButton", long.class, net.minecraft.client.input.MouseButtonInfo.class, int.class);
+                    move.setAccessible(true);
+                    button.setAccessible(true);
+                    move.invoke(mc.mouseHandler, win, x, y);
+                    button.invoke(mc.mouseHandler, win, new net.minecraft.client.input.MouseButtonInfo(btn, 0), 1);
+                }
+                case "release" -> {
+                    double x = Double.parseDouble(a[1]);
+                    double y = Double.parseDouble(a[2]);
+                    int btn = a.length > 3 ? Integer.parseInt(a[3]) : 0;
+                    var move = net.minecraft.client.MouseHandler.class.getDeclaredMethod("onMove", long.class, double.class, double.class);
+                    var button = net.minecraft.client.MouseHandler.class.getDeclaredMethod("onButton", long.class, net.minecraft.client.input.MouseButtonInfo.class, int.class);
+                    move.setAccessible(true);
+                    button.setAccessible(true);
+                    move.invoke(mc.mouseHandler, win, x, y);
+                    button.invoke(mc.mouseHandler, win, new net.minecraft.client.input.MouseButtonInfo(btn, 0), 0);
+                }
+                case "click" -> {
+                    double x = Double.parseDouble(a[1]);
+                    double y = Double.parseDouble(a[2]);
+                    int btn = a.length > 3 ? Integer.parseInt(a[3]) : 0;
+                    var move = net.minecraft.client.MouseHandler.class.getDeclaredMethod("onMove", long.class, double.class, double.class);
+                    var button = net.minecraft.client.MouseHandler.class.getDeclaredMethod("onButton", long.class, net.minecraft.client.input.MouseButtonInfo.class, int.class);
+                    move.setAccessible(true);
+                    button.setAccessible(true);
+                    move.invoke(mc.mouseHandler, win, x, y);
+                    button.invoke(mc.mouseHandler, win, new net.minecraft.client.input.MouseButtonInfo(btn, 0), 1);
+                    button.invoke(mc.mouseHandler, win, new net.minecraft.client.input.MouseButtonInfo(btn, 0), 0);
+                }
+                case "resize" -> {
+                    int w = Integer.parseInt(a[1]);
+                    int h = Integer.parseInt(a[2]);
+                    org.lwjgl.glfw.GLFW.glfwSetWindowSize(win, w, h);
+                }
+                default -> {
+                    return err("unknown imgui subcommand: " + a[0]);
+                }
+            }
+        }
+        float[] wr = ImGuiManager.windowRect();
+        float[] sr = ImGuiManager.stopButtonRect();
+        return ok("\"initialized\":" + ImGuiManager.isInitialized()
+                + ",\"spikeOpen\":" + ImGuiManager.isSpikeOpen()
+                + ",\"focused\":" + ImGuiManager.isFocused()
+                + ",\"framesRendered\":" + ImGuiManager.framesRendered()
+                + ",\"displayW\":" + ImGuiManager.displayWidth()
+                + ",\"displayH\":" + ImGuiManager.displayHeight()
+                + ",\"winX\":" + wr[0] + ",\"winY\":" + wr[1] + ",\"winW\":" + wr[2] + ",\"winH\":" + wr[3]
+                + ",\"stopX\":" + sr[0] + ",\"stopY\":" + sr[1] + ",\"stopW\":" + sr[2] + ",\"stopH\":" + sr[3]
+                + ",\"runnerRunning\":" + RunnerView.running()
+                + ",\"runnerLine\":" + RunnerView.line()
+                + ",\"runnerActions\":" + RunnerView.actionsDone()
+                + ",\"uiMode\":" + q(Config.cfg.uiMode)
+                + ",\"note\":" + q(ImGuiManager.noteText()));
     }
 
     /** Opens the world, or creates it first: a flat creative world with cheats, no structures. */

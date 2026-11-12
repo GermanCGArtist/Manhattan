@@ -98,6 +98,60 @@ def test_smoke(t):
     return "script printed, editor opened"
 
 
+def test_imgui_spike(t):
+    """F9 opens the Dear ImGui spike window showing Runner state and a Stop button; keys do not leak while focused; resize works."""
+    t.b("screen close")
+    t.b("imgui close")
+    t.run("imgui-spike.txt")
+    t.wait_chat("TEST imgui started", 15)
+    time.sleep(1.5)   # let wait 1 complete so actionsDone >= 1 and wait 30 is active
+
+    # Press F9 (GLFW_KEY_F9 = 298) to open the ImGui spike window
+    t.b("imgui key 298 1 0")
+    t.b("imgui key 298 0 0")
+    st = t.b.wait(lambda: (lambda s: s if s["spikeOpen"] and s["initialized"] and s["framesRendered"] >= 3 else None)(t.b("imgui")),
+                  10, step=0.2, what="ImGui spike window to initialize and render")
+    if not st["runnerRunning"] or st["runnerLine"] < 2 or st["runnerActions"] < 1:
+        raise Fail("ImGui RunnerView state wrong while script runs: %s" % st)
+    if not st["focused"]:
+        raise Fail("ImGui window should have focus when opened: %s" % st)
+
+    # While ImGui has focus, pressing J (74) or K (75) must not open QueueScreen or CaptureScreen
+    t.b("imgui key 74 1 0")
+    t.b("imgui key 74 0 0")
+    t.b("imgui key 75 1 0")
+    t.b("imgui key 75 0 0")
+    time.sleep(0.3)
+    scr = t.b("screen")["screen"]
+    if scr != "":
+        raise Fail("keys leaked into the game while ImGui had focus (opened %s)" % scr)
+
+    # Window resize while ImGui is rendering must not crash and must update display size
+    w0, h0 = st["displayW"], st["displayH"]
+    t.b("imgui resize 960 540")
+    t.b.wait(lambda: (lambda s: s if s["displayW"] == 960 and s["displayH"] == 540 else None)(t.b("imgui")),
+             10, step=0.2, what="ImGui display size 960x540 after resize")
+    t.b("imgui resize %d %d" % (w0, h0))
+    st = t.b.wait(lambda: (lambda s: s if s["displayW"] == w0 and s["displayH"] == h0 else None)(t.b("imgui")),
+                  10, step=0.2, what="ImGui display size restored")
+
+    # Click the Stop button inside the ImGui window to stop the running script
+    sx, sy = st["stopX"] + 15, st["stopY"] + 10
+    t.b("imgui move %.1f %.1f" % (sx, sy))
+    time.sleep(0.15)
+    t.b("imgui press %.1f %.1f 0" % (sx, sy))
+    time.sleep(0.15)
+    t.b("imgui release %.1f %.1f 0" % (sx, sy))
+    t.script_done(10)
+    t.wait_chat("Script stopped", 5)
+
+    # Press F9 again to close the ImGui spike window
+    t.b("imgui key 298 1 0")
+    t.b("imgui key 298 0 0")
+    t.b.wait(lambda: not t.b("imgui")["spikeOpen"], 5, step=0.2, what="ImGui spike window to close")
+    return "ImGui rendered (%d frames), Runner state shown, focus blocked J/K leak, resize 960x540 ok, Stop button halted script" % st["framesRendered"]
+
+
 def test_fill_water(t):
     """fill_water("dirt") fills a 3x3, 2-deep pool, never a cell above water."""
     reset_area(t)
@@ -1222,7 +1276,7 @@ def test_trees_forest(t):
 TREE_TESTS = [("trees_small", test_trees_small), ("trees_forest", test_trees_forest)]
 
 
-TESTS = [("smoke", test_smoke), ("fill_water", test_fill_water), ("eat", test_eat), ("defend", test_defend), ("clear_resume", test_clear_resume), ("dump", test_dump), ("hotbar_tools", test_hotbar_tools), ("air", test_air), ("clear_wet", test_clear_wet),
+TESTS = [("smoke", test_smoke), ("imgui_spike", test_imgui_spike), ("fill_water", test_fill_water), ("eat", test_eat), ("defend", test_defend), ("clear_resume", test_clear_resume), ("dump", test_dump), ("hotbar_tools", test_hotbar_tools), ("air", test_air), ("clear_wet", test_clear_wet),
          ("schem_list", test_schem_list), ("schem_add", test_schem_add), ("schem_fix", test_schem_fix), ("schem_fix_wrong", test_schem_fix_wrong), ("schem_exact", test_schem_exact)]
 
 TESTS += CANAL_TESTS

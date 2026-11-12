@@ -2,6 +2,23 @@
 
 Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
 
+## 2.8.0 – Dear ImGui spike (Stage 0) (2026-11-12)
+- Bundled `imgui-java` 1.90.0 (`imgui-java-binding`, `imgui-java-lwjgl3`, `imgui-java-natives-windows`) directly into the
+  mod jar (`ImGuiManager`, client mixins `RenderSystemMixin`, `KeyboardHandlerMixin`, `MouseHandlerMixin`). Natives are
+  extracted per game folder (`config/manhattan-natives/imgui-java64.dll`) and layout state goes to
+  `config/manhattan-imgui.ini`, avoiding conflicts with other ImGui mods such as Flashback or parallel test instances.
+- Press **F9** in game to toggle the Stage 0 ImGui spike window showing `RunnerView` state (`running`, `line`, `actionsDone`,
+  `elapsed`, Baritone controller, current step) with **Stop** and **Skip** buttons.
+- Added `RunnerView` view-model and config switch `ui.mode = vanilla | docked` (default `vanilla`, reachable via
+  `option("ui.mode", ...)` and `/queue ui <vanilla|docked>`). Vanilla screens (J editor, K capture) remain unchanged.
+- New in-game test `imgui_spike`.
+
+## 2.7.3 – add-mode builds without layers (2026-11-11)
+- `schem_build` in add mode no longer has Baritone build layer by layer. On the 800-block canal the bottom layer never
+  finished (cells under water or boxed in), so Baritone searched paths to them for hours ("Starting layer 0" 90
+  times, never layer 1) and built nothing above. Add mode places only against existing blocks anyway, so it still
+  goes up from below; fix and exact mode keep their layers.
+
 ## 2.7.2 – count("food") (2026-11-11)
 - `count("food")` and `has("food")` counted items with "food" in their name, so always 0. They now count anything
   edible, as `want("food")` and `hotbar(9, "food")` already did.

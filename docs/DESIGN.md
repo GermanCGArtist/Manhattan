@@ -1,6 +1,6 @@
 # How Manhattan is built
 
-Minecraft 26.1.1, Fabric (Mojang names, unobfuscated), Java 25, Baritone API 1.18.0. Client-only, no mixins.
+Minecraft 26.1.1, Fabric (Mojang names, unobfuscated), Java 25, Baritone API 1.18.0. Client-only, with client mixins (`baritonequeue.mixins.json`) for Dear ImGui rendering and input routing.
 
 ## Packages
 - `dev.baritonequeue` – the language, the editor and the runner. Entry point `QueueMod`.
@@ -36,6 +36,9 @@ acts on its own: the script starts them. The packages talk through small `Api` c
   `option("group.field", v)`.
 - Editor: `QueueScreen`, `Syntax` (colours from the lexer), `Suggest` (Tab completion, looked-at block as `pos(…)`),
   `ScriptCheck` (Test), `Places` (raycast up to 96 blocks), `Estimate` / `ProgressView` (time and progress).
+- Dear ImGui (`ImGuiManager`, `RunnerView`): `imgui-java` 1.90.0 rendered at `RenderSystem.flipFrame` before buffer swap,
+  with input forwarded from `KeyboardHandlerMixin` and `MouseHandlerMixin` (`installCallbacks = false` so GLFW callbacks
+  are never overwritten). `ui.mode = vanilla | docked` (default `vanilla`); key **F9** toggles the Stage 0 runner spike window.
 - Capture menu: `CaptureScreen` (the menu), `Capture` (roles, sheet files per world and set, rapid aiming,
   particle outlines, full context), `CaptureSheet` (the sheet's text without the game; tested in `LangTest`).
 - `Migrate` converts pre-2.0 scripts and presets once on load.

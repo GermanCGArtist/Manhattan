@@ -138,11 +138,9 @@ final class QueueScreen extends Screen {
         }).bounds(left, by, bw, 20).build());
         addRenderableWidget(Button.builder(Component.literal("Test"), b -> test())
                 .bounds(left + (bw + gap), by, bw, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("Stop"), b -> {
-            if (QueueMod.runner.running()) QueueMod.runner.halt("Script stopped.");
-            Util.baritone().getPathingBehavior().cancelEverything();
-        }).bounds(left + 2 * (bw + gap), by, bw, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("Skip"), b -> QueueMod.runner.skip())
+        addRenderableWidget(Button.builder(Component.literal("Stop"), b -> RunnerView.stop())
+                .bounds(left + 2 * (bw + gap), by, bw, 20).build());
+        addRenderableWidget(Button.builder(Component.literal("Skip"), b -> RunnerView.skip())
                 .bounds(left + 3 * (bw + gap), by, bw, 20).build());
         addRenderableWidget(Button.builder(Component.literal("Pick block"), b -> {
             // close the editor; aiming at a block and pressing the key brings it back with the position put in

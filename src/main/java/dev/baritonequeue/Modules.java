@@ -56,11 +56,21 @@ final class Modules {
                 }
             }
         }
+        out.put("ui.mode", Config.cfg.uiMode);
         return out;
     }
 
     private static Object[] find(String key, int line) {
         String k = key.trim();
+        if (k.equalsIgnoreCase("ui.mode")) {
+            try {
+                Field f = Config.class.getDeclaredField("uiMode");
+                f.setAccessible(true);
+                return new Object[]{Config.cfg, f, new Group("ui", () -> Config.cfg, Config::save)};
+            } catch (NoSuchFieldException e) {
+                throw new RuntimeException(e);
+            }
+        }
         int dot = k.indexOf('.');
         if (dot < 0) throw Values.error("An option is named group.name, for example \"survival.eat\". Groups: survival, buildtools, loadchest. option_list() shows all.", line);
         String group = k.substring(0, dot).toLowerCase(), name = k.substring(dot + 1);
@@ -106,7 +116,11 @@ final class Modules {
             } else if (t == double.class) {
                 f.setDouble(r[0], Values.toNum(value, key, line));
             } else if (t == String.class) {
-                f.set(r[0], value == null ? null : Values.str(value));
+                String s = value == null ? null : Values.str(value);
+                if (f.getName().equals("uiMode") && (s == null || (!s.equals("vanilla") && !s.equals("docked")))) {
+                    throw Values.error("ui.mode must be \"vanilla\" or \"docked\".", line);
+                }
+                f.set(r[0], s);
             } else if (t == int[].class) {
                 if (value == null) f.set(r[0], null);
                 else if (value instanceof Values.Pos p) f.set(r[0], new int[]{p.x(), p.y(), p.z()});

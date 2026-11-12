@@ -1,0 +1,13 @@
+{
+  "required": true,
+  "package": "dev.baritonequeue.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "client": [
+    "RenderSystemMixin",
+    "KeyboardHandlerMixin",
+    "MouseHandlerMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

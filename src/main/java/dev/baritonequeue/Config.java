@@ -33,6 +33,9 @@ final class Config {
     boolean captureRapid = false;
     String captureType = "dump";
 
+    /** UI mode: "vanilla" (default, J/K screens) or "docked" (Dear ImGui layout). */
+    String uiMode = "vanilla";
+
     /** Which default presets were already offered; newer ones are added once on load (deleted ones stay deleted). */
     int presetsVersion = 1;
 
@@ -70,6 +73,7 @@ final class Config {
                     if (cfg.captureDir == null) cfg.captureDir = "";
                     if (cfg.captureSet == null || cfg.captureSet.isBlank()) cfg.captureSet = "main";
                     if (cfg.captureType == null) cfg.captureType = "dump";
+                    if (cfg.uiMode == null || (!cfg.uiMode.equals("vanilla") && !cfg.uiMode.equals("docked"))) cfg.uiMode = "vanilla";
                     if (cfg.lastArea == null) cfg.lastArea = new ArrayList<>();
                 }
                 if (cfg.scriptVersion < 2) migrate();
@@ -113,7 +117,13 @@ final class Config {
     }
 
     static void save() {
-        try (Writer w = Files.newBufferedWriter(path())) {
+        Path p;
+        try {
+            p = path();
+        } catch (Throwable ignored) {
+            return;   // offline tests outside Fabric
+        }
+        try (Writer w = Files.newBufferedWriter(p)) {
             GSON.toJson(cfg, w);
         } catch (Exception e) {
             e.printStackTrace();

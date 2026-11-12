@@ -17,13 +17,7 @@ final class ProgressView {
 
     /** The Baritone process in control ("Builder", "SurvivalKit sleep", ...), or "idle". */
     private static String controller() {
-        try {
-            var control = Util.baritone().getPathingControlManager().mostRecentInControl();
-            if (control.isEmpty()) return "idle";
-            return String.valueOf(control.get().displayName());
-        } catch (Throwable t) {
-            return "";
-        }
+        return RunnerView.controller();
     }
 
     static void draw(GuiGraphicsExtractor g, Font font, int x, int y, int w) {
