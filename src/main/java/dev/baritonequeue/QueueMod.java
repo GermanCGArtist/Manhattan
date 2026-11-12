@@ -342,6 +342,9 @@ public class QueueMod implements ClientModInitializer {
                     QueueScreen.pickResult(t);
                     mc.setScreen(new QueueScreen());
                 }
+            } else if (ImGuiManager.isDockedViewportActive()) {
+                mc.mouseHandler.releaseMouse();
+                ImGuiManager.requestWindowFocus("Script Editor");
             } else if (mc.screen == null) {
                 mc.setScreen(new QueueScreen());
             }
@@ -350,6 +353,9 @@ public class QueueMod implements ClientModInitializer {
             if (Capture.aiming) {
                 Capture.aiming = false;
                 if (!ImGuiManager.isDockedViewportActive()) mc.setScreen(new CaptureScreen());
+            } else if (ImGuiManager.isDockedViewportActive()) {
+                mc.mouseHandler.releaseMouse();
+                ImGuiManager.requestWindowFocus("Capture");
             } else if (mc.screen == null) {
                 mc.setScreen(new CaptureScreen());
             }

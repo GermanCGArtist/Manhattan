@@ -5,6 +5,7 @@ import com.mojang.blaze3d.opengl.GlTexture;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.platform.Window;
 import imgui.ImDrawList;
+import imgui.ImFont;
 import imgui.ImGui;
 import imgui.ImGuiIO;
 import imgui.ImGuiStyle;
@@ -46,7 +47,7 @@ import static dev.baritonequeue.Config.cfg;
  * ProgressModel segmented step bar + player telemetry).
  */
 public final class ImGuiManager {
-    public static final float TOP_BAR_H = 30f;
+    public static float TOP_BAR_H = 30f;
 
     private static boolean nativesPrepared;
     private static boolean initialized;
@@ -57,6 +58,7 @@ public final class ImGuiManager {
     private static boolean focused;
     private static boolean focusRequested;
     private static boolean unfocusRequested;
+    private static String pendingWindowFocus = null;
     private static boolean stopRequested;
     private static boolean resetLayoutRequested;
     private static int layoutResetCount;
@@ -142,6 +144,39 @@ public final class ImGuiManager {
         }
     }
 
+    public static void requestWindowFocus(String windowName) {
+        pendingWindowFocus = windowName;
+        gameFocused = false;
+        focused = true;
+        unfocusRequested = false;
+    }
+
+    public static void pushMonoFont() {
+        if (initialized && Backend.monoFont != null) {
+            ImGui.pushFont(Backend.monoFont);
+        }
+    }
+
+    public static void popMonoFont() {
+        if (initialized && Backend.monoFont != null) {
+            ImGui.popFont();
+        }
+    }
+
+    public static float getUiScale() {
+        return cfg.uiScale > 0.5f ? cfg.uiScale : 1.0f;
+    }
+
+    public static void setUiScale(float scale) {
+        cfg.uiScale = scale > 0.5f ? scale : 1.0f;
+        Config.save();
+        TOP_BAR_H = Math.round(30f * cfg.uiScale);
+        Minecraft mc = Minecraft.getInstance();
+        if (mc != null && mc.getWindow() != null) {
+            updateViewportMetrics(mc.getWindow());
+        }
+    }
+
     public static boolean isInitialized() {
         return initialized;
     }
@@ -209,6 +244,7 @@ public final class ImGuiManager {
 
     public static void updateViewportMetrics(Window win) {
         if (win == null) return;
+        TOP_BAR_H = Math.round(30f * (cfg.uiScale > 0.5f ? cfg.uiScale : 1.0f));
         int sw = Math.max(1, win.getScreenWidth());
         int sh = Math.max(1, win.getScreenHeight());
         boolean sizeChanged = sw != lastDisplayW || sh != lastDisplayH;
@@ -364,7 +400,16 @@ public final class ImGuiManager {
                 if (!Files.exists(dll) || Files.size(dll) != bytes.length) {
                     Files.write(dll, bytes);
                 }
+                // imgui.library.path is global: other mods with their own imgui-java (Flashback) read it too and
+                // then look for their dll in our folder. So set it only while our ImGui class loads its library.
+                String before = System.getProperty("imgui.library.path");
                 System.setProperty("imgui.library.path", dir.toAbsolutePath().toString());
+                try {
+                    Class.forName("imgui.ImGui", true, ImGuiManager.class.getClassLoader());
+                } finally {
+                    if (before == null) System.clearProperty("imgui.library.path");
+                    else System.setProperty("imgui.library.path", before);
+                }
             }
         }
         nativesPrepared = true;
@@ -520,6 +565,7 @@ public final class ImGuiManager {
         private static ImGuiContext ctx;
         private static ImGuiImplGlfw glfw;
         private static ImGuiImplGl3 gl3;
+        private static imgui.ImFont uiFont, monoFont;
         private static int blitReadFbo;
         private static boolean dockLayoutInitialized;
         private static int dockBuiltW = -1, dockBuiltH = -1;
@@ -536,6 +582,27 @@ public final class ImGuiManager {
             io.addConfigFlags(ImGuiConfigFlags.NavEnableKeyboard | ImGuiConfigFlags.DockingEnable);
 
             applyStyle(ImGui.getStyle());
+
+            try {
+                Path segoe = Path.of("C:\\Windows\\Fonts\\segoeui.ttf");
+                if (Files.exists(segoe)) {
+                    uiFont = io.getFonts().addFontFromFileTTF(segoe.toString(), 16.0f);
+                    if (uiFont != null) {
+                        io.setFontDefault(uiFont);
+                    }
+                }
+                Path consola = Path.of("C:\\Windows\\Fonts\\consola.ttf");
+                if (Files.exists(consola)) {
+                    monoFont = io.getFonts().addFontFromFileTTF(consola.toString(), 15.0f);
+                }
+                if (uiFont == null) {
+                    io.getFonts().addFontDefault();
+                }
+            } catch (Throwable ignored) {
+                try {
+                    io.getFonts().addFontDefault();
+                } catch (Throwable ignored2) {}
+            }
 
             glfw = new ImGuiImplGlfw();
             GLFWMonitorCallback prevMonitor = GLFW.glfwSetMonitorCallback(null);
@@ -558,6 +625,8 @@ public final class ImGuiManager {
             s.setGrabRounding(3f);
             s.setWindowBorderSize(1f);
             s.setFrameBorderSize(1f);
+            s.setFramePadding(6f, 3f);
+            s.setItemSpacing(6f, 5f);
 
             s.setColor(ImGuiCol.WindowBg, 0.137f, 0.149f, 0.180f, 0.96f);         // #23262e
             s.setColor(ImGuiCol.ChildBg, 0.173f, 0.188f, 0.227f, 1.00f);          // #2c303a
@@ -595,6 +664,7 @@ public final class ImGuiManager {
             glfw.newFrame();
             gl3.newFrame();
             ImGui.newFrame();
+            ImGui.getIO().setFontGlobalScale(cfg.uiScale > 0.5f ? cfg.uiScale : 1.0f);
 
             if (unfocusRequested && !spikeOpen) {
                 ImGui.setWindowFocus(null);
@@ -615,10 +685,13 @@ public final class ImGuiManager {
             ImGui.render();
 
             GlStateManager._glBindFramebuffer(GL30.GL_FRAMEBUFFER, 0);
-            if (dockedActive) {
+            if (dockedActive && spikeOpen) {
                 blitGameViewport(mc, win);
             }
             gl3.renderDrawData(ImGui.getDrawData());
+            if (dockedActive && !spikeOpen) {
+                blitGameViewport(mc, win);
+            }
 
             framesRendered++;
             lastDisplayW = (int) io.getDisplaySizeX();
@@ -627,10 +700,6 @@ public final class ImGuiManager {
 
         private static void blitGameViewport(Minecraft mc, Window win) {
             GlStateManager._disableScissorTest();
-            GlStateManager._viewport(0, 0, win.getWidth(), win.getHeight());
-            GL11.glClearColor(0.137f, 0.149f, 0.180f, 1.0f);
-            GlStateManager._clear(GL11.GL_COLOR_BUFFER_BIT);
-
             RenderTarget mainTarget = mc.getMainRenderTarget();
             if (mainTarget != null && mainTarget.getColorTexture() instanceof GlTexture glTex) {
                 if (blitReadFbo == 0) {
@@ -678,40 +747,64 @@ public final class ImGuiManager {
                     ImGui.textDisabled("Idle (" + snap.totalSteps() + " steps)");
                 }
 
-                float rightButtonsW = 440f;
-                float startX = Math.max(ImGui.getCursorPosX() + 10f, lastDisplayW - rightButtonsW);
+                String scaleLabel = Math.round(getUiScale() * 100f) + "%";
+                String layoutText = "Layout: " + layoutLabel();
+                float spacing = 6f;
+                float btnH = Math.max(22f, TOP_BAR_H - 8f);
+
+                float wLayout = ImGui.calcTextSizeX(layoutText);
+                float wScale = ImGui.calcTextSizeX(scaleLabel) + 16f;
+                float wReset = ImGui.calcTextSizeX("Reset layout") + 16f;
+                float wSkip = ImGui.calcTextSizeX("Skip") + 16f;
+                float wStop = ImGui.calcTextSizeX("Stop") + 16f;
+                float wFs = ImGui.calcTextSizeX("Fullscreen game (F8)") + 16f;
+
+                float totalRightW = wLayout + spacing + wScale + spacing + wReset + spacing + wSkip + spacing + wStop + spacing + wFs + 16f;
+                float startX = Math.max(ImGui.getCursorPosX() + 10f, lastDisplayW - totalRightW);
                 ImGui.sameLine(startX);
-                ImGui.textDisabled("Layout: " + layoutLabel());
-                ImGui.sameLine(0f, 6f);
-                resetBtnX = ImGui.getCursorScreenPosX();
-                resetBtnY = ImGui.getCursorScreenPosY();
-                resetBtnW = 86f;
-                resetBtnH = 22f;
-                if (ImGui.button("Reset layout", resetBtnW, resetBtnH)) {
+                ImGui.textDisabled(layoutText);
+
+                ImGui.sameLine(0f, spacing);
+                if (ImGui.button(scaleLabel, wScale, btnH)) {
+                    float cur = getUiScale();
+                    if (cur < 1.15f) setUiScale(1.25f);
+                    else if (cur < 1.4f) setUiScale(1.5f);
+                    else setUiScale(1.0f);
+                }
+
+                ImGui.sameLine(0f, spacing);
+                if (ImGui.button("Reset layout", wReset, btnH)) {
                     resetLayout();
                 }
-                ImGui.sameLine(0f, 6f);
-                if (ImGui.button("Skip", 46f, 22f)) {
+                resetBtnX = ImGui.getItemRectMinX();
+                resetBtnY = ImGui.getItemRectMinY();
+                resetBtnW = ImGui.getItemRectSizeX();
+                resetBtnH = ImGui.getItemRectSizeY();
+
+                ImGui.sameLine(0f, spacing);
+                if (ImGui.button("Skip", wSkip, btnH)) {
                     RunnerView.skip();
                 }
-                ImGui.sameLine(0f, 6f);
-                if (!spikeOpen) {
-                    stopBtnX = ImGui.getCursorScreenPosX();
-                    stopBtnY = ImGui.getCursorScreenPosY();
-                    stopBtnW = 46f;
-                    stopBtnH = 22f;
-                }
-                if (ImGui.button("Stop", 46f, 22f)) {
+
+                ImGui.sameLine(0f, spacing);
+                if (ImGui.button("Stop", wStop, btnH)) {
                     RunnerView.stop();
                 }
-                ImGui.sameLine(0f, 6f);
-                fsBtnX = ImGui.getCursorScreenPosX();
-                fsBtnY = ImGui.getCursorScreenPosY();
-                fsBtnW = 136f;
-                fsBtnH = 22f;
-                if (ImGui.button("Fullscreen game (F8)", fsBtnW, fsBtnH)) {
+                if (!spikeOpen) {
+                    stopBtnX = ImGui.getItemRectMinX();
+                    stopBtnY = ImGui.getItemRectMinY();
+                    stopBtnW = ImGui.getItemRectSizeX();
+                    stopBtnH = ImGui.getItemRectSizeY();
+                }
+
+                ImGui.sameLine(0f, spacing);
+                if (ImGui.button("Fullscreen game (F8)", wFs, btnH)) {
                     toggleFullscreenGame();
                 }
+                fsBtnX = ImGui.getItemRectMinX();
+                fsBtnY = ImGui.getItemRectMinY();
+                fsBtnW = ImGui.getItemRectSizeX();
+                fsBtnH = ImGui.getItemRectSizeY();
             }
             ImGui.end();
             ImGui.popStyleVar(2);
@@ -876,11 +969,16 @@ public final class ImGuiManager {
             }
             ImGui.end();
 
-            // Draw 1px focus border around the Top-Right Game Viewport
+            if (pendingWindowFocus != null) {
+                ImGui.setWindowFocus(pendingWindowFocus);
+                pendingWindowFocus = null;
+            }
+
+            // Draw 1.5px focus border around the outside of the Top-Right Game Viewport
             int borderCol = isGameFocused()
                     ? ImGui.colorConvertFloat4ToU32(0.290f, 0.620f, 0.878f, 1.0f)   // #4a9ee0 active focus
                     : ImGui.colorConvertFloat4ToU32(0.204f, 0.224f, 0.267f, 1.0f);  // #343944 unfocused
-            ImGui.getForegroundDrawList().addRect(vpX, vpY, vpX + vpW, vpY + vpH, borderCol, 0f, 0, 1.5f);
+            ImGui.getForegroundDrawList().addRect(vpX - 1f, vpY - 1f, vpX + vpW + 1f, vpY + vpH + 1f, borderCol, 0f, 0, 1.5f);
         }
 
         private static void renderDashboardSection(ProgressModel.Snapshot snap) {
@@ -970,13 +1068,13 @@ public final class ImGuiManager {
                 ImGui.textWrapped("Step: " + (cur.isEmpty() ? "(none)" : cur));
 
                 ImGui.spacing();
-                stopBtnX = ImGui.getCursorScreenPosX();
-                stopBtnY = ImGui.getCursorScreenPosY();
-                stopBtnW = 90f;
-                stopBtnH = 24f;
-                if (ImGui.button("Stop", stopBtnW, stopBtnH)) {
+                if (ImGui.button("Stop", 90f, 24f)) {
                     RunnerView.stop();
                 }
+                stopBtnX = ImGui.getItemRectMinX();
+                stopBtnY = ImGui.getItemRectMinY();
+                stopBtnW = ImGui.getItemRectSizeX();
+                stopBtnH = ImGui.getItemRectSizeY();
                 ImGui.sameLine();
                 if (ImGui.button("Skip", 90f, 24f)) {
                     RunnerView.skip();

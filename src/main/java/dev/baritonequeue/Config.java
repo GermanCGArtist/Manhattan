@@ -36,6 +36,9 @@ final class Config {
     /** UI mode: "vanilla" (default, J/K screens) or "docked" (Dear ImGui layout). */
     String uiMode = "vanilla";
 
+    /** UI scale: 1.0f, 1.25f, 1.5f. */
+    float uiScale = 1.0f;
+
     /** Which default presets were already offered; newer ones are added once on load (deleted ones stay deleted). */
     int presetsVersion = 1;
 
@@ -74,6 +77,7 @@ final class Config {
                     if (cfg.captureSet == null || cfg.captureSet.isBlank()) cfg.captureSet = "main";
                     if (cfg.captureType == null) cfg.captureType = "dump";
                     if (cfg.uiMode == null || (!cfg.uiMode.equals("vanilla") && !cfg.uiMode.equals("docked"))) cfg.uiMode = "vanilla";
+                    if (cfg.uiScale <= 0.5f || cfg.uiScale > 2.5f) cfg.uiScale = 1.0f;
                     if (cfg.lastArea == null) cfg.lastArea = new ArrayList<>();
                 }
                 if (cfg.scriptVersion < 2) migrate();

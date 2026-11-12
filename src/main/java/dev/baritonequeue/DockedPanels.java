@@ -9,14 +9,17 @@ import imgui.flag.ImGuiTableFlags;
 import imgui.type.ImBoolean;
 import imgui.type.ImString;
 import net.minecraft.client.Minecraft;
+import org.lwjgl.glfw.GLFW;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static dev.baritonequeue.Config.cfg;
 
@@ -62,6 +65,7 @@ public final class DockedPanels {
     private static List<ScriptCheck.Entry> checkResults = null;
     private static String editorStatus = "";
     private static boolean imguiPicking = false;
+    private static boolean editorInputActive = false;
 
     // Recorded button rects for TestBridge verification
     public static float runBtnX, runBtnY, runBtnW, runBtnH;
@@ -88,9 +92,13 @@ public final class DockedPanels {
     private static final ImString newCaptureSetBuf = new ImString("", 64);
     private static final ImString captureSheetBuf = new ImString(32768);
     private static String lastCaptureNotice = "";
+    private static String lastSyncedCaptureSheet = null;
 
     // ------------------------------------------------------------------ Log state
     private static LogBuffer.Filter logFilter = LogBuffer.Filter.ALL;
+    private static final Set<Long> selectedLogIds = new LinkedHashSet<>();
+    private static long lastClickedLogId = -1;
+    private static String lastCopiedLog = "";
 
     // ------------------------------------------------------------------ Public API for TestBridge & QueueMod
 
@@ -130,7 +138,9 @@ public final class DockedPanels {
             recomputeSyntaxAndSuggestions(cfgJoined);
         } else if (activeTabIndex == 0 && !cfgJoined.equals(lastSyncedText)) {
             tabs.get(0).text = cfgJoined;
-            editorBuffer.set(cfgJoined);
+            if (!editorInputActive) {
+                editorBuffer.set(cfgJoined);
+            }
             lastSyncedText = cfgJoined;
             recomputeSyntaxAndSuggestions(cfgJoined);
         }
@@ -228,7 +238,9 @@ public final class DockedPanels {
         if (text == null) text = "";
         ScriptTab t = tabs.get(activeTabIndex);
         t.text = text;
-        editorBuffer.set(text);
+        if (!editorBuffer.get().equals(text)) {
+            editorBuffer.set(text);
+        }
         syncToConfig(text);
         if (t.file != null) {
             try { Files.writeString(t.file, text, StandardCharsets.UTF_8); } catch (Throwable ignored) {}
@@ -356,6 +368,81 @@ public final class DockedPanels {
         return logFilter;
     }
 
+    public static void selectLogEntry(long id, boolean toggle, boolean range) {
+        List<LogBuffer.Entry> entries = LogBuffer.entries(logFilter);
+        if (range && lastClickedLogId >= 0) {
+            int idx1 = -1, idx2 = -1;
+            for (int i = 0; i < entries.size(); i++) {
+                long eid = entries.get(i).id();
+                if (eid == lastClickedLogId) idx1 = i;
+                if (eid == id) idx2 = i;
+            }
+            if (idx1 >= 0 && idx2 >= 0) {
+                int start = Math.min(idx1, idx2);
+                int end = Math.max(idx1, idx2);
+                for (int i = start; i <= end; i++) {
+                    selectedLogIds.add(entries.get(i).id());
+                }
+                lastClickedLogId = id;
+                return;
+            }
+        }
+        if (toggle) {
+            if (selectedLogIds.contains(id)) {
+                selectedLogIds.remove(id);
+            } else {
+                selectedLogIds.add(id);
+            }
+            lastClickedLogId = id;
+        } else {
+            selectedLogIds.clear();
+            selectedLogIds.add(id);
+            lastClickedLogId = id;
+        }
+    }
+
+    public static int selectedLogCount() {
+        return selectedLogIds.size();
+    }
+
+    public static String copySelectedLogs() {
+        if (selectedLogIds.isEmpty()) {
+            String text = LogBuffer.copyToClipboard(logFilter);
+            lastCopiedLog = text;
+            return text;
+        }
+        StringBuilder sb = new StringBuilder();
+        List<LogBuffer.Entry> all = LogBuffer.entries(LogBuffer.Filter.ALL);
+        for (LogBuffer.Entry e : all) {
+            if (selectedLogIds.contains(e.id())) {
+                sb.append('[').append(e.time()).append("] [").append(e.kind().name()).append("] ").append(e.text()).append('\n');
+            }
+        }
+        String text = sb.toString();
+        try {
+            Minecraft mc = Minecraft.getInstance();
+            if (mc != null && mc.keyboardHandler != null) {
+                mc.keyboardHandler.setClipboard(text);
+            }
+        } catch (Throwable ignored) {
+        }
+        lastCopiedLog = text;
+        return text;
+    }
+
+    public static void clearLogSelection() {
+        selectedLogIds.clear();
+        lastClickedLogId = -1;
+    }
+
+    public static String lastCopiedLog() {
+        return lastCopiedLog;
+    }
+
+    public static void setLastCopiedLog(String s) {
+        lastCopiedLog = s == null ? "" : s;
+    }
+
     // ------------------------------------------------------------------ ImGui rendering for all 6 panels
 
     /** 1. Top-Left Tab 1: Script Editor + Dashboard telemetry. */
@@ -377,7 +464,7 @@ public final class DockedPanels {
         }
 
         // Toolbar: Run, Test, Pick block, Comment, Tab complete, + New tab
-        if (ImGui.button("Run##EditorRun", 52f, 20f)) {
+        if (ImGui.button("Run##EditorRun")) {
             syncToConfig(currentScriptText());
             String err = QueueMod.runner.start(cfg.script);
             if (err != null) {
@@ -393,7 +480,7 @@ public final class DockedPanels {
         runBtnH = ImGui.getItemRectSizeY();
 
         ImGui.sameLine(0f, 4f);
-        if (ImGui.button("Test##EditorTest", 52f, 20f)) {
+        if (ImGui.button("Test##EditorTest")) {
             runTest();
         }
         testBtnX = ImGui.getItemRectMinX();
@@ -402,7 +489,7 @@ public final class DockedPanels {
         testBtnH = ImGui.getItemRectSizeY();
 
         ImGui.sameLine(0f, 4f);
-        if (ImGui.button("Pick block##EditorPick", 78f, 20f)) {
+        if (ImGui.button("Pick block##EditorPick")) {
             Places.Target t = Places.target();
             if (t != null) {
                 handleImGuiPick(t);
@@ -418,14 +505,14 @@ public final class DockedPanels {
         pickBtnH = ImGui.getItemRectSizeY();
 
         ImGui.sameLine(0f, 4f);
-        if (ImGui.button("Tab (" + suggestions.size() + ")##EditorTabComplete", 68f, 20f)) {
+        if (ImGui.button("Tab (" + suggestions.size() + ")##EditorTabComplete")) {
             acceptTopSuggestion();
         }
         ImGui.sameLine(0f, 6f);
         ImGui.setNextItemWidth(76f);
         ImGui.inputText("##NewTabName", newTabName);
         ImGui.sameLine(0f, 4f);
-        if (ImGui.button("+ Tab##AddScriptTab", 46f, 20f)) {
+        if (ImGui.button("+ Tab##AddScriptTab")) {
             addScriptTab(newTabName.get(), "// " + newTabName.get() + "\n");
         }
 
@@ -439,61 +526,78 @@ public final class DockedPanels {
             }
         }
 
-        // Split view: Syntax-coloured code view with line numbers & running step highlight + live multiline input
-        float availH = Math.max(80f, ImGui.getContentRegionAvailY() - 56f);
-        float syntaxH = Math.max(44f, availH * 0.56f);
-        float inputH = Math.max(32f, availH - syntaxH - 4f);
-
-        if (ImGui.beginChild("##SyntaxCodeView", 0f, syntaxH, true)) {
+        // Single unified full-height editor (##UnifiedScriptEditor)
+        float editorH = Math.max(80f, ImGui.getContentRegionAvailY() - 48f);
+        ImGuiManager.pushMonoFont();
+        if (ImGui.beginChild("##UnifiedCodeScroll", 0f, editorH, true)) {
             String src = currentScriptText();
             if (!src.equals(cachedSyntaxSource)) {
                 recomputeSyntaxAndSuggestions(src);
             }
             String[] lines = src.split("\n", -1);
             ImDrawList dl = ImGui.getWindowDrawList();
-            int charOffset = 0;
+            float startX = ImGui.getCursorScreenPosX();
+            float startY = ImGui.getCursorScreenPosY();
+            var style = ImGui.getStyle();
+            float padX = style.getFramePaddingX();
+            float padY = style.getFramePaddingY();
+            float lineHeight = ImGui.getTextLineHeight();
+            float codeStartX = startX + 38f;
+            float availW = Math.max(120f, ImGui.getContentRegionAvailX() - 38f);
+            float contentH = Math.max(editorH - 12f, (lines.length + 2) * ImGui.getTextLineHeightWithSpacing());
+            float fullW = Math.max(160f, ImGui.getContentRegionAvailX());
+
             for (int i = 0; i < lines.length; i++) {
                 int ln = i + 1;
-                String line = lines[i];
-                float rowY = ImGui.getCursorScreenPosY();
-                float rowX = ImGui.getCursorScreenPosX();
-                float rowW = Math.max(120f, ImGui.getContentRegionAvailX());
-                float rowH = ImGui.getTextLineHeightWithSpacing();
-
+                float rowY = startY + padY + i * lineHeight;
                 boolean isRunningLine = snap.running() && snap.line() == ln;
                 ScriptCheck.Entry issue = lineIssues.get(ln);
                 if (isRunningLine) {
-                    dl.addRectFilled(rowX - 4f, rowY, rowX + rowW, rowY + rowH, ImGui.colorConvertFloat4ToU32(0.290f, 0.620f, 0.878f, 0.22f));
-                    dl.addRectFilled(rowX - 4f, rowY, rowX - 1f, rowY + rowH, ImGui.colorConvertFloat4ToU32(0.290f, 0.620f, 0.878f, 1.0f));
+                    dl.addRectFilled(startX, rowY, startX + fullW, rowY + lineHeight, ImGui.colorConvertFloat4ToU32(0.290f, 0.620f, 0.878f, 0.22f));
+                    dl.addRectFilled(startX, rowY, startX + 3f, rowY + lineHeight, ImGui.colorConvertFloat4ToU32(0.290f, 0.620f, 0.878f, 1.0f));
+                    dl.addText(startX + 2f, rowY, ImGui.colorConvertFloat4ToU32(0.290f, 0.620f, 0.878f, 1.0f), String.format("%2d \u25b6", ln));
                 } else if (issue != null) {
                     boolean err = issue.level() == ScriptCheck.Level.ERROR;
-                    dl.addRectFilled(rowX - 4f, rowY, rowX + rowW, rowY + rowH,
-                            err ? ImGui.colorConvertFloat4ToU32(0.878f, 0.333f, 0.333f, 0.20f)
-                                : ImGui.colorConvertFloat4ToU32(0.878f, 0.659f, 0.290f, 0.16f));
-                }
-
-                // Gutter line number
-                if (isRunningLine) {
-                    ImGui.textColored(0.290f, 0.620f, 0.878f, 1.0f, String.format("%2d \u25b6", ln));
-                } else if (issue != null) {
-                    boolean err = issue.level() == ScriptCheck.Level.ERROR;
-                    ImGui.textColored(err ? 0.95f : 0.95f, err ? 0.38f : 0.78f, 0.35f, 1.0f, String.format("%2d !", ln));
+                    int bgCol = err ? ImGui.colorConvertFloat4ToU32(0.878f, 0.333f, 0.333f, 0.20f) : ImGui.colorConvertFloat4ToU32(0.878f, 0.659f, 0.290f, 0.16f);
+                    dl.addRectFilled(startX, rowY, startX + fullW, rowY + lineHeight, bgCol);
+                    int textCol = err ? ImGui.colorConvertFloat4ToU32(0.95f, 0.38f, 0.38f, 1.0f) : ImGui.colorConvertFloat4ToU32(0.95f, 0.78f, 0.35f, 1.0f);
+                    dl.addText(startX + 2f, rowY, textCol, String.format("%2d !", ln));
                 } else {
-                    ImGui.textDisabled(String.format("%2d  ", ln));
+                    dl.addText(startX + 2f, rowY, ImGui.colorConvertFloat4ToU32(0.50f, 0.50f, 0.55f, 0.60f), String.format("%2d  ", ln));
                 }
+            }
 
-                // Coloured token runs from Syntax.colors
-                ImGui.sameLine(0f, 6f);
-                drawSyntaxLine(line, charOffset, cachedSyntaxColors);
-                charOffset += line.length() + 1;
+            ImGui.setCursorScreenPos(codeStartX, startY);
+            ImGui.pushStyleColor(ImGuiCol.FrameBg, 0f, 0f, 0f, 0f);
+            ImGui.pushStyleColor(ImGuiCol.Border, 0f, 0f, 0f, 0f);
+            ImGui.pushStyleColor(ImGuiCol.Text, 0.90f, 0.90f, 0.90f, 0.25f);
+            if (ImGui.inputTextMultiline("##ScriptEditorInput", editorBuffer, availW, contentH, ImGuiInputTextFlags.AllowTabInput)) {
+                setCurrentScriptText(editorBuffer.get());
+            }
+            ImGui.popStyleColor(3);
+
+            editorInputActive = ImGui.isItemActive();
+            if (!editorInputActive) {
+                ScriptTab t = tabs.get(activeTabIndex);
+                if (!t.text.equals(editorBuffer.get())) {
+                    editorBuffer.set(t.text);
+                }
+            }
+
+            String renderSrc = editorBuffer.get();
+            if (!renderSrc.equals(cachedSyntaxSource)) {
+                recomputeSyntaxAndSuggestions(renderSrc);
+            }
+            String[] renderLines = renderSrc.split("\n", -1);
+            int charOffset = 0;
+            for (int i = 0; i < renderLines.length; i++) {
+                float lineY = startY + padY + i * lineHeight;
+                drawSyntaxLine(dl, codeStartX + padX, lineY, renderLines[i], charOffset, cachedSyntaxColors);
+                charOffset += renderLines[i].length() + 1;
             }
         }
         ImGui.endChild();
-
-        // Live editable multiline buffer
-        if (ImGui.inputTextMultiline("##ScriptEditorInput", editorBuffer, -1f, inputH, ImGuiInputTextFlags.AllowTabInput)) {
-            setCurrentScriptText(editorBuffer.get());
-        }
+        ImGuiManager.popMonoFont();
 
         // Footer: Test results / Error hint line OR Suggest completions
         if (checkResults != null && !checkResults.isEmpty()) {
@@ -525,25 +629,25 @@ public final class DockedPanels {
         }
     }
 
-    private static void drawSyntaxLine(String line, int startOffset, int[] colors) {
+    private static void drawSyntaxLine(ImDrawList dl, float x, float y, String line, int startOffset, int[] colors) {
         if (line.isEmpty()) {
-            ImGui.text("");
             return;
         }
         int len = line.length();
         int runStart = 0;
-        boolean firstRun = true;
+        float curX = x;
         for (int i = 0; i <= len; i++) {
             int curColor = (i < len && startOffset + i < colors.length) ? colors[startOffset + i] : Syntax.DEFAULT;
             int startColor = (startOffset + runStart < colors.length) ? colors[startOffset + runStart] : Syntax.DEFAULT;
             if (i == len || curColor != startColor) {
                 if (i > runStart) {
-                    if (!firstRun) ImGui.sameLine(0f, 0f);
-                    firstRun = false;
+                    String seg = line.substring(runStart, i);
                     float r = ((startColor >> 16) & 0xFF) / 255f;
                     float g = ((startColor >> 8) & 0xFF) / 255f;
                     float b = (startColor & 0xFF) / 255f;
-                    ImGui.textColored(r, g, b, 1.0f, line.substring(runStart, i));
+                    int colU32 = ImGui.colorConvertFloat4ToU32(r, g, b, 1.0f);
+                    dl.addText(curX, y, colU32, seg);
+                    curX += ImGui.calcTextSizeX(seg);
                 }
                 runStart = i;
             }
@@ -585,15 +689,15 @@ public final class DockedPanels {
                 List<String> lines = cfg.presets.get(name);
                 if (lines == null) continue;
 
-                if (ImGui.button("Insert##ins_" + i, 50f, 19f)) {
+                if (ImGui.button("Insert##ins_" + i)) {
                     insertPresetByName(name);
                 }
                 ImGui.sameLine(0f, 4f);
-                if (ImGui.button("Copy##cpy_" + i, 42f, 19f)) {
+                if (ImGui.button("Copy##cpy_" + i)) {
                     PresetShare.copy(Map.of(name, lines));
                 }
                 ImGui.sameLine(0f, 4f);
-                if (ImGui.button("X##del_" + i, 22f, 19f)) {
+                if (ImGui.button("X##del_" + i)) {
                     cfg.presets.remove(name);
                     Config.save();
                     continue;
@@ -854,10 +958,14 @@ public final class DockedPanels {
         }
 
         String sheet = Capture.text();
-        captureSheetBuf.set(sheet);
+        if (!sheet.equals(lastSyncedCaptureSheet)) {
+            captureSheetBuf.set(sheet);
+            lastSyncedCaptureSheet = sheet;
+        }
         float availH = Math.max(40f, ImGui.getContentRegionAvailY());
         if (ImGui.inputTextMultiline("##CaptureSheetEdit", captureSheetBuf, -1f, availH)) {
-            Capture.setText(captureSheetBuf.get());
+            lastSyncedCaptureSheet = captureSheetBuf.get();
+            Capture.setText(lastSyncedCaptureSheet);
         }
     }
 
@@ -874,12 +982,23 @@ public final class DockedPanels {
         }
 
         ImGui.sameLine(0f, 10f);
-        if (ImGui.button("Copy##LogCopy")) {
-            LogBuffer.copyToClipboard(logFilter);
+        if (!selectedLogIds.isEmpty()) {
+            if (ImGui.button("Copy selected (" + selectedLogIds.size() + ")##LogCopy")) {
+                copySelectedLogs();
+            }
+            ImGui.sameLine(0f, 4f);
+            if (ImGui.button("Clear selection##LogUnselect")) {
+                clearLogSelection();
+            }
+        } else {
+            if (ImGui.button("Copy all##LogCopy")) {
+                copySelectedLogs();
+            }
         }
         ImGui.sameLine(0f, 4f);
         if (ImGui.button("Clear##LogClear")) {
             LogBuffer.clear();
+            clearLogSelection();
         }
         ImGui.sameLine(0f, 8f);
         ImGui.beginDisabled(true);
@@ -896,15 +1015,57 @@ public final class DockedPanels {
                 ImGui.textDisabled("No log entries matching filter '" + logFilter.label + "'.");
             } else {
                 for (LogBuffer.Entry e : entries) {
-                    String prefix = "[" + e.time() + "] ";
+                    String lineText = "[" + e.time() + "] " + e.text();
                     if (e.kind() == LogBuffer.Kind.ERROR) {
-                        ImGui.textColored(0.95f, 0.38f, 0.38f, 1.0f, prefix + e.text());
+                        ImGui.pushStyleColor(ImGuiCol.Text, 0.95f, 0.38f, 0.38f, 1.0f);
                     } else if (e.kind() == LogBuffer.Kind.BARITONE) {
-                        ImGui.textColored(0.34f, 0.68f, 0.92f, 1.0f, prefix + e.text());
+                        ImGui.pushStyleColor(ImGuiCol.Text, 0.34f, 0.68f, 0.92f, 1.0f);
                     } else {
-                        ImGui.text(prefix + e.text());
+                        ImGui.pushStyleColor(ImGuiCol.Text, 0.88f, 0.89f, 0.92f, 1.0f);
                     }
+                    if (ImGui.selectable(lineText + "##log_" + e.id(), selectedLogIds.contains(e.id()))) {
+                        boolean ctrl = ImGui.getIO().getKeyCtrl();
+                        boolean shift = ImGui.getIO().getKeyShift();
+                        if (shift && lastClickedLogId >= 0) {
+                            int idx1 = -1, idx2 = -1;
+                            for (int i = 0; i < entries.size(); i++) {
+                                long eid = entries.get(i).id();
+                                if (eid == lastClickedLogId) idx1 = i;
+                                if (eid == e.id()) idx2 = i;
+                            }
+                            if (idx1 >= 0 && idx2 >= 0) {
+                                int start = Math.min(idx1, idx2);
+                                int end = Math.max(idx1, idx2);
+                                for (int i = start; i <= end; i++) {
+                                    selectedLogIds.add(entries.get(i).id());
+                                }
+                                lastClickedLogId = e.id();
+                            } else {
+                                selectedLogIds.add(e.id());
+                                lastClickedLogId = e.id();
+                            }
+                        } else if (ctrl) {
+                            if (selectedLogIds.contains(e.id())) {
+                                selectedLogIds.remove(e.id());
+                            } else {
+                                selectedLogIds.add(e.id());
+                            }
+                            lastClickedLogId = e.id();
+                        } else {
+                            if (selectedLogIds.size() == 1 && selectedLogIds.contains(e.id())) {
+                                clearLogSelection();
+                            } else {
+                                selectedLogIds.clear();
+                                selectedLogIds.add(e.id());
+                                lastClickedLogId = e.id();
+                            }
+                        }
+                    }
+                    ImGui.popStyleColor();
                 }
+            }
+            if (ImGui.isWindowFocused() && ImGui.getIO().getKeyCtrl() && ImGui.isKeyPressed(GLFW.GLFW_KEY_C) && !selectedLogIds.isEmpty()) {
+                copySelectedLogs();
             }
         }
         ImGui.endChild();

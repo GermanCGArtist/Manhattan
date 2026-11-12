@@ -482,10 +482,16 @@ def test_panels(t):
     if t.state()["screen"] != "":
         raise Fail("docked Capture aiming opened a vanilla screen instead of staying in docked UI: %s" % t.state()["screen"])
 
-    # 4. Log panel: All / Errors / Baritone filters, Copy, Clear
+    # 4. Log panel: All / Errors / Baritone filters, multi-line selection, Copy, Clear
     p_log = t.b("panels logfilter ALL")
     if p_log["logTotal"] < 3 or p_log["logErrors"] < 1 or p_log["logBaritone"] < 1:
         raise Fail("expected LogBuffer to have INFO, ERROR, and BARITONE entries: %s" % p_log)
+    p_sel = t.b("panels logselect 0,1")
+    if p_sel.get("selectedLogCount") != 2:
+        raise Fail("expected selectedLogCount == 2 after logselect 0,1: %s" % p_sel)
+    p_cp = t.b("panels logcopyselected")
+    if not p_cp.get("lastCopiedLog") or "\n" not in p_cp.get("lastCopiedLog", ""):
+        raise Fail("expected logcopyselected to copy 2 selected lines: %s" % p_cp)
     p_err = t.b("panels logfilter ERRORS")
     if p_err["logFiltered"] != p_err["logErrors"]:
         raise Fail("LogBuffer ERRORS filter count mismatch: %s" % p_err)
@@ -500,7 +506,7 @@ def test_panels(t):
 
     t.b("chat /queue ui vanilla")
     t.wait_chat("UI mode set to 'vanilla'.", 5)
-    return "Editor (tabs/Syntax/Suggest/Test/Pick/Run) ok, Presets ok, Chests (search/sort/filter/Show/Copy/Go) ok, Areas/Capture ok, Log filters/Clear ok"
+    return "Editor (tabs/Syntax/Suggest/Test/Pick/Run) ok, Presets ok, Chests (search/sort/filter/Show/Copy/Go) ok, Areas/Capture ok, Log select/filters/Clear ok"
 
 
 

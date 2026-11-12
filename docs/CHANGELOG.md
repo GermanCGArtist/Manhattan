@@ -5,11 +5,17 @@ Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
 ## 2.11.0 – Docked panels and view-models (Stage 3) (2026-11-12)
 - Extracted view-models (`ChestIndexView`, `AreasView`, `PlacesView`, `LogBuffer`) so the docked ImGui panels and the
   vanilla screens share the same underlying state.
-- **Script Editor panel (`DockedPanels.renderScriptEditorPanel`)**: tabs per script file (`main` + `scripts/*.txt` +
-  `+ Tab`), **Run**, **Test**, **Pick block** (inserts `pos(...)` or `let name = pos(...)` directly in docked mode),
-  custom syntax-coloured code view (`Syntax.colors`) with gutter line numbers, blue running-step highlight, inline
-  `ScriptCheck` error/warning markers and hint lines, and `Suggest` Tab completion. Vanilla `QueueScreen` (key J) stays
-  available as fallback.
+- **Flashback native loader compatibility (`ImGuiManager.prepareNatives`)**: Scoped the global `imgui.library.path`
+  system property strictly around `Class.forName("imgui.ImGui", ...)` in a `try/finally` block so other ImGui mods
+  (such as Flashback) load their own bundled native DLL without conflict.
+- **Full-brightness Game Viewport & Crisp TrueType Fonts (`ImGuiManager`)**: Set `ImGuiCol.DockingEmptyBg` transparent and
+  blitted `mainRenderTarget` into the Game Viewport after `gl3.renderDrawData` so the dock node background never tints the
+  game view; loaded crisp TrueType fonts (`segoeui.ttf` 16px for UI, `consola.ttf` 15px for code) with a Top Bar UI scale
+  selector (`100%` / `125%` / `150%`, persisted as `Config.uiScale`) and auto-sized buttons across all panels.
+- **Unified Script Editor (`DockedPanels.renderScriptEditorPanel`)**: single full-height editable code view (`Consolas`
+  font) where you type directly inside the syntax-coloured, line-numbered editor with active running-step highlight (`▶`),
+  inline `ScriptCheck` error/warning markers (`!`), and `Suggest` Tab completion. Pressing **J** or **K** in docked mode
+  releases the cursor and focuses the docked `Script Editor` or `Capture` panel directly.
 - **Presets panel (`DockedPanels.renderPresetsPanel`)**: filterable list of `Config.presets` with code preview tooltips,
   **Insert**, **Copy**, delete (**X**), **Save script as preset**, and `PresetShare` **Copy all / Paste / Export / Import**.
 - **Chests panel (`DockedPanels.renderChestsPanel`, `ChestIndexView`)**: searchable, sortable 4-column table (`Item`,
@@ -19,10 +25,11 @@ Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
 - **Areas & Capture panels (`DockedPanels.renderAreasPanel`, `renderCapturePanel`, `AreasView`, `PlacesView`)**: lists
   saved areas, chests, spots, and Litematica placements; ports all `Capture.Type` roles (`dump`, `supply`, `return`,
   `material`, `scaffolding`, `bed`, `mine`, `fill`, `build`, `safe`, `spot`, `area`, `schematic`) with **Fetch looked-at**,
-  **Aim in world**, **Use #sel**, **Import saved**, **Copy context**, and live capture sheet editor.
+  **Aim in world**, **Use #sel**, **Import saved**, **Copy context**, and live editable capture sheet.
 - **Log & Assistant panels (`DockedPanels.renderLogPanel`, `renderAssistantPanel`, `LogBuffer`)**: 500-entry ring buffer
-  fed by `Util.msg`, `Util.warn`, Baritone actions, and script errors with **All / Errors / Baritone** filters, **Copy**,
-  **Clear**, a disabled **Send error to Assistant** button, and an Assistant tab stub.
+  fed by `Util.msg`, `Util.warn`, Baritone actions, and script errors with **All / Errors / Baritone** filters, clickable
+  multi-line selection (`Click`, `Ctrl+Click`, `Shift+Click`, `Ctrl+C`, **Copy selected (N)** / **Copy all**), **Clear**,
+  a disabled **Send error to Assistant** button, and an Assistant tab stub.
 - Tested with unit tests in `LangTest` and in-game test `panels`.
 
 ## 2.10.0 – Docked shell and dashboard (Stage 2) (2026-11-12)

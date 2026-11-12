@@ -522,8 +522,32 @@ public class TestBridge implements ClientModInitializer {
                 case "captureaim" -> PlacesView.startAimingInWorld();
                 case "capturesel" -> Util.msg(Capture.useSelection());
                 case "logfilter" -> DockedPanels.setLogFilter(LogBuffer.Filter.valueOf(a[1].toUpperCase()));
-                case "logcopy" -> LogBuffer.copyToClipboard(DockedPanels.getLogFilter());
-                case "logclear" -> LogBuffer.clear();
+                case "logcopy" -> DockedPanels.copySelectedLogs();
+                case "logclear" -> {
+                    LogBuffer.clear();
+                    DockedPanels.clearLogSelection();
+                }
+                case "logselect" -> {
+                    if (a.length > 1) {
+                        List<LogBuffer.Entry> entries = LogBuffer.entries(DockedPanels.getLogFilter());
+                        if (a[1].contains(",")) {
+                            DockedPanels.clearLogSelection();
+                            for (String part : a[1].split(",")) {
+                                if (part.isBlank()) continue;
+                                int idx = Integer.parseInt(part.trim());
+                                if (idx >= 0 && idx < entries.size()) {
+                                    DockedPanels.selectLogEntry(entries.get(idx).id(), true, false);
+                                }
+                            }
+                        } else {
+                            int idx = Integer.parseInt(a[1]);
+                            long targetId = (idx >= 0 && idx < entries.size()) ? entries.get(idx).id() : idx;
+                            DockedPanels.selectLogEntry(targetId, a.length > 2 && Boolean.parseBoolean(a[2]), a.length > 3 && Boolean.parseBoolean(a[3]));
+                        }
+                    }
+                }
+                case "logcopyselected" -> DockedPanels.copySelectedLogs();
+                case "logunselect" -> DockedPanels.clearLogSelection();
                 default -> {
                     return err("unknown panels subcommand: " + a[0]);
                 }
@@ -561,7 +585,9 @@ public class TestBridge implements ClientModInitializer {
                 + ",\"logTotal\":" + LogBuffer.count(LogBuffer.Filter.ALL)
                 + ",\"logErrors\":" + LogBuffer.count(LogBuffer.Filter.ERRORS)
                 + ",\"logBaritone\":" + LogBuffer.count(LogBuffer.Filter.BARITONE)
-                + ",\"logFiltered\":" + LogBuffer.entries(lf).size());
+                + ",\"logFiltered\":" + LogBuffer.entries(lf).size()
+                + ",\"selectedLogCount\":" + DockedPanels.selectedLogCount()
+                + ",\"lastCopiedLog\":" + q(DockedPanels.lastCopiedLog()));
     }
 
     /** Opens the world, or creates it first: a flat creative world with cheats, no structures. */
