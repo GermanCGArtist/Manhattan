@@ -1,0 +1,245 @@
+// Canal at bestesproject118: only build the canal schematic, additive. No mining, no water.
+// Nothing that is already there is broken: Baritone may not dig, and the build only fills air and water.
+// The only blocks that come down again are Baritone's own dirt scaffolding (collect_scaffold).
+// Needs: the canal placements enabled in Litematica (/schem list), food in the tool chest.
+
+// ------------------------------------------------------------------ places (from the capture sheet "main")
+let dump_chest = pos(1786, 74, -837)       // dump() puts the inventory in here
+let tool_chest = pos(1786, 74, -841)       // restock(): tools, food
+let return_chest = pos(1789, 74, -841)     // worn-out tools
+let scaffold_chest = pos(1794, 74, -840)   // dirt
+let bed = pos(1791, 74, -839)
+
+// the build material chests: every chest, barrel or shulker box inside build_1
+let mat_a = pos(1766, 67, -848)
+let mat_b = pos(1771, 69, -839)
+
+// the base: Baritone never breaks or places blocks in here
+protect("protect_1", pos(1783, 65, -844), pos(1800, 80, -832))
+
+let schem = "all"        // all enabled Litematica placements
+let mode = "add"         // only empty spots (air, water) are filled; blocks that are there stay
+let scaffold = "dirt"
+
+// The canal is too long to be loaded at once: it is built in sections along z.
+let canal_x = 1748       // the middle of the canal
+let canal_z_from = -1400 // one end
+let canal_z_to = -560    // the other end: check this
+let section = 96         // blocks between two stops
+// the two walls (the placements): 3 wide, from y 60 up. Below them (y 59 and deeper) old water must not stay,
+// or the wall's bottom block has nothing to be placed against
+let wall_w1 = 1741
+let wall_w2 = 1743
+let wall_e1 = 1754
+let wall_e2 = 1756
+let wall_y = 60
+
+// ------------------------------------------------------------------ survival
+option("survival.supply", tool_chest)
+option("survival.returnChest", return_chest)
+option("survival.bed", bed)
+option("survival.respawn", true)
+option("survival.resume", true)
+option("survival.reconnect", true)
+set("itemSaver", true)
+set("itemSaverThreshold", 50)
+
+want("diamond_pickaxe", 1)
+want("diamond_axe", 1)
+want("diamond_sword", 1)
+want("diamond_shovel", 1)
+want("bucket", 0)               // no buckets needed for building
+want("food", 32)
+keep(scaffold, 256)             // dump() leaves this much dirt for scaffolding
+hotbar(9, "food")
+
+#acceptableThrowawayItems {scaffold}
+#allowInventory true
+set("allowBreak", false)        // never dig through blocks that are already there
+set("allowPlace", true)         // but bridge and pillar with dirt to get around the water
+
+on mobs > 0
+  defend()
+end
+on food < 14
+  eat()
+end
+on bed_time
+  sleep()
+end
+on restock_needed
+  restock()
+  hotbar(9, "food")
+end
+
+restock()
+if not hotbar(9, "food") then
+  stop("No food with me after restocking: put food into the tool chest at 1786 74 -841, then run again.")
+end
+
+// ------------------------------------------------------------------ material chests
+let chests = []
+let p = null
+let b = null
+for x in range(min(mat_a.x, mat_b.x) - 1, max(mat_a.x, mat_b.x) + 2)
+  for y in range(min(mat_a.y, mat_b.y) - 1, max(mat_a.y, mat_b.y) + 2)
+    for z in range(min(mat_a.z, mat_b.z) - 1, max(mat_a.z, mat_b.z) + 2)
+      p = pos(x, y, z)
+      b = block(p)
+      if b != null and b != "ender_chest" and (contains(b, "chest") or b == "barrel" or contains(b, "shulker_box")) then push(chests, p) end
+    end
+  end
+end
+print("{len(chests)} material chests found")
+if len(chests) == 0 then stop("No chests in build_1: are the material chests there?") end
+let mat_count = len(chests)     // chests[0 .. mat_count-1] are the material chests
+push(chests, dump_chest)        // materials from earlier runs ended up in the dump chest
+
+// One trip to the chests: empties what is not needed (the build materials stay with you), then fills the
+// inventory with what the build still needs, shared out by how much of each is still missing.
+let unavailable = []
+let fetched = []                // every build material taken so far (they go back at the end)
+func fetch()
+  let need = schem_needed(schem, mode)
+  for item in keys(need)
+    keep(item, -1)              // dump() leaves the build materials alone
+  end
+  dump(dump_chest)
+  for item in keys(need)
+    keep(item, 0)
+  end
+  // still nearly full (all build blocks, e.g. after a stopped run): part of the biggest pile goes back to its chest
+  if free_slots < 5 then
+    let big = null
+    for item in keys(need)
+      if big == null or count(item) > count(big) then big = item end
+    end
+    let h = null
+    for i in range(0, mat_count)
+      if big == null or free_slots >= 5 then break end
+      h = chest_contents(chests[i])
+      if h != null and contains(keys(h), big) then
+        try
+          put(chests[i], big, (5 - free_slots) * 64)
+        catch err
+        end
+      end
+    end
+  end
+  try
+    take_upto(scaffold_chest, scaffold, 256)
+  catch err
+    print("Could not take dirt: {err}")
+  end
+  let total = 0
+  for item in keys(need)
+    if not contains(unavailable, item) then total += max(0, need[item] - count(item)) end
+  end
+  if total == 0 then return null end
+  let room = (free_slots - 2) * 64
+  let seen = null
+  let share = 0
+  for item in keys(need)
+    if contains(unavailable, item) or count(item) >= need[item] then continue end
+    if not contains(fetched, item) then push(fetched, item) end
+    share = min(need[item], count(item) + max(64, floor(room * (need[item] - count(item)) / total)))
+    for c in chests
+      if count(item) >= share or free_slots <= 2 then break end
+      seen = chest_contents(c)
+      if seen == null or contains(keys(seen), item) then
+        try
+          take_upto(c, item, share)
+        catch err
+        end
+      end
+    end
+    if count(item) == 0 and free_slots > 2 then
+      push(unavailable, item)
+      print("No {item} in the material chests: those {need[item]} blocks are left out.")
+    end
+  end
+end
+
+// how many of the still needed blocks you carry
+func carried()
+  let need = schem_needed(schem, mode)
+  let n = 0
+  for item in keys(need)
+    n += min(count(item), need[item])
+  end
+  return n
+end
+
+// Plugs the water under both walls around z with dirt (only below the wall, outside the schematic: the wall cells
+// themselves stay empty, so add mode still fills them).
+func plug_under_walls(z)
+  let z1 = z - section / 2 - 8
+  let z2 = z + section / 2 + 8
+  select(pos(wall_w1, wall_y - 5, z1), pos(wall_w2, wall_y - 1, z2))
+  add_box(pos(wall_e1, wall_y - 5, z1), pos(wall_e2, wall_y - 1, z2))
+  let wet = fill_water(scaffold, scaffold_chest)
+  if wet > 0 then print("{wet} wet cells under the walls near z {z} are left") end
+  clear_selection()
+end
+
+// ------------------------------------------------------------------ build, section by section
+// Back to the chests only when the materials run low; when a section has nothing more to build with what is
+// carried, straight on to the next one.
+let low = 192                   // fewer needed blocks carried than this: fetch more
+let left = -1
+let now_left = 0
+let progress = false
+let refetched = false
+let sz = canal_z_from
+let dir = 1
+if canal_z_to < canal_z_from then dir = -1 end
+fetch()
+loop
+  print("Canal section at z {sz}")
+  left = -1
+  refetched = false
+  #goto {canal_x} {sz}
+  plug_under_walls(sz)
+  loop
+    #goto {canal_x} {sz}
+    now_left = schem_build(schem, mode, "skip")
+    if now_left == 0 then break end
+    // the count wobbles by a few as chunks load and unload: only a real drop counts as progress
+    progress = left < 0 or now_left <= left - 20
+    left = now_left
+    if carried() < low then
+      if not progress and refetched then break end   // fetched already and still nothing: on to the next section
+      refetched = not progress
+      fetch()
+      continue
+    end
+    if not progress then break end
+  end
+  collect_scaffold()
+  if now_left == 0 then break end
+  if (dir == 1 and sz >= canal_z_to) or (dir == -1 and sz <= canal_z_to) then break end
+  sz += dir * section
+  if (dir == 1 and sz > canal_z_to) or (dir == -1 and sz < canal_z_to) then sz = canal_z_to end
+end
+
+// what is left over goes back into the material chests that hold that block, not into the dump chest
+let held = null
+let c2 = null
+for item in fetched
+  for i in range(0, mat_count)
+    if count(item) == 0 then break end
+    c2 = chests[i]
+    held = chest_contents(c2)
+    if held != null and contains(keys(held), item) then
+      try
+        put(c2, item)
+      catch err
+      end
+    end
+  end
+  if count(item) > 0 then print("{count(item)} {item} did not fit back into the material chests: they go into the dump chest.") end
+end
+dump(dump_chest)
+schem_check(schem, mode)
+if now_left > 0 then print("Canal: {now_left} blocks left. Missing in the chests: {join(unavailable, ', ')}") end
+print("Canal build done.")
