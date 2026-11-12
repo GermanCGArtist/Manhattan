@@ -91,6 +91,8 @@ final class SchemProcess {
         }
         Util.msg("Building " + p.name + " (" + mode.label() + "), " + c.todoTotal() + " blocks to do in " + phases.size() + " phase" + (phases.size() == 1 ? "" : "s") + ".");
         pi = 0;
+        giveUp = java.util.Set.of();
+        stallsInRow = 0;
         phaseResult.clear();
         stuck.clear();
         failure = null;
@@ -133,7 +135,7 @@ final class SchemProcess {
             subs.put(from, java.util.List.of(to));
         }
         s.buildSubstitutes.value = subs;
-        s.buildInLayers.value = true;
+        s.buildInLayers.value = true;   // bottom-up; a layer that cannot be finished is given up on after a stall (see giveUpLayer)
         s.startAtLayer.value = 0;
         if (mode != Mode.ADD) breakBefore = dev.buildtools.Api.setOwnBreak(true);
         changed = true;
@@ -163,6 +165,7 @@ final class SchemProcess {
         Schem.Counts c = Schem.count(plan, mode, Minecraft.getInstance().level);
         todo = c.todoByPhase.getOrDefault(ph, 0);
         lastTodo = todo;
+        attemptTodo = todo;
         lastPlaced = 0;
         since = 0;
         noProgress = 0;
@@ -177,7 +180,7 @@ final class SchemProcess {
         refreshMissing();
         restarts = 0;
         Util.baritone().getBuilderProcess().build("schem " + plan.name + " " + ph.name().toLowerCase(),
-                new Schem.Wrapper(plan, mode, ph, skipMissing ? () -> missingNow : null), plan.min);
+                new Schem.Wrapper(plan, mode, ph, skipMissing ? () -> missingNow : null, i -> giveUp.contains(i)), plan.min);
     }
 
     // ------------------------------------------------------------------ skip blocks without items
@@ -187,6 +190,46 @@ final class SchemProcess {
     private final java.util.Set<net.minecraft.world.item.Item> neededItems = new java.util.HashSet<>();
     private volatile java.util.Set<net.minecraft.world.item.Item> missingNow = java.util.Set.of();
     private int restarts;
+    private int attemptTodo;   // blocks to do when the builder was last started for this phase
+    /** Cells (plan indices) the builder is told to ignore: it stalled on them. Read by Baritone's path thread: replaced, never changed. */
+    private volatile java.util.Set<Integer> giveUp = java.util.Set.of();
+    private int stallsInRow;
+
+    /**
+     * Baritone finishes a layer before it starts the next. A cell in it that it cannot reach (boxed in, no spot to stand
+     * on, no side to click) keeps it pathing for ever and nothing above is built: on the canal run thousands of blocks
+     * "stalled" behind a few cells of the bottom row. After a stall the cells of the lowest unfinished layer are given
+     * up (the builder ignores them, the layers above get built) and tried once more at the end. Returns false when
+     * there is nothing to give up or it keeps stalling without any progress.
+     */
+    private boolean giveUpLayer(Phase ph, int todo) {
+        if (todo < attemptTodo) stallsInRow = 0;
+        else if (++stallsInRow > 3) return false;
+        Minecraft mc = Minecraft.getInstance();
+        int low = Integer.MAX_VALUE;
+        List<Integer> cells = new ArrayList<>();
+        var miss = missingNow;
+        net.minecraft.core.BlockPos.MutableBlockPos mp = new net.minecraft.core.BlockPos.MutableBlockPos();
+        for (int y = 0; y < plan.sy; y++) for (int z = 0; z < plan.sz; z++) for (int x = 0; x < plan.sx; x++) {
+            int i = plan.idx(x, y, z);
+            var d = plan.st[i];
+            if (d == null || d.isAir() || plan.excluded.get(i) || giveUp.contains(i)) continue;
+            mp.set(plan.min.getX() + x, plan.min.getY() + y, plan.min.getZ() + z);
+            if (!mc.level.hasChunkAt(mp)) continue;
+            var cur = Schem.norm(mc.level.getBlockState(mp));
+            if (cur.equals(d) || Schem.phaseAt(plan, i, d, cur) != ph || !Schem.todo(plan, i, mode, d, cur)) continue;
+            Object[] cost = Schem.cost(d);
+            if (skipMissing && cost != null && miss.contains((net.minecraft.world.item.Item) cost[0])) continue;   // left out for want of items, not stuck
+            if (y < low) { low = y; cells.clear(); }
+            if (y == low) cells.add(i);
+        }
+        if (cells.isEmpty()) return false;
+        var next = new java.util.HashSet<>(giveUp);
+        next.addAll(cells);
+        giveUp = next;
+        Util.msg("Phase " + ph.label + ": " + todo + " left, no progress for " + STALL_TICKS / 20 + " s: giving up on " + cells.size() + " blocks of the layer at y " + (plan.min.getY() + low) + " for now, building the rest.");
+        return true;
+    }
 
     void skipMissing(boolean v) { skipMissing = v; }
 
@@ -258,6 +301,13 @@ final class SchemProcess {
             lastTodo = todo;
             if (noProgress >= STALL_TICKS) {
                 Util.baritone().getPathingBehavior().cancelEverything();
+                if (giveUpLayer(ph, todo)) {
+                    since = 0;
+                    int r = restarts;
+                    startPhase();
+                    restarts = r;
+                    return;
+                }
                 endPhase(ph, "no progress for " + noProgress / 20 + " s");
             }
         }
@@ -278,11 +328,13 @@ final class SchemProcess {
             // schematic) can be done now. Only when the first round got something done, so a hopeless rest ends quickly.
             int done = 0;
             for (var e : phaseResult.entrySet()) if ("done".equals(e.getValue())) done++;
-            if (round == 0 && c.todoTotal() > 0 && done > 0) {
+            if (round == 0 && c.todoTotal() > 0 && (done > 0 || !giveUp.isEmpty())) {
                 List<Phase> before = new ArrayList<>(phases);
                 choosePhases(c, mode);
                 if (!phases.isEmpty()) {
                     round = 1;
+                    giveUp = java.util.Set.of();   // the cells given up on get one more try
+                    stallsInRow = 0;
                     pi = 0;
                     stuck.clear();
                     phaseResult.clear();
@@ -308,8 +360,80 @@ final class SchemProcess {
         long secs = (System.currentTimeMillis() - startedAt) / 1000;
         Util.msg("Finished " + plan.name + " (" + mode.label() + ") in " + secs + " s: " + (c.todoTotal() == 0 ? "everything is as it should be." : c.todoTotal() + " blocks still wrong."));
         for (String s : stuck) Util.msg("  stuck - " + s);
+        refreshLedger();
+        if (c.todoTotal() > 0) Util.msg("  " + breakdown(Schem.leftCells(plan, mode, Minecraft.getInstance().level), "of this build not built"));
         for (String e : c.examples) Util.msg("  " + e);
         if (c.todoTotal() > 0) Util.msg("/schem check shows what is left.");
+    }
+
+    // ------------------------------------------------------------------ what is left, over all builds
+
+    /**
+     * Blocks that were left unbuilt, with the reason, over all builds of the same schematic (a canal is built in
+     * sections: the count of one build only sees what is loaded around it, the rest is remembered here).
+     */
+    private final Map<Long, Schem.Why> ledger = new LinkedHashMap<>();
+    private String ledgerKey;
+
+    private String keyOf(Plan p) { return p.name + "@" + p.min + "+" + p.sx + "x" + p.sy + "x" + p.sz + "/" + mode; }
+
+    /** Looks at the loaded blocks again; blocks in unloaded chunks keep what was recorded last. */
+    private void refreshLedger() {
+        Minecraft mc = Minecraft.getInstance();
+        if (plan == null || mc.level == null) return;
+        String key = keyOf(plan);
+        if (!key.equals(ledgerKey)) { ledger.clear(); ledgerKey = key; }
+        net.minecraft.core.BlockPos.MutableBlockPos mp = new net.minecraft.core.BlockPos.MutableBlockPos();
+        ledger.keySet().removeIf(k -> mc.level.hasChunkAt(mp.set(k)));
+        ledger.putAll(Schem.leftCells(plan, mode, mc.level));
+    }
+
+    /**
+     * A fresh plan (schem_check, schem_materials) does not know which cells were open when the last build started, so in
+     * add mode it called a block that Baritone's scaffolding left in a cell "foreign, leave alone" and counted fewer
+     * blocks than the build did. The same placements as the last build take that memory over.
+     */
+    void inheritOpen(Plan fresh) {
+        Plan last = plan;
+        if (last != null && last.open != null && planWorld == Minecraft.getInstance().level && last.min.equals(fresh.min)
+                && last.sx == fresh.sx && last.sy == fresh.sy && last.sz == fresh.sz) fresh.open = last.open;
+    }
+
+    private Map<Long, Schem.Why> ledgerOfPlan() { return ledger; }
+
+    /** "120 blocks not built: 100 no material with you (stone x80, gravel x20), 20 nothing to place against". */
+    static String breakdown(Map<Long, Schem.Why> cells, String what) {
+        Map<Schem.Reason, Integer> n = new java.util.EnumMap<>(Schem.Reason.class);
+        Map<String, Integer> items = new LinkedHashMap<>();
+        for (Schem.Why w : cells.values()) {
+            n.merge(w.reason(), 1, Integer::sum);
+            if (w.item() != null) items.merge(w.item(), 1, Integer::sum);
+        }
+        StringBuilder sb = new StringBuilder(cells.size() + " blocks " + what);
+        String sep = ": ";
+        for (var e : n.entrySet()) {
+            sb.append(sep).append(e.getValue()).append(' ').append(e.getKey().label);
+            if (e.getKey() == Schem.Reason.NO_ITEM) sb.append(" (").append(items.entrySet().stream().map(i -> i.getKey() + " x" + i.getValue()).collect(java.util.stream.Collectors.joining(", "))).append(')');
+            sep = "; ";
+        }
+        return sb.toString();
+    }
+
+    /** schem_left(): prints and returns how many blocks of the last built schematic are still not there, over all builds, and why. */
+    int reportLeft(boolean reset) {
+        if (reset) { ledger.clear(); ledgerKey = null; Util.msg("The list of unbuilt blocks is cleared."); return 0; }
+        if (plan == null) { Util.msg("Nothing has been built yet."); return 0; }
+        refreshLedger();
+        if (ledger.isEmpty()) { Util.msg("Nothing is left: every block that was built (or seen) is there."); return 0; }
+        Util.msg(breakdown(ledger, "are NOT built") + ".");
+        int shown = 0;
+        for (var e : ledger.entrySet()) {
+            if (shown++ >= 6) break;
+            net.minecraft.core.BlockPos q = net.minecraft.core.BlockPos.of(e.getKey());
+            var want = plan.at(q.getX() - plan.min.getX(), q.getY() - plan.min.getY(), q.getZ() - plan.min.getZ());
+            Util.msg("  " + q.getX() + " " + q.getY() + " " + q.getZ() + ": " + (want == null ? "?" : net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(want.getBlock()).getPath()) + " - " + e.getValue().reason().label);
+        }
+        return ledger.size();
     }
 
     void cancel() {

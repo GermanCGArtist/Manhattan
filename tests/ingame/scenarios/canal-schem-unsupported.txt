@@ -1,0 +1,12 @@
+// canal 7: cells Baritone cannot reach must not hold up the rest of the build (it finishes a layer before the next one),
+// and the end report must say how many are left and why (run_tests.py canal_schem_unsupported)
+stall(1)
+// the settings of scripts/canal-build.txt
+#acceptableThrowawayItems {"dirt"}
+#allowInventory true
+set("allowBreak", false)
+set("allowPlace", true)
+let left = schem_build("all", "add", "skip")
+print("TEST unsup left={left}")
+let report = schem_left()
+print("TEST unsup report={report}")

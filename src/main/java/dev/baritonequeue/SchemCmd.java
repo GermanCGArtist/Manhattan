@@ -116,6 +116,7 @@ final class SchemCmd {
         if (pls == null) { Util.msg(err[0]); return -1; }
         Schem.Plan plan = Schem.plan(pls, err);
         if (plan == null) { Util.msg(err[0]); return -1; }
+        QueueMod.schem.inheritOpen(plan);
         Schem.Counts c = Schem.count(plan, mode, Minecraft.getInstance().level);
         Util.msg("Check " + plan.name + " (" + mode.label() + "): " + c.correct + " correct, " + c.missing + " missing, " + c.wrong + " wrong" + (c.wrongState > 0 ? " (" + c.wrongState + " of them the right block in another orientation/state)" : "")
                 + (mode == Mode.EXACT ? ", " + c.extra + " to dig out" : "") + (c.unloaded > 0 ? ", " + c.unloaded + " in unloaded chunks" : "")
