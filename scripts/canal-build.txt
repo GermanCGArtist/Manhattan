@@ -92,8 +92,14 @@ for x in range(min(mat_a.x, mat_b.x) - 1, max(mat_a.x, mat_b.x) + 2)
 end
 print("{len(chests)} material chests found")
 if len(chests) == 0 then stop("No chests in build_1: are the material chests there?") end
-let mat_count = len(chests)     // chests[0 .. mat_count-1] are the material chests
-push(chests, dump_chest)        // materials from earlier runs ended up in the dump chest
+// The chest index (saved per world) remembers what every chest held when it was last open, so take_upto and put
+// with a list of chests walk only to the chests that hold the item. A chest never seen, or not seen for 30 minutes
+// (index_refresh), is opened once to look; when no chest holds the item, nothing is walked to.
+let all_chests = []
+for mc0 in chests
+  push(all_chests, mc0)
+end
+push(all_chests, dump_chest)    // materials from earlier runs ended up in the dump chest
 
 // One trip to the chests: empties what is not needed (the build materials stay with you), then fills the
 // inventory with what the build still needs, shared out by how much of each is still missing.
@@ -114,16 +120,8 @@ func fetch()
     for item in keys(need)
       if big == null or count(item) > count(big) then big = item end
     end
-    let h = null
-    for i in range(0, mat_count)
-      if big == null or free_slots >= 5 then break end
-      h = chest_contents(chests[i])
-      if h != null and contains(keys(h), big) then
-        try
-          put(chests[i], big, (5 - free_slots) * 64)
-        catch err
-        end
-      end
+    if big != null then
+      put(chests, big, (5 - free_slots) * 64)     // into the material chests that hold it
     end
   end
   try
@@ -137,20 +135,15 @@ func fetch()
   end
   if total == 0 then return null end
   let room = (free_slots - 2) * 64
-  let seen = null
   let share = 0
   for item in keys(need)
     if contains(unavailable, item) or count(item) >= need[item] then continue end
     if not contains(fetched, item) then push(fetched, item) end
     share = min(need[item], count(item) + max(64, floor(room * (need[item] - count(item)) / total)))
-    for c in chests
-      if count(item) >= share or free_slots <= 2 then break end
-      seen = chest_contents(c)
-      if seen == null or contains(keys(seen), item) then
-        try
-          take_upto(c, item, share)
-        catch err
-        end
+    if free_slots > 2 then
+      try
+        take_upto(all_chests, item, share, 2)
+      catch err
       end
     end
     if count(item) == 0 and free_slots > 2 then
@@ -223,20 +216,8 @@ loop
 end
 
 // what is left over goes back into the material chests that hold that block, not into the dump chest
-let held = null
-let c2 = null
 for item in fetched
-  for i in range(0, mat_count)
-    if count(item) == 0 then break end
-    c2 = chests[i]
-    held = chest_contents(c2)
-    if held != null and contains(keys(held), item) then
-      try
-        put(c2, item)
-      catch err
-      end
-    end
-  end
+  if count(item) > 0 then put(chests, item) end
   if count(item) > 0 then print("{count(item)} {item} did not fit back into the material chests: they go into the dump chest.") end
 end
 dump(dump_chest)
