@@ -91,7 +91,12 @@ def _java_processes():
 
 def testing_pids():
     """PIDs of Minecraft instances whose game dir is this harness game's dir (and nothing else)."""
-    want = os.path.normcase(os.path.normpath(PROFILE)).replace("/", "\\")
+    return testing_pids_in(PROFILE)
+
+
+def testing_pids_in(profile):
+    """PIDs of Minecraft instances whose game dir is exactly `profile`."""
+    want = os.path.normcase(os.path.normpath(profile)).replace("/", "\\")
     # the path may be quoted or not (it has a space); it must end there: '"', ' --next-arg' or the end
     pat = re.compile(r'--gamedir\s+"?' + re.escape(want) + r'\\?(?:"|\s+--|\s*$)')
     return [pid for pid, cl in _java_processes() if pat.search(os.path.normcase(cl))]

@@ -833,12 +833,18 @@ def write_placements(name, placements):
 def give_kit(t):
     """What the real run carries from the tools chest: a diamond pickaxe, shovel and axe with Efficiency V, and food."""
     eff = '[enchantments={"minecraft:efficiency":5}]'
+    items = ("diamond_pickaxe", "diamond_shovel", "diamond_axe")
     t.cmd("/give @s diamond_pickaxe%s 1" % eff, "/give @s diamond_shovel%s 1" % eff,
           "/give @s diamond_axe%s 1" % eff, "/give @s bread 32")
-    time.sleep(1)
-    got = {k: t.count(k) for k in ("diamond_pickaxe", "diamond_shovel", "diamond_axe")}
+    # the commands run on the server thread and the inventory comes back by packet: under load (many games at once)
+    # that takes longer than any fixed wait, so wait for the condition, then let a late duplicate show up
+    def counts():
+        return {k: t.count(k) for k in items}
+    t.b.wait(lambda: all(v >= 1 for v in counts().values()), 60, step=0.25, what="the tool kit in the inventory: %s" % counts())
+    time.sleep(0.5)
+    got = counts()
     if any(v != 1 for v in got.values()):
-        raise Fail("the tool kit did not reach the inventory: %s" % got)
+        raise Fail("the tool kit did not reach the inventory exactly once: %s" % got)
 
 
 RUN_ID = int(time.time())
@@ -1750,7 +1756,8 @@ def enter_world(b):
 
 TEST_TIMEOUT = 300          # seconds; a test that takes longer fails and its game is restarted
 RAM_PER_CLIENT_GB = 3.5     # a game with its 3 GB heap (MANHATTAN_XMX) and its own memory
-MAX_WORKERS = 8             # bridge ports 25700+N for worker N: 25701..25708 (the other harness uses 25599 and 25601..25603)
+TEST_TIMEOUTS = {"trees_forest": 2400}   # runs 11 to 25 min (random tree shapes, Baritone stalls on the 2x2 spruce); --test-timeout can only raise it
+MAX_WORKERS = 16            # bridge ports 25700+N for worker N: 25701..25716 (the other harness uses 25599 and 25601..25603)
 LONG_FIRST = ["trees_forest", "trees_small", "clear_resume", "schem_exact", "schem_fix_wrong", "schem_fix", "fill_water", "schem_add"]   # start the slow ones first
 
 
@@ -1827,11 +1834,23 @@ def fresh_world(t, name):
     return r
 
 
+def port_busy(port):
+    """True when something already listens on that bridge port (a game of another run, e.g. a second harness in
+    another checkout: two runs driving one game give every item twice and corrupt each other's worlds)."""
+    import socket
+    with socket.socket() as s:
+        s.settimeout(1)
+        return s.connect_ex(("127.0.0.1", port)) == 0
+
+
 def start_game(b, attach):
     if attach:
         b.connect()
         return None
     mc.stop_testing_instance()
+    if port_busy(b.port):
+        raise BridgeError("bridge port %d is already in use: a game of another test run is open (another harness "
+                          "in another checkout?). Not starting a second one on its port." % b.port)
     mc.install()
     prepare_schem()
     proc = mc.launch()
@@ -1853,7 +1872,7 @@ def worker(claim, keep, attach, timeout, tag=""):
                 break
             name, fn = item
             log(tag + "running", name, "...")
-            ok, info, dt, hung = run_one(t, name, fn, timeout)
+            ok, info, dt, hung = run_one(t, name, fn, max(timeout, TEST_TIMEOUTS.get(name, 0)))
             results.append((name, ok, info, dt))
             if hung:   # a stuck game is closed through its own bridge, then a fresh one carries on
                 try:
@@ -1924,7 +1943,7 @@ def main(argv):
             json.dump([list(r) + [k] for r in res], f)
         return 0
 
-    # up to 8 games at once (MAX_WORKERS), as many as the free RAM allows at RAM_PER_CLIENT_GB each; -j N sets it
+    # up to 16 games at once (MAX_WORKERS), as many as the free RAM allows at RAM_PER_CLIENT_GB each; -j N sets it
     default_workers = max(1, min(MAX_WORKERS, int(free_ram_gb() // RAM_PER_CLIENT_GB), len(tests)))
     workers = 1 if attach or keep else int(opt(argv, "--workers", opt(argv, "-j", default_workers)))
     workers = max(1, min(workers, len(tests)))
@@ -1943,6 +1962,11 @@ def main(argv):
     order = sorted((n for n, _ in tests), key=lambda n: LONG_FIRST.index(n) if n in LONG_FIRST else 99)
     with open(os.path.join(qdir, "tests.txt"), "w") as f:
         f.write("\n".join(order))
+    busy = [mc.PORT_BASE + k for k in range(1, workers + 1) if port_busy(mc.PORT_BASE + k)
+            and not mc.testing_pids_in(os.path.join(root, "w%d" % (k)))]
+    if busy:
+        print("bridge ports %s are in use by games that are not ours (another test run is open); wait for it" % busy)
+        return 2
     procs = []
     for k in range(1, workers + 1):
         home = os.path.join(root, "w%d" % k)
