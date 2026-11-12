@@ -183,6 +183,33 @@ final class ChestIndex {
         return out;
     }
 
+    /** All entries (current dimension if in a world, nearest first; else all entries in map order). */
+    static List<Entry> all(Minecraft mc) {
+        if (!loaded) {
+            try { load(); } catch (Throwable ignored) {}
+        }
+        if (mc != null && mc.level != null && mc.player != null) {
+            return nearest(mc, mc.player.blockPosition());
+        }
+        return new ArrayList<>(map.values());
+    }
+
+    static void putEntry(String dim, int x, int y, int z, Map<String, Integer> items, int food) {
+        if (!loaded) {
+            try { load(); } catch (Throwable ignored) {}
+        }
+        Entry e = new Entry();
+        e.dim = dim == null || dim.isEmpty() ? "minecraft:overworld" : dim;
+        e.x = x;
+        e.y = y;
+        e.z = z;
+        e.time = System.currentTimeMillis();
+        e.items = new LinkedHashMap<>(items);
+        e.food = food;
+        map.put(key(e.dim, new BlockPos(x, y, z)), e);
+        dirty = true;
+    }
+
     static void forget() {
         map.clear();
         dirty = true;

@@ -143,4 +143,28 @@ public final class Api {
         var e = ChestIndex.at(Minecraft.getInstance(), at);
         return e == null ? null : e.items;
     }
+
+    /** Snapshot of one indexed chest for ChestIndexView (UI & tests). */
+    public record IndexedChest(String dim, int x, int y, int z, long time, String age, int food, java.util.Map<String, Integer> items) {}
+
+    /** All indexed chests for the current world/dimension (nearest first when in-game). */
+    public static List<IndexedChest> indexedChests() {
+        Minecraft mc = null;
+        try { mc = Minecraft.getInstance(); } catch (Throwable ignored) {}
+        List<IndexedChest> out = new ArrayList<>();
+        for (ChestIndex.Entry e : ChestIndex.all(mc)) {
+            out.add(new IndexedChest(e.dim, e.x, e.y, e.z, e.time, ChestIndex.age(e.time), e.food, new java.util.LinkedHashMap<>(e.items)));
+        }
+        return out;
+    }
+
+    /** Records or updates a chest in ChestIndex (used by tests and manual indexing). */
+    public static void recordChest(String dim, int x, int y, int z, java.util.Map<String, Integer> items, int food) {
+        ChestIndex.putEntry(dim, x, y, z, items, food);
+    }
+
+    /** Clears all indexed chests in memory (and saves if in-game). */
+    public static void clearChestIndex() {
+        try { ChestIndex.forget(); } catch (Throwable ignored) {}
+    }
 }

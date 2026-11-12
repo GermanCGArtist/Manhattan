@@ -153,6 +153,27 @@ public class LangTest {
         same("progress seg 2 pending", segs.get(2).state().name(), "PENDING");
         same("progress overall pct", String.valueOf(ProgressModel.computeOverallPercent(segs, true)), "38");
 
+        // Stage 3 view-models: LogBuffer and ChestIndexView
+        LogBuffer.clear();
+        LogBuffer.append("Script started.");
+        LogBuffer.append("PROBLEM: No water source within 16 blocks.");
+        LogBuffer.append("#goto 100 -60 100");
+        same("log total", String.valueOf(LogBuffer.count(LogBuffer.Filter.ALL)), "3");
+        same("log errors", String.valueOf(LogBuffer.count(LogBuffer.Filter.ERRORS)), "1");
+        same("log baritone", String.valueOf(LogBuffer.count(LogBuffer.Filter.BARITONE)), "1");
+
+        List<dev.survivalkit.Api.IndexedChest> sampleChests = List.of(
+                new dev.survivalkit.Api.IndexedChest("minecraft:overworld", 100, -60, 102, System.currentTimeMillis(), "just now", 8,
+                        java.util.Map.of("minecraft:dirt", 128, "minecraft:diamond_pickaxe", 2, "minecraft:bread", 8))
+        );
+        List<ChestIndexView.Row> allChestRows = ChestIndexView.filterAndSort(sampleChests, "", ChestIndexView.Category.ALL, false, ChestIndexView.SortColumn.COUNT, false);
+        same("chest rows total", String.valueOf(allChestRows.size()), "3");
+        same("chest top count item", allChestRows.get(0).itemName(), "dirt");
+        List<ChestIndexView.Row> lowRows = ChestIndexView.filterAndSort(sampleChests, "", ChestIndexView.Category.ALL, true, ChestIndexView.SortColumn.ITEM, true);
+        same("chest low stock count", String.valueOf(lowRows.size()), "2");
+        List<ChestIndexView.Row> toolRows = ChestIndexView.filterAndSort(sampleChests, "pickaxe", ChestIndexView.Category.TOOLS, false, ChestIndexView.SortColumn.ITEM, true);
+        same("chest tool search", String.valueOf(toolRows.size()), "1");
+
         // the old script of the user, converted
         List<String> old = List.of(
                 "def_chest dirt 1794 74 -840",

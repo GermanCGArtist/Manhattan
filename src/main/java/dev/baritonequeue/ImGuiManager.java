@@ -840,56 +840,39 @@ public final class ImGuiManager {
             if (ImGui.begin("Script Editor")) {
                 renderDashboardSection(snap);
                 ImGui.separator();
-                ImGui.textDisabled("Script lines (" + cfg.script.size() + "):");
-                for (int i = 0; i < Math.min(cfg.script.size(), 12); i++) {
-                    int ln = i + 1;
-                    if (snap.running() && snap.line() == ln) {
-                        ImGui.textColored(0.290f, 0.620f, 0.878f, 1.0f, ln + ": " + cfg.script.get(i));
-                    } else {
-                        ImGui.text(ln + ": " + cfg.script.get(i));
-                    }
-                }
+                DockedPanels.renderScriptEditorPanel(snap);
             }
             ImGui.end();
 
             if (ImGui.begin("Presets")) {
-                ImGui.textDisabled("Saved presets: " + cfg.presets.size());
+                DockedPanels.renderPresetsPanel();
             }
             ImGui.end();
 
             // Bottom-Left: Chests, Areas, Capture tabs
             if (ImGui.begin("Chests")) {
-                ImGui.textDisabled("Saved chests: " + cfg.chests.size());
+                DockedPanels.renderChestsPanel();
             }
             ImGui.end();
 
             if (ImGui.begin("Areas")) {
-                ImGui.textDisabled("Saved areas: " + cfg.areas.size());
+                DockedPanels.renderAreasPanel();
             }
             ImGui.end();
 
             if (ImGui.begin("Capture")) {
-                ImGui.textDisabled("Capture role: " + Capture.type().label);
+                DockedPanels.renderCapturePanel();
             }
             ImGui.end();
 
             // Bottom-Right: Log, Assistant tabs
             if (ImGui.begin("Log")) {
-                ImGui.text("Controller: " + (snap.controller().isEmpty() ? "idle" : snap.controller()));
-                ImGui.sameLine(0f, 14f);
-                ImGui.text("Elapsed: " + (snap.running() ? snap.elapsedText() : "-"));
-                ImGui.sameLine(0f, 14f);
-                ImGui.text("Estimate: " + (snap.stepEtaText().isEmpty() ? (snap.stepLeftText().isEmpty() ? "-" : snap.stepLeftText()) : snap.stepEtaText()));
-                ImGui.text("Health: " + String.format(java.util.Locale.ROOT, "%.1f/%.1f", snap.health(), snap.maxHealth())
-                        + "  |  Hunger: " + snap.food() + "/20"
-                        + "  |  Pos: " + snap.posText());
-                List<String> ints = snap.interrupts();
-                ImGui.textDisabled("Active interrupts: " + (ints.isEmpty() ? "none" : String.join(", ", ints)));
+                DockedPanels.renderLogPanel();
             }
             ImGui.end();
 
             if (ImGui.begin("Assistant")) {
-                ImGui.textDisabled("Assistant (out of scope for this build)");
+                DockedPanels.renderAssistantPanel();
             }
             ImGui.end();
 

@@ -37,7 +37,13 @@ acts on its own: the script starts them. The packages talk through small `Api` c
 - Editor: `QueueScreen`, `Syntax` (colours from the lexer), `Suggest` (Tab completion, looked-at block as `pos(…)`),
   `ScriptCheck` (Test), `Places` (raycast up to 96 blocks), `Estimate` / `ProgressModel` / `ProgressView` (time and
   segmented step progress shared by the vanilla HUD/editor and the ImGui dashboard).
-- Dear ImGui (`ImGuiManager`, `RunnerView`, `ProgressModel`): `imgui-java` 1.90.0 rendered at `RenderSystem.flipFrame` before buffer swap,
+- View-models & Docked Panels (`RunnerView`, `ProgressModel`, `ChestIndexView`, `AreasView`, `PlacesView`, `LogBuffer`, `DockedPanels`):
+  `ChestIndexView` queries `dev.survivalkit.ChestIndex` (`Api.indexedChests()`) with search, category filters, low-stock
+  detection, column sorting, and world highlight / clipboard / Baritone `#goto` actions. `LogBuffer` is a 500-entry ring
+  buffer fed by `Util.msg` with `ALL`, `ERRORS`, and `BARITONE` filters. `DockedPanels` renders the 6 docked panels
+  (`Script Editor`, `Presets`, `Chests`, `Areas`, `Capture`, `Log`) plus the `Assistant` tab stub inside `ImGuiManager`'s
+  2x2 `DockSpace`.
+- Dear ImGui (`ImGuiManager`, `RunnerView`, `ProgressModel`, `DockedPanels`): `imgui-java` 1.90.0 rendered at `RenderSystem.flipFrame` before buffer swap,
   with input forwarded from `KeyboardHandlerMixin` and `MouseHandlerMixin` (`installCallbacks = false` so GLFW callbacks
   are never overwritten). `ui.mode = vanilla | docked` (default `vanilla`); key **F9** toggles the Stage 0 runner spike window.
   When `ui.mode = docked` and F8 fullscreen (`key.baritonequeue.fullscreen`) is off, `ImGuiManager` hosts a persistent

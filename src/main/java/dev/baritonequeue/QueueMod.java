@@ -323,7 +323,7 @@ public class QueueMod implements ClientModInitializer {
                 if (t == null) {   // the sky: back to the menu
                     Capture.aiming = false;
                     Capture.corner1 = null;
-                    mc.setScreen(new CaptureScreen());
+                    if (!ImGuiManager.isDockedViewportActive()) mc.setScreen(new CaptureScreen());
                     continue;
                 }
                 String r = Capture.capture(t);
@@ -331,14 +331,17 @@ public class QueueMod implements ClientModInitializer {
                 boolean waiting = Capture.corner1 != null || r.startsWith("Pick");
                 if (!cfg.captureRapid && !waiting) {
                     Capture.aiming = false;
-                    mc.setScreen(new CaptureScreen());
+                    if (!ImGuiManager.isDockedViewportActive()) mc.setScreen(new CaptureScreen());
                 }
             } else if (picking) {
-
                 picking = false;
                 Places.Target t = Places.target();
-                QueueScreen.pickResult(t);
-                mc.setScreen(new QueueScreen());
+                if (DockedPanels.isImGuiPicking()) {
+                    DockedPanels.handleImGuiPick(t);
+                } else {
+                    QueueScreen.pickResult(t);
+                    mc.setScreen(new QueueScreen());
+                }
             } else if (mc.screen == null) {
                 mc.setScreen(new QueueScreen());
             }
@@ -346,7 +349,7 @@ public class QueueMod implements ClientModInitializer {
         while (capture.consumeClick()) {
             if (Capture.aiming) {
                 Capture.aiming = false;
-                mc.setScreen(new CaptureScreen());
+                if (!ImGuiManager.isDockedViewportActive()) mc.setScreen(new CaptureScreen());
             } else if (mc.screen == null) {
                 mc.setScreen(new CaptureScreen());
             }
@@ -358,6 +361,7 @@ public class QueueMod implements ClientModInitializer {
             ImGuiManager.toggleFullscreenGame();
         }
         Capture.tick(mc);
+        ChestIndexView.tickHighlight();
         clear.tick();
         schem.tick();
         if (PauseWatch.paused) return;   // #pause: the script holds still

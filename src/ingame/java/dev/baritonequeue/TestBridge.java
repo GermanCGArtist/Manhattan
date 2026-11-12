@@ -279,6 +279,7 @@ public class TestBridge implements ClientModInitializer {
                 return ok("\"screen\":" + q(mc.screen == null ? "" : mc.screen.getClass().getName()));
             });
             case "imgui": return onGame(() -> handleImGui(mc, a));
+            case "panels": return onGame(() -> handlePanels(mc, a, rest));
             case "quit": return onGame(() -> {
                 if (mc.level != null) mc.disconnectWithSavingScreen();
                 mc.stop();
@@ -454,6 +455,113 @@ public class TestBridge implements ClientModInitializer {
                 + ",\"picking\":" + QueueMod.picking
                 + ",\"uiMode\":" + q(Config.cfg.uiMode)
                 + ",\"note\":" + q(ImGuiManager.noteText()));
+    }
+
+    private static String handlePanels(Minecraft mc, String[] a, String rest) {
+        if (a.length > 0) {
+            switch (a[0]) {
+                case "addtab" -> {
+                    String name = a.length > 1 ? a[1] : "extra.txt";
+                    String content = a.length > 2 ? rest.substring(rest.indexOf(a[1]) + a[1].length()).stripLeading().replace("\\n", "\n") : "";
+                    DockedPanels.addScriptTab(name, content);
+                }
+                case "selecttab" -> DockedPanels.selectTab(Integer.parseInt(a[1]));
+                case "setscript" -> {
+                    int idx = rest.indexOf("setscript");
+                    String content = idx >= 0 ? rest.substring(idx + "setscript".length()).stripLeading().replace("\\n", "\n") : "";
+                    DockedPanels.setCurrentScriptText(content);
+                }
+                case "complete" -> DockedPanels.acceptTopSuggestion();
+                case "check" -> DockedPanels.runTest();
+                case "pick" -> DockedPanels.handleImGuiPick(Places.target());
+                case "presetinsert" -> {
+                    int idx = rest.indexOf("presetinsert");
+                    String name = idx >= 0 ? rest.substring(idx + "presetinsert".length()).trim() : "";
+                    DockedPanels.insertPresetByName(name);
+                }
+                case "clearchests" -> dev.survivalkit.Api.clearChestIndex();
+                case "indexchest" -> {
+                    int x = Integer.parseInt(a[1]);
+                    int y = Integer.parseInt(a[2]);
+                    int z = Integer.parseInt(a[3]);
+                    java.util.Map<String, Integer> items = new java.util.LinkedHashMap<>();
+                    int food = 0;
+                    if (a.length > 4) {
+                        for (String part : a[4].split(",")) {
+                            String[] kv = part.split(":");
+                            if (kv.length == 2) {
+                                String item = kv[0].contains(":") ? kv[0] : "minecraft:" + kv[0];
+                                int cnt = Integer.parseInt(kv[1]);
+                                items.put(item, cnt);
+                                if (kv[0].contains("bread") || kv[0].contains("apple")) food += cnt;
+                            }
+                        }
+                    }
+                    String dim = mc.level == null ? "minecraft:overworld" : mc.level.dimension().identifier().toString();
+                    dev.survivalkit.Api.recordChest(dim, x, y, z, items, food);
+                }
+                case "chestfilter" -> {
+                    String q = a.length > 1 && !a[1].equals("-") ? a[1] : "";
+                    ChestIndexView.Category cat = a.length > 2 ? ChestIndexView.Category.valueOf(a[2].toUpperCase()) : ChestIndexView.Category.ALL;
+                    boolean low = a.length > 3 && Boolean.parseBoolean(a[3]);
+                    DockedPanels.setChestFilter(q, cat, low);
+                }
+                case "chestsort" -> {
+                    ChestIndexView.SortColumn col = ChestIndexView.SortColumn.valueOf(a[1].toUpperCase());
+                    boolean asc = a.length <= 2 || Boolean.parseBoolean(a[2]);
+                    DockedPanels.setChestSort(col, asc);
+                }
+                case "chestshow" -> ChestIndexView.showInWorld(Integer.parseInt(a[1]), Integer.parseInt(a[2]), Integer.parseInt(a[3]));
+                case "chestcopy" -> ChestIndexView.copyPos(Integer.parseInt(a[1]), Integer.parseInt(a[2]), Integer.parseInt(a[3]));
+                case "chestgoto" -> ChestIndexView.goThere(Integer.parseInt(a[1]), Integer.parseInt(a[2]), Integer.parseInt(a[3]));
+                case "capturerole" -> {
+                    Config.cfg.captureType = a[1].toLowerCase();
+                    Config.save();
+                }
+                case "capturefetch" -> PlacesView.fetchLookedAt();
+                case "captureaim" -> PlacesView.startAimingInWorld();
+                case "capturesel" -> Util.msg(Capture.useSelection());
+                case "logfilter" -> DockedPanels.setLogFilter(LogBuffer.Filter.valueOf(a[1].toUpperCase()));
+                case "logcopy" -> LogBuffer.copyToClipboard(DockedPanels.getLogFilter());
+                case "logclear" -> LogBuffer.clear();
+                default -> {
+                    return err("unknown panels subcommand: " + a[0]);
+                }
+            }
+        }
+        List<Suggest.Item> sugs = DockedPanels.currentSuggestions();
+        List<ChestIndexView.Row> chestRows = DockedPanels.currentChestRows();
+        BlockPos hl = ChestIndexView.highlightedChest();
+        LogBuffer.Filter lf = DockedPanels.getLogFilter();
+        return ok("\"tabCount\":" + DockedPanels.tabCount()
+                + ",\"activeTab\":" + q(DockedPanels.activeTabName())
+                + ",\"scriptText\":" + q(DockedPanels.currentScriptText())
+                + ",\"errorCount\":" + DockedPanels.lastErrorCount()
+                + ",\"suggestionCount\":" + sugs.size()
+                + ",\"topSuggestion\":" + q(sugs.isEmpty() ? "" : sugs.get(0).text())
+                + ",\"runX\":" + DockedPanels.runBtnX + ",\"runY\":" + DockedPanels.runBtnY + ",\"runW\":" + DockedPanels.runBtnW + ",\"runH\":" + DockedPanels.runBtnH
+                + ",\"testX\":" + DockedPanels.testBtnX + ",\"testY\":" + DockedPanels.testBtnY + ",\"testW\":" + DockedPanels.testBtnW + ",\"testH\":" + DockedPanels.testBtnH
+                + ",\"pickX\":" + DockedPanels.pickBtnX + ",\"pickY\":" + DockedPanels.pickBtnY + ",\"pickW\":" + DockedPanels.pickBtnW + ",\"pickH\":" + DockedPanels.pickBtnH
+                + ",\"presetCount\":" + Config.cfg.presets.size()
+                + ",\"lastInsertedPreset\":" + q(DockedPanels.lastInsertedPreset())
+                + ",\"chestRowCount\":" + chestRows.size()
+                + ",\"firstChestItem\":" + q(chestRows.isEmpty() ? "" : chestRows.get(0).itemName())
+                + ",\"firstChestCount\":" + (chestRows.isEmpty() ? 0 : chestRows.get(0).count())
+                + ",\"firstChestStatus\":" + q(chestRows.isEmpty() ? "" : chestRows.get(0).status())
+                + ",\"highlightedChest\":" + q(hl == null ? "" : hl.getX() + "," + hl.getY() + "," + hl.getZ())
+                + ",\"lastCopiedPos\":" + q(ChestIndexView.lastCopiedPos())
+                + ",\"areaCount\":" + AreasView.list().size()
+                + ",\"spotCount\":" + PlacesView.spots().size()
+                + ",\"schemCount\":" + PlacesView.schematics().size()
+                + ",\"captureRole\":" + q(Capture.type().id)
+                + ",\"captureSet\":" + q(Config.cfg.captureSet)
+                + ",\"captureEntryCount\":" + Capture.entries().size()
+                + ",\"captureAiming\":" + Capture.aiming
+                + ",\"logFilter\":" + q(lf.name())
+                + ",\"logTotal\":" + LogBuffer.count(LogBuffer.Filter.ALL)
+                + ",\"logErrors\":" + LogBuffer.count(LogBuffer.Filter.ERRORS)
+                + ",\"logBaritone\":" + LogBuffer.count(LogBuffer.Filter.BARITONE)
+                + ",\"logFiltered\":" + LogBuffer.entries(lf).size());
     }
 
     /** Opens the world, or creates it first: a flat creative world with cheats, no structures. */

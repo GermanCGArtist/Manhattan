@@ -367,6 +367,143 @@ def test_docked_shell(t):
         st["currentStep"], st["totalSteps"], st["segDone"], st["segRunning"], st["interruptCount"])
 
 
+def test_panels(t):
+    """Stage 3 panels: Script Editor (file tabs, Syntax, Suggest Tab completion, ScriptCheck Test, Pick block, Run),
+    Presets (insert/share), Chests (ChestIndexView search/sort/category/low-stock + Show in world / Copy pos / Go there),
+    Areas & Capture (Fetch looked-at, Aim in world), Log (LogBuffer filters All/Errors/Baritone, Copy, Clear), and Assistant stub."""
+    reset_area(t)
+    t.b("imgui close")
+    t.b("imgui fullscreen off")
+    t.b("imgui guiscale 0")
+    t.b("chat /queue ui docked")
+    t.wait_chat("UI mode set to 'docked'.", 5)
+    time.sleep(0.3)
+
+    # 1. Script Editor: file tabs, Suggest completion, ScriptCheck error hint, Pick block, Presets insert, Run button
+    p = t.b("panels addtab panel-test.txt // header")
+    if p["tabCount"] < 2 or p["activeTab"] != "panel-test.txt":
+        raise Fail("Script Editor did not create/switch to 'panel-test.txt' tab: %s" % p)
+
+    p = t.b("panels setscript fill_wa")
+    if p["suggestionCount"] < 1 or p["topSuggestion"] != "fill_water(":
+        raise Fail("Suggest completion did not offer 'fill_water(' for 'fill_wa': %s" % p)
+    p = t.b("panels complete")
+    if p["scriptText"] != "fill_water(":
+        raise Fail("Tab completion did not replace 'fill_wa' with 'fill_water(': %s" % p)
+
+    # ScriptCheck Test button click
+    t.b("panels setscript unknown_fn_xyz()")
+    time.sleep(0.2)
+    p = t.b("panels")
+    if p["testW"] > 0 and p["testH"] > 0:
+        t.b("imgui click %.1f %.1f 0" % (p["testX"] + p["testW"] / 2.0, p["testY"] + p["testH"] / 2.0))
+        p = t.b.wait(lambda: (lambda s: s if s["errorCount"] >= 1 else None)(t.b("panels")), 5, step=0.2, what="ScriptCheck Test button error")
+    else:
+        p = t.b("panels check")
+    if p["errorCount"] != 1:
+        raise Fail("expected 1 ScriptCheck error for unknown_fn_xyz(): %s" % p)
+
+    # Pick block in ImGui Script Editor
+    t.cmd("/setblock 100 -60 102 emerald_block", "/tp @s 100.5 -60 100.5 0 25")
+    time.sleep(0.3)
+    t.b("panels setscript ")
+    p = t.b("panels pick")
+    if "pos(100, -60, 102)" not in p["scriptText"]:
+        raise Fail("ImGui Pick block did not insert pos(100, -60, 102): %s" % p)
+
+    # Presets: insert preset into active script editor
+    p = t.b("panels presetinsert Wait for the morning")
+    if p["lastInsertedPreset"] != "Wait for the morning" or "wait until day" not in p["scriptText"]:
+        raise Fail("Preset insert did not add 'wait until day': %s" % p)
+
+    # Run button in Script Editor + running line highlight
+    t.b("panels setscript print(\"TEST panel editor run\")\\nwait 20")
+    time.sleep(0.2)
+    p = t.b("panels")
+    if p["runW"] > 0 and p["runH"] > 0:
+        t.b("imgui click %.1f %.1f 0" % (p["runX"] + p["runW"] / 2.0, p["runY"] + p["runH"] / 2.0))
+    else:
+        t.b("chat /queue run")
+    t.wait_chat("TEST panel editor run", 10)
+    t.b.wait(lambda: t.b("imgui")["runnerRunning"] and t.b("imgui")["runnerLine"] == 2, 5, step=0.2, what="running line highlight on line 2")
+    t.b("stopscript")
+    t.b.wait(lambda: not t.b("script")["running"], 5, step=0.2, what="script to stop")
+    t.b("panels selecttab 0")
+
+    # 2. Chests panel: ChestIndexView search, sort, category filter, low-stock filter, and detail pane actions
+    t.b("panels clearchests")
+    t.b("panels indexchest 102 -60 100 dirt:128,diamond_pickaxe:1,bread:8")
+    p = t.b("panels chestsort COUNT false")
+    if p["chestRowCount"] != 3 or p["firstChestItem"] != "dirt" or p["firstChestCount"] != 128:
+        raise Fail("ChestIndexView sort by COUNT desc failed: %s" % p)
+
+    p = t.b("panels chestfilter - TOOLS false")
+    if p["chestRowCount"] != 1 or p["firstChestItem"] != "diamond_pickaxe":
+        raise Fail("ChestIndexView TOOLS category filter failed: %s" % p)
+
+    p = t.b("panels chestfilter - ALL true")
+    if p["chestRowCount"] != 2:
+        raise Fail("ChestIndexView lowStockOnly filter expected 2 rows (pickaxe, bread): %s" % p)
+    t.b("panels chestfilter - ALL false")
+
+    p = t.b("panels chestshow 102 -60 100")
+    if p["highlightedChest"] != "102,-60,100":
+        raise Fail("ChestIndexView Show in world did not set highlightedChest: %s" % p)
+
+    p = t.b("panels chestcopy 102 -60 100")
+    if p["lastCopiedPos"] != "pos(102, -60, 100)":
+        raise Fail("ChestIndexView Copy pos did not copy pos(102, -60, 100): %s" % p)
+
+    t.cmd("/setblock 106 -60 100 chest", "/tp @s 100.5 -60 100.5 0 0")
+    time.sleep(0.3)
+    t.b("panels chestgoto 106 -60 100")
+    t.b.wait(lambda: t.state()["x"] > 103.0, 15, step=0.2, what="Baritone #goto from Chests detail pane")
+    t.cmd("/setblock 106 -60 100 air", "/tp @s 100.5 -60 100.5 0 25")
+
+    # 3. Areas & Capture panels: Fetch looked-at and Aim in world
+    t.cmd("/setblock 100 -60 102 chest")
+    time.sleep(0.3)
+    p0 = t.b("panels capturerole dump")
+    entries0 = p0["captureEntryCount"]
+    p1 = t.b("panels capturefetch")
+    if p1["captureEntryCount"] <= entries0:
+        raise Fail("Capture Fetch looked-at did not add an entry to the capture sheet: %s -> %s" % (entries0, p1))
+
+    p2 = t.b("panels captureaim")
+    if not p2["captureAiming"]:
+        raise Fail("Capture Aim in world did not enter aiming mode: %s" % p2)
+    # Focus game viewport and press J (74) to capture the looked-at chest and end aiming without opening vanilla CaptureScreen
+    st_im = t.b("imgui")
+    t.b("imgui click %.1f %.1f 0" % (st_im["vpX"] + st_im["vpW"] / 2.0, st_im["vpY"] + st_im["vpH"] / 2.0))
+    time.sleep(0.15)
+    t.b("imgui key 74 1 0")
+    t.b("imgui key 74 0 0")
+    p3 = t.b.wait(lambda: (lambda s: s if not s["captureAiming"] else None)(t.b("panels")), 5, step=0.2, what="J key to finish Capture aiming in docked mode")
+    if t.state()["screen"] != "":
+        raise Fail("docked Capture aiming opened a vanilla screen instead of staying in docked UI: %s" % t.state()["screen"])
+
+    # 4. Log panel: All / Errors / Baritone filters, Copy, Clear
+    p_log = t.b("panels logfilter ALL")
+    if p_log["logTotal"] < 3 or p_log["logErrors"] < 1 or p_log["logBaritone"] < 1:
+        raise Fail("expected LogBuffer to have INFO, ERROR, and BARITONE entries: %s" % p_log)
+    p_err = t.b("panels logfilter ERRORS")
+    if p_err["logFiltered"] != p_err["logErrors"]:
+        raise Fail("LogBuffer ERRORS filter count mismatch: %s" % p_err)
+    p_bar = t.b("panels logfilter BARITONE")
+    if p_bar["logFiltered"] != p_bar["logBaritone"]:
+        raise Fail("LogBuffer BARITONE filter count mismatch: %s" % p_bar)
+    t.b("panels logcopy")
+    p_clr = t.b("panels logclear")
+    if p_clr["logTotal"] != 0:
+        raise Fail("LogBuffer clear did not empty the ring buffer: %s" % p_clr)
+    t.b("panels logfilter ALL")
+
+    t.b("chat /queue ui vanilla")
+    t.wait_chat("UI mode set to 'vanilla'.", 5)
+    return "Editor (tabs/Syntax/Suggest/Test/Pick/Run) ok, Presets ok, Chests (search/sort/filter/Show/Copy/Go) ok, Areas/Capture ok, Log filters/Clear ok"
+
+
+
 
 def test_fill_water(t):
     """fill_water("dirt") fills a 3x3, 2-deep pool, never a cell above water."""
@@ -1492,7 +1629,7 @@ def test_trees_forest(t):
 TREE_TESTS = [("trees_small", test_trees_small), ("trees_forest", test_trees_forest)]
 
 
-TESTS = [("smoke", test_smoke), ("imgui_spike", test_imgui_spike), ("viewport", test_viewport), ("docked_shell", test_docked_shell), ("fill_water", test_fill_water), ("eat", test_eat), ("defend", test_defend), ("clear_resume", test_clear_resume), ("dump", test_dump), ("hotbar_tools", test_hotbar_tools), ("air", test_air), ("clear_wet", test_clear_wet),
+TESTS = [("smoke", test_smoke), ("imgui_spike", test_imgui_spike), ("viewport", test_viewport), ("docked_shell", test_docked_shell), ("panels", test_panels), ("fill_water", test_fill_water), ("eat", test_eat), ("defend", test_defend), ("clear_resume", test_clear_resume), ("dump", test_dump), ("hotbar_tools", test_hotbar_tools), ("air", test_air), ("clear_wet", test_clear_wet),
          ("schem_list", test_schem_list), ("schem_add", test_schem_add), ("schem_fix", test_schem_fix), ("schem_fix_wrong", test_schem_fix_wrong), ("schem_exact", test_schem_exact)]
 
 TESTS += CANAL_TESTS

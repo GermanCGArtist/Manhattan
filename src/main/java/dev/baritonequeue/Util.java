@@ -19,7 +19,9 @@ final class Util {
 
     /** A chat message. From the script's thread it is kept until the game thread shows it (flush). */
     static void msg(String s) {
+        LogBuffer.append(s);
         Minecraft mc = Minecraft.getInstance();
+        if (mc == null) return;
         if (!mc.isSameThread()) {
             synchronized (pending) {
                 pending.add(s);

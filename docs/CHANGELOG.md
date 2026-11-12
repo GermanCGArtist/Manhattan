@@ -2,6 +2,29 @@
 
 Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
 
+## 2.11.0 – Docked panels and view-models (Stage 3) (2026-11-12)
+- Extracted view-models (`ChestIndexView`, `AreasView`, `PlacesView`, `LogBuffer`) so the docked ImGui panels and the
+  vanilla screens share the same underlying state.
+- **Script Editor panel (`DockedPanels.renderScriptEditorPanel`)**: tabs per script file (`main` + `scripts/*.txt` +
+  `+ Tab`), **Run**, **Test**, **Pick block** (inserts `pos(...)` or `let name = pos(...)` directly in docked mode),
+  custom syntax-coloured code view (`Syntax.colors`) with gutter line numbers, blue running-step highlight, inline
+  `ScriptCheck` error/warning markers and hint lines, and `Suggest` Tab completion. Vanilla `QueueScreen` (key J) stays
+  available as fallback.
+- **Presets panel (`DockedPanels.renderPresetsPanel`)**: filterable list of `Config.presets` with code preview tooltips,
+  **Insert**, **Copy**, delete (**X**), **Save script as preset**, and `PresetShare` **Copy all / Paste / Export / Import**.
+- **Chests panel (`DockedPanels.renderChestsPanel`, `ChestIndexView`)**: searchable, sortable 4-column table (`Item`,
+  `Count`, `Chest`, `Status`) over `dev.survivalkit.ChestIndex`, category filters (`All`, `Blocks`, `Tools`, `Food`,
+  `Ores`, `Redstone`, `Other`), **Low stock only** filter, and detail pane with **Show in world** (particle highlight),
+  **Copy position as pos(...)**, and **Go there (Baritone)**.
+- **Areas & Capture panels (`DockedPanels.renderAreasPanel`, `renderCapturePanel`, `AreasView`, `PlacesView`)**: lists
+  saved areas, chests, spots, and Litematica placements; ports all `Capture.Type` roles (`dump`, `supply`, `return`,
+  `material`, `scaffolding`, `bed`, `mine`, `fill`, `build`, `safe`, `spot`, `area`, `schematic`) with **Fetch looked-at**,
+  **Aim in world**, **Use #sel**, **Import saved**, **Copy context**, and live capture sheet editor.
+- **Log & Assistant panels (`DockedPanels.renderLogPanel`, `renderAssistantPanel`, `LogBuffer`)**: 500-entry ring buffer
+  fed by `Util.msg`, `Util.warn`, Baritone actions, and script errors with **All / Errors / Baritone** filters, **Copy**,
+  **Clear**, a disabled **Send error to Assistant** button, and an Assistant tab stub.
+- Tested with unit tests in `LangTest` and in-game test `panels`.
+
 ## 2.10.0 – Docked shell and dashboard (Stage 2) (2026-11-12)
 - Enabled Dear ImGui `DockSpace` (`ImGuiConfigFlags.DockingEnable`) with a default 2x2 layout built via `DockBuilder`
   (`ImGuiManager.buildDefault2x2Layout`): Top-left (`Script Editor`, `Presets`), Top-right (`Game Viewport` with tab bar
