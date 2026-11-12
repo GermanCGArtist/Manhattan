@@ -1,0 +1,5 @@
+print("TEST viewport mine start")
+area_box("mine_spot", pos(102, -60, 100), pos(102, -60, 100))
+area("mine_spot")
+#sel ca
+print("TEST viewport mine done")

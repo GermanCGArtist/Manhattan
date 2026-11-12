@@ -24,7 +24,7 @@ public class QueueMod implements ClientModInitializer {
     static final ChestProcess chest = new ChestProcess();
     static final ClearProcess clear = new ClearProcess();
     static final SchemProcess schem = new SchemProcess();
-    static KeyMapping open, capture, spike;
+    static KeyMapping open, capture, spike, fullscreen;
     private boolean registered = false;
     private int noPlayer, areaTick;
 
@@ -38,6 +38,7 @@ public class QueueMod implements ClientModInitializer {
         open = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.baritonequeue.open", 74 /* GLFW_KEY_J */, category));
         capture = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.baritonequeue.capture", 75 /* GLFW_KEY_K */, category));
         spike = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.baritonequeue.imgui", 298 /* GLFW_KEY_F9 */, category));
+        fullscreen = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.baritonequeue.fullscreen", 297 /* GLFW_KEY_F8 */, category));
 
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> SchemCmd.register(dispatcher));
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
@@ -352,6 +353,9 @@ public class QueueMod implements ClientModInitializer {
         }
         while (spike.consumeClick()) {
             ImGuiManager.toggleSpike();
+        }
+        while (fullscreen.consumeClick()) {
+            ImGuiManager.toggleFullscreenGame();
         }
         Capture.tick(mc);
         clear.tick();

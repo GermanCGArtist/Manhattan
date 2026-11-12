@@ -2,6 +2,21 @@
 
 Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
 
+## 2.9.0 – Game viewport (Stage 1) (2026-11-12)
+- When `ui.mode = docked` and F8 fullscreen is off, the Minecraft frame (`mainRenderTarget`) is blitted into the
+  top-right quarter of the window (`ImGuiManager`, `GlStateManager._glBlitFrameBuffer`) with a 1px focus border,
+  top control bar, and surrounding panel shell.
+- Remapped mouse coordinates (`MouseHandlerMixin`, `ImGuiManager.remapMouseX/Y`) so aiming, clicking, Pick block, and
+  vanilla screens (inventory, chests, script editor) work at the reduced viewport size across window resizes and
+  Minecraft GUI scales.
+- Keyboard input is gated on Game Viewport focus (`ImGuiManager.isGameFocused()`): clicking inside the Game Viewport
+  focuses it and sends keys to Minecraft; clicking outside on ImGui panels unfocuses the game view and blocks keys from
+  leaking into gameplay.
+- Added **F8** keybind (`key.baritonequeue.fullscreen`) and top-bar **Fullscreen game (F8)** button to hide all panels
+  and expand the game to fill the window, restoring the docked layout on toggle.
+- Tested in game with new `viewport` test (top-right viewport geometry, focus gating, walking, Baritone mining,
+  Pick block, chest slot clicking, resize, GUI scale, and F8 fullscreen toggle).
+
 ## 2.8.0 – Dear ImGui spike (Stage 0) (2026-11-12)
 - Bundled `imgui-java` 1.90.0 (`imgui-java-binding`, `imgui-java-lwjgl3`, `imgui-java-natives-windows`) directly into the
   mod jar (`ImGuiManager`, client mixins `RenderSystemMixin`, `KeyboardHandlerMixin`, `MouseHandlerMixin`). Natives are

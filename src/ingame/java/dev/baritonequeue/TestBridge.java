@@ -382,6 +382,29 @@ public class TestBridge implements ClientModInitializer {
                     int h = Integer.parseInt(a[2]);
                     org.lwjgl.glfw.GLFW.glfwSetWindowSize(win, w, h);
                 }
+                case "fullscreen" -> {
+                    if (a.length > 1) ImGuiManager.setFullscreenGame(Boolean.parseBoolean(a[1]));
+                    else ImGuiManager.toggleFullscreenGame();
+                }
+                case "guiscale" -> {
+                    int scale = Integer.parseInt(a[1]);
+                    mc.options.guiScale().set(scale);
+                    mc.resizeGui();
+                }
+                case "clickgui" -> {
+                    double gx = Double.parseDouble(a[1]);
+                    double gy = Double.parseDouble(a[2]);
+                    int btn = a.length > 3 ? Integer.parseInt(a[3]) : 0;
+                    double wx = ImGuiManager.guiToWindowX(gx);
+                    double wy = ImGuiManager.guiToWindowY(gy);
+                    var move = net.minecraft.client.MouseHandler.class.getDeclaredMethod("onMove", long.class, double.class, double.class);
+                    var button = net.minecraft.client.MouseHandler.class.getDeclaredMethod("onButton", long.class, net.minecraft.client.input.MouseButtonInfo.class, int.class);
+                    move.setAccessible(true);
+                    button.setAccessible(true);
+                    move.invoke(mc.mouseHandler, win, wx, wy);
+                    button.invoke(mc.mouseHandler, win, new net.minecraft.client.input.MouseButtonInfo(btn, 0), 1);
+                    button.invoke(mc.mouseHandler, win, new net.minecraft.client.input.MouseButtonInfo(btn, 0), 0);
+                }
                 default -> {
                     return err("unknown imgui subcommand: " + a[0]);
                 }
@@ -389,17 +412,28 @@ public class TestBridge implements ClientModInitializer {
         }
         float[] wr = ImGuiManager.windowRect();
         float[] sr = ImGuiManager.stopButtonRect();
+        float[] vr = ImGuiManager.viewportRect();
+        float[] fr = ImGuiManager.fullscreenButtonRect();
         return ok("\"initialized\":" + ImGuiManager.isInitialized()
                 + ",\"spikeOpen\":" + ImGuiManager.isSpikeOpen()
                 + ",\"focused\":" + ImGuiManager.isFocused()
+                + ",\"gameFocused\":" + ImGuiManager.isGameFocused()
+                + ",\"fullscreenGame\":" + ImGuiManager.isFullscreenGame()
+                + ",\"dockedActive\":" + ImGuiManager.isDockedViewportActive()
                 + ",\"framesRendered\":" + ImGuiManager.framesRendered()
                 + ",\"displayW\":" + ImGuiManager.displayWidth()
                 + ",\"displayH\":" + ImGuiManager.displayHeight()
+                + ",\"guiScale\":" + mc.getWindow().getGuiScale()
+                + ",\"guiScaledW\":" + mc.getWindow().getGuiScaledWidth()
+                + ",\"guiScaledH\":" + mc.getWindow().getGuiScaledHeight()
+                + ",\"vpX\":" + vr[0] + ",\"vpY\":" + vr[1] + ",\"vpW\":" + vr[2] + ",\"vpH\":" + vr[3]
+                + ",\"fsX\":" + fr[0] + ",\"fsY\":" + fr[1] + ",\"fsW\":" + fr[2] + ",\"fsH\":" + fr[3]
                 + ",\"winX\":" + wr[0] + ",\"winY\":" + wr[1] + ",\"winW\":" + wr[2] + ",\"winH\":" + wr[3]
                 + ",\"stopX\":" + sr[0] + ",\"stopY\":" + sr[1] + ",\"stopW\":" + sr[2] + ",\"stopH\":" + sr[3]
                 + ",\"runnerRunning\":" + RunnerView.running()
                 + ",\"runnerLine\":" + RunnerView.line()
                 + ",\"runnerActions\":" + RunnerView.actionsDone()
+                + ",\"picking\":" + QueueMod.picking
                 + ",\"uiMode\":" + q(Config.cfg.uiMode)
                 + ",\"note\":" + q(ImGuiManager.noteText()));
     }

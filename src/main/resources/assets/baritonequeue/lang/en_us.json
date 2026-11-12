@@ -2,5 +2,6 @@
   "key.baritonequeue.open": "Open the script editor",
   "key.baritonequeue.capture": "Open the capture menu",
   "key.baritonequeue.imgui": "Toggle ImGui runner window",
+  "key.baritonequeue.fullscreen": "Toggle fullscreen game view",
   "key.category.baritonequeue.main": "Manhattan"
 }

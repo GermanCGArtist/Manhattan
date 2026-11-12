@@ -39,6 +39,10 @@ acts on its own: the script starts them. The packages talk through small `Api` c
 - Dear ImGui (`ImGuiManager`, `RunnerView`): `imgui-java` 1.90.0 rendered at `RenderSystem.flipFrame` before buffer swap,
   with input forwarded from `KeyboardHandlerMixin` and `MouseHandlerMixin` (`installCallbacks = false` so GLFW callbacks
   are never overwritten). `ui.mode = vanilla | docked` (default `vanilla`); key **F9** toggles the Stage 0 runner spike window.
+  When `ui.mode = docked` and F8 fullscreen (`key.baritonequeue.fullscreen`) is off, `mainRenderTarget` is blitted into the
+  top-right quarter Game Viewport via `GlStateManager._glBlitFrameBuffer`, `MouseHandlerMixin` linearly remaps cursor
+  coordinates from the Game Viewport rectangle to full-screen GUI coordinates, and keyboard input is routed to the game
+  only when the Game Viewport is focused.
 - Capture menu: `CaptureScreen` (the menu), `Capture` (roles, sheet files per world and set, rapid aiming,
   particle outlines, full context), `CaptureSheet` (the sheet's text without the game; tested in `LangTest`).
 - `Migrate` converts pre-2.0 scripts and presets once on load.

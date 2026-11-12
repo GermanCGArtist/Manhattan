@@ -152,6 +152,164 @@ def test_imgui_spike(t):
     return "ImGui rendered (%d frames), Runner state shown, focus blocked J/K leak, resize 960x540 ok, Stop button halted script" % st["framesRendered"]
 
 
+def test_viewport(t):
+    """Stage 1 Game Viewport: top-right quarter blit, mouse remapping for chests & Pick block, keyboard focus gating, resize/GUI scale/F8."""
+    reset_area(t)
+    t.b("screen close")
+    t.b("imgui close")
+    t.b("imgui fullscreen false")
+    t.b("chat /queue ui docked")
+    t.wait_chat("UI mode set to 'docked'.", 5)
+
+    # 1. Verify top-right quarter Game Viewport geometry
+    st = t.b.wait(lambda: (lambda s: s if s["dockedActive"] and s["framesRendered"] > 0 else None)(t.b("imgui")),
+                  10, step=0.2, what="docked viewport to render")
+    dw, dh = st["displayW"], st["displayH"]
+    exp_x = float(dw // 2)
+    exp_y = 30.0
+    exp_w = float(dw - int(exp_x))
+    exp_h = float((dh - 30) // 2)
+    if (st["vpX"], st["vpY"], st["vpW"], st["vpH"]) != (exp_x, exp_y, exp_w, exp_h):
+        raise Fail("unexpected viewport rect: got (%s,%s,%s,%s), expected (%s,%s,%s,%s)"
+                   % (st["vpX"], st["vpY"], st["vpW"], st["vpH"], exp_x, exp_y, exp_w, exp_h))
+
+    # 2. Verify keyboard focus gating: clicking outside viewport blocks keys; clicking inside viewport focuses game
+    t.b("imgui click 80 100 0")
+    st = t.b("imgui")
+    if st["gameFocused"]:
+        raise Fail("clicking outside Game Viewport did not unfocus the game view: %s" % st)
+    # Press E (69) and J (74) while gameFocused is False -> must NOT open InventoryScreen or QueueScreen
+    t.b("imgui key 69 1 0")
+    t.b("imgui key 69 0 0")
+    t.b("imgui key 74 1 0")
+    t.b("imgui key 74 0 0")
+    time.sleep(0.25)
+    if t.state()["screen"] != "":
+        raise Fail("keyboard input leaked to game while Game Viewport was unfocused: screen=%s" % t.state()["screen"])
+
+    # Click inside the Top-Right Game Viewport -> gameFocused becomes True
+    vcx = st["vpX"] + st["vpW"] * 0.5
+    vcy = st["vpY"] + st["vpH"] * 0.5
+    t.b("imgui click %.1f %.1f 0" % (vcx, vcy))
+    st = t.b("imgui")
+    if not st["gameFocused"]:
+        raise Fail("clicking inside Game Viewport did not focus the game view: %s" % st)
+
+    # Press E (69) while gameFocused is True -> opens InventoryScreen
+    t.b("imgui key 69 1 0")
+    t.b("imgui key 69 0 0")
+    t.b.wait(lambda: t.state()["screen"].endswith("InventoryScreen"), 5, step=0.2, what="InventoryScreen to open")
+    t.b("screen close")
+    t.b.wait(lambda: t.state()["screen"] == "", 5, step=0.2, what="InventoryScreen to close")
+
+    # 3. Walking at the reduced viewport size
+    t.cmd("/tp @s 100.5 -60 100.5 0 0")
+    time.sleep(0.3)
+    z0 = t.state()["z"]
+    t.b("imgui key 87 1 0")   # hold W
+    time.sleep(0.6)
+    t.b("imgui key 87 0 0")   # release W
+    time.sleep(0.2)
+    z1 = t.state()["z"]
+    if z1 - z0 < 0.8:
+        raise Fail("walking forward in docked viewport did not move player: z0=%.2f z1=%.2f" % (z0, z1))
+
+    # 4. Mining with Baritone at the reduced viewport size
+    t.cmd("/tp @s 100.5 -60 100.5 0 0", "/setblock 102 -60 100 coal_ore", "/give @s diamond_pickaxe 1")
+    time.sleep(0.3)
+    t.run("viewport-mine.txt")
+    t.wait_chat("TEST viewport mine done", 30)
+    t.script_done(10)
+    if "air" not in t.block((102, -60, 100)):
+        raise Fail("Baritone mining in docked viewport failed: block=%s" % t.block((102, -60, 100)))
+
+    # 5. Pick block (both middle-click in world and QueueScreen's Pick block button) inside the reduced viewport
+    t.cmd("/clear @s", "/setblock 100 -60 102 gold_block", "/item replace entity @s inventory.0 with minecraft:gold_block 1",
+          "/tp @s 100.5 -60 100.5 0 25")
+    time.sleep(0.4)
+    t.b("imgui click %.1f %.1f 2" % (vcx, vcy))   # middle-click (button 2) inside Game Viewport
+    t.b.wait(lambda: t.b("held")["item"] == "minecraft:gold_block", 5, step=0.2, what="middle-click Pick block to select gold_block")
+
+    # Also test QueueScreen's Pick block button via remapped viewport coordinates (at guiScale=1 so QueueScreen fits vertically in 480p)
+    t.b("imgui guiscale 1")
+    t.b("chat /queue clear")
+    t.wait_chat("Script cleared.", 5)
+    t.b("editor")
+    t.b.wait(lambda: t.state()["screen"].endswith("QueueScreen"), 5, step=0.2, what="QueueScreen to open")
+    st = t.b("imgui")
+    gw, gh = st["guiScaledW"], st["guiScaledH"]
+    w0 = min(gw - 24, 460)
+    left = (gw - w0) // 2
+    box_y = 40 + 40 + 6
+    box_h = max(60, gh - box_y - 58 - 4 - 16 - 26 - 26 - 6)
+    panel_y = box_y + box_h + 4
+    py = panel_y + 58 + 16
+    by = py + 26
+    bw = (w0 - 20) // 6
+    pick_gx = left + 4 * (bw + 4) + bw * 0.5
+    pick_gy = by + 10
+    t.b("imgui clickgui %.1f %.1f 0" % (pick_gx, pick_gy))
+    t.b.wait(lambda: t.b("imgui")["picking"] and t.state()["screen"] == "", 5, step=0.2, what="Pick block mode from QueueScreen")
+    t.b("imgui key 74 1 0")   # press J while aiming at (100, -60, 102)
+    t.b("imgui key 74 0 0")
+    t.b.wait(lambda: t.state()["screen"].endswith("QueueScreen"), 5, step=0.2, what="QueueScreen to reopen after Pick block")
+    t.b("screen close")
+    t.b("imgui guiscale 0")
+
+    # 6. Opening a chest and clicking slots inside ContainerScreen via remapped Game Viewport coordinates
+    t.cmd("/clear @s", "/setblock 100 -60 102 chest",
+          "/item replace block 100 -60 102 container.0 with minecraft:diamond 16",
+          "/tp @s 100.5 -60 100.5 0 25")
+    time.sleep(0.4)
+    t.b("imgui click %.1f %.1f 1" % (vcx, vcy))   # right-click chest inside Game Viewport
+    t.b.wait(lambda: t.state()["screen"].endswith("ContainerScreen"), 5, step=0.2, what="ContainerScreen to open")
+    time.sleep(0.25)
+    st = t.b("imgui")
+    gw, gh = st["guiScaledW"], st["guiScaledH"]
+    c_left = (gw - 176) // 2
+    c_top = (gh - 168) // 2
+    # Click slot 0 of the chest (c_left + 16, c_top + 26), then click player hotbar slot 0 (c_left + 16, c_top + 150)
+    t.b("imgui clickgui %.1f %.1f 0" % (c_left + 16, c_top + 26))
+    time.sleep(0.2)
+    t.b("imgui clickgui %.1f %.1f 0" % (c_left + 16, c_top + 150))
+    time.sleep(0.2)
+    t.b("screen close")
+    t.b.wait(lambda: t.count("diamond") == 16, 5, step=0.2, what="16 diamonds transferred from chest via remapped viewport clicks")
+
+    # 7. Window resize, GUI scale, and F8 fullscreen toggle
+    t.b("imgui resize 1024 600")
+    t.b.wait(lambda: t.b("imgui")["displayW"] == 1024 and t.b("imgui")["displayH"] == 600, 5, step=0.2, what="window resize 1024x600")
+    st = t.b("imgui")
+    if st["vpX"] != 512.0 or st["vpW"] != 512.0:
+        raise Fail("viewport did not update on 1024x600 resize: %s" % st)
+
+    t.b("imgui guiscale 1")
+    t.b.wait(lambda: t.b("imgui")["guiScale"] == 1, 5, step=0.2, what="guiScale=1")
+    t.b("imgui guiscale 0")
+
+    t.b("imgui resize %d %d" % (dw, dh))
+    t.b.wait(lambda: t.b("imgui")["displayW"] == dw and t.b("imgui")["displayH"] == dh, 5, step=0.2, what="window resize restore")
+
+    # Press F8 (297) -> fullscreenGame = True, panels hidden, game fills window
+    t.b("imgui key 297 1 0")
+    t.b("imgui key 297 0 0")
+    st = t.b.wait(lambda: (lambda s: s if s["fullscreenGame"] else None)(t.b("imgui")), 5, step=0.2, what="F8 fullscreenGame on")
+    if st["dockedActive"] or (st["vpX"], st["vpY"], st["vpW"], st["vpH"]) != (0.0, 0.0, float(dw), float(dh)):
+        raise Fail("F8 fullscreen did not expand viewport to full window: %s" % st)
+
+    # Press F8 (297) again -> fullscreenGame = False, panels restored, game back in top-right quarter
+    t.b("imgui key 297 1 0")
+    t.b("imgui key 297 0 0")
+    st = t.b.wait(lambda: (lambda s: s if not s["fullscreenGame"] and s["dockedActive"] else None)(t.b("imgui")),
+                  5, step=0.2, what="F8 fullscreenGame off")
+    if (st["vpX"], st["vpY"], st["vpW"], st["vpH"]) != (exp_x, exp_y, exp_w, exp_h):
+        raise Fail("F8 restore did not return viewport to top-right quarter: %s" % st)
+
+    t.b("chat /queue ui vanilla")
+    t.wait_chat("UI mode set to 'vanilla'.", 5)
+    return "top-right viewport %.0fx%.0f, focus gating ok, walking/Baritone mining/Pick block/chest slot click ok, resize/GUI scale/F8 ok" % (exp_w, exp_h)
+
+
 def test_fill_water(t):
     """fill_water("dirt") fills a 3x3, 2-deep pool, never a cell above water."""
     reset_area(t)
@@ -1276,7 +1434,7 @@ def test_trees_forest(t):
 TREE_TESTS = [("trees_small", test_trees_small), ("trees_forest", test_trees_forest)]
 
 
-TESTS = [("smoke", test_smoke), ("imgui_spike", test_imgui_spike), ("fill_water", test_fill_water), ("eat", test_eat), ("defend", test_defend), ("clear_resume", test_clear_resume), ("dump", test_dump), ("hotbar_tools", test_hotbar_tools), ("air", test_air), ("clear_wet", test_clear_wet),
+TESTS = [("smoke", test_smoke), ("imgui_spike", test_imgui_spike), ("viewport", test_viewport), ("fill_water", test_fill_water), ("eat", test_eat), ("defend", test_defend), ("clear_resume", test_clear_resume), ("dump", test_dump), ("hotbar_tools", test_hotbar_tools), ("air", test_air), ("clear_wet", test_clear_wet),
          ("schem_list", test_schem_list), ("schem_add", test_schem_add), ("schem_fix", test_schem_fix), ("schem_fix_wrong", test_schem_fix_wrong), ("schem_exact", test_schem_exact)]
 
 TESTS += CANAL_TESTS
