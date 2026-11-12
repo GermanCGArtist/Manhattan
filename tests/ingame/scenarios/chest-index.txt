@@ -1,0 +1,49 @@
+// chest index: three chests (a: stone, b: gravel, c: sand); count the chests every step opens (run_tests.py reads the chat)
+stall(1)
+let a = pos(96, -60, 96)
+let b = pos(96, -60, 98)
+let c = pos(96, -60, 100)
+let all = [a, b, c]
+let got = 0
+let have = 0
+
+// 1: nothing known yet: gravel is looked for in the nearest chests until it is found (c, then b)
+print("TEST start 1")
+got = take_upto(all, "gravel", 10)
+have = count("gravel")
+print("TEST end 1 got={got} have={have}")
+
+// 2: stone: c and b are known not to hold it, only a is unknown: a is the only chest opened
+print("TEST start 2")
+got = take_upto(all, "stone", 5)
+have = count("stone")
+print("TEST end 2 got={got} have={have}")
+
+// 3: more gravel: only b holds it
+print("TEST start 3")
+got = take_upto(all, "gravel", 20)
+have = count("gravel")
+print("TEST end 3 got={got} have={have}")
+
+// 4: an item that is nowhere, every chest fresh: nothing is opened
+print("TEST start 4")
+got = take_upto(all, "emerald", 1)
+have = count("emerald")
+print("TEST end 4 got={got} have={have}")
+
+// 5: entries always stale: every chest is opened once to look
+print("TEST start 5")
+index_refresh(0)
+got = take_upto(all, "emerald", 1)
+index_refresh(30)
+print("TEST end 5 got={got}")
+
+// 6: put the gravel back: only the chest that holds gravel is opened; the index follows
+print("TEST start 6")
+got = put(all, "gravel")
+let seen = chest_contents(b)
+let g = seen.gravel
+let age = chest_age(b)
+let young = age < 5
+print("TEST end 6 put={got} gravel_in_b={g} young={young}")
+print("TEST done")

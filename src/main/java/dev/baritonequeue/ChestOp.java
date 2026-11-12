@@ -16,8 +16,14 @@ final class ChestOp {
     final Item item;       // null for DUMP
     final int count;       // -1 = all, 0 = one stack (get), otherwise that many
     final boolean topUp;   // get ... up to count
+    final boolean soft;    // one chest of a list: nothing to take, or no room, is not a failure
 
     ChestOp(String chest, Kind kind, Item item, int count, boolean topUp) {
+        this(chest, kind, item, count, topUp, false);
+    }
+
+    ChestOp(String chest, Kind kind, Item item, int count, boolean topUp, boolean soft) {
+        this.soft = soft;
         this.chest = chest;
         this.kind = kind;
         this.item = item;

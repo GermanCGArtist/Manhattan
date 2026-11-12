@@ -48,6 +48,12 @@ final class ChestProcess implements IBaritoneProcess {
     private String failure;
     private ArrayDeque<Integer> todo;   // menu slot indexes still to move
     private int needed, moved, skipped, reopen;
+    private boolean planned, noItem, full;   // planned: the contents were read; noItem/full: soft op outcomes
+
+    /** The last (soft) take found nothing to take because the inventory had no room. */
+    boolean full() {
+        return full;
+    }
 
     int moved() {
         return moved;
@@ -70,6 +76,11 @@ final class ChestProcess implements IBaritoneProcess {
         todo = null;
         timer = 0;
         reopen = 0;
+        planned = false;
+        noItem = false;
+        full = false;
+        dev.survivalkit.Api.chestHint(chest);   // the index records this chest, not one next to it
+        dev.survivalkit.Api.chestBusy(true);
         state = State.PATHING;
         Util.msg("Chest: " + op.describe() + ".");
         return true;
@@ -78,9 +89,21 @@ final class ChestProcess implements IBaritoneProcess {
     void cancel() {
         if (state == State.IDLE) return;
         Minecraft mc = Minecraft.getInstance();
-        if (mc.player != null && mc.player.containerMenu != mc.player.inventoryMenu) mc.player.closeContainer();
+        closeAndNote(mc);
         state = State.IDLE;
         todo = null;
+    }
+
+    /** Notes what the chest holds now (what was taken or put included), saves the index and closes the chest. */
+    private void closeAndNote(Minecraft mc) {
+        if (mc.player != null && mc.player.containerMenu != mc.player.inventoryMenu) {
+            if (planned) dev.survivalkit.Api.noteOpenChest(chest);
+            mc.player.closeContainer();
+        }
+        planned = false;
+        dev.survivalkit.Api.chestHint(null);
+        dev.survivalkit.Api.chestBusy(false);
+        dev.survivalkit.Api.saveChestIndex();
     }
 
     // ------------------------------------------------------------------ Baritone process
@@ -88,7 +111,7 @@ final class ChestProcess implements IBaritoneProcess {
     @Override
     public boolean isActive() {
         if (state != State.IDLE && PauseWatch.paused) { cancel(); return false; }
-        if (state != State.IDLE && Minecraft.getInstance().player == null) state = State.IDLE;
+        if (state != State.IDLE && Minecraft.getInstance().player == null) { state = State.IDLE; dev.survivalkit.Api.chestBusy(false); }
         return state != State.IDLE;
     }
 
@@ -109,7 +132,7 @@ final class ChestProcess implements IBaritoneProcess {
     private PathingCommand fail(String why) {
         failure = why;
         Minecraft mc = Minecraft.getInstance();
-        if (mc.player != null && mc.player.containerMenu != mc.player.inventoryMenu) mc.player.closeContainer();
+        closeAndNote(mc);
         state = State.IDLE;
         todo = null;
         return pause();
@@ -118,7 +141,7 @@ final class ChestProcess implements IBaritoneProcess {
     private PathingCommand finish(String text) {
         Util.msg(text);
         Minecraft mc = Minecraft.getInstance();
-        if (mc.player != null && mc.player.containerMenu != mc.player.inventoryMenu) mc.player.closeContainer();
+        closeAndNote(mc);
         state = State.IDLE;
         todo = null;
         return pause();
@@ -131,7 +154,7 @@ final class ChestProcess implements IBaritoneProcess {
     private PathingCommand step(boolean calcFailed) {
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer p = mc.player;
-        if (p == null || mc.gameMode == null || mc.level == null) { state = State.IDLE; return pause(); }
+        if (p == null || mc.gameMode == null || mc.level == null) { state = State.IDLE; dev.survivalkit.Api.chestBusy(false); return pause(); }
 
         switch (state) {
             case PATHING -> {
@@ -147,6 +170,7 @@ final class ChestProcess implements IBaritoneProcess {
             }
             case OPENING -> {
                 if (!isStorage(mc.level.getBlockState(chest).getBlock())) {
+                    dev.survivalkit.Api.forgetChest(chest);   // not a chest any more: out of the index
                     return fail("There is no chest, barrel or shulker box at " + chest.toShortString() + ". Is the position right?");
                 }
                 if (p.containerMenu != p.inventoryMenu) {
@@ -175,9 +199,11 @@ final class ChestProcess implements IBaritoneProcess {
                 }
                 if (todo == null) {
                     if (++timer < 8) return pause();   // on a server the contents can arrive a moment after it opens
+                    planned = true;
+                    dev.survivalkit.Api.noteOpenChest(chest);   // every look into a chest updates the index
                     String problem = plan(p, h);
                     if (problem != null) return fail(problem);
-                    if (todo.isEmpty()) return finish(nothingToDo());
+                    if (todo.isEmpty()) return finish(noItem ? "No " + ChestOp.name(op.item) + " in " + op.chest + "." : nothingToDo());
                 }
                 if (++timer % 2 != 0) return pause();   // one click every 2 ticks
                 Integer index = todo.poll();
@@ -245,6 +271,7 @@ final class ChestProcess implements IBaritoneProcess {
                     available += s.getItem().getCount();
                     todo.add(s.index);
                 }
+                if (available == 0 && op.soft) { noItem = true; return null; }
                 if (available == 0) return "The chest " + op.chest + " has no " + ChestOp.name(op.item) + ".";
             }
             case PUT -> {
@@ -391,6 +418,10 @@ final class ChestProcess implements IBaritoneProcess {
         String what = op.kind == ChestOp.Kind.DUMP ? "items" : ChestOp.name(op.item);
         switch (op.kind) {
             case GET -> {
+                if (moved == 0 && op.soft) {
+                    full = true;
+                    return "No room in the inventory for " + what + " from " + op.chest + ".";
+                }
                 if (moved == 0) {
                     failure = "Could not take any " + what + " from '" + op.chest + "': the inventory is full.";
                     return failure;

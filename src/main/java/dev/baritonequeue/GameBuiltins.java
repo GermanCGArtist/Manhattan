@@ -400,27 +400,137 @@ final class GameBuiltins {
 
     // ------------------------------------------------------------------ chests
 
+    /** A list of chests (positions or saved names), or null when the argument is a single chest. */
+    private static List<Object[]> chestList(Object v, String fn, int line) {
+        if (!(v instanceof List<?> list)) return null;
+        List<Object[]> out = new ArrayList<>();
+        for (Object o : list) {
+            Object[] c = chest(o, fn, line);
+            boolean dup = false;
+            for (Object[] x : out) if (x[0].equals(c[0])) { dup = true; break; }
+            if (!dup) out.add(c);
+        }
+        return out;
+    }
+
+    private static String itemId(Item it) {
+        return BuiltInRegistries.ITEM.getKey(it).toString();
+    }
+
+    private static int freeSlots(LocalPlayer p) {
+        int n = 0;
+        for (int k = 0; k < 36; k++) if (p.getInventory().getItem(k).isEmpty()) n++;
+        return n;
+    }
+
+    /** Hands a chest op to the game thread; null = skipped or failed (a failure is reported, not thrown). */
+    private static Double softAwait(Interp in, ChestOp op, BlockPos at, String text, int line, boolean[] stopped) {
+        Actions.Action act = in.awaitRaw(() -> new Actions.Chest(op, at), text, line);
+        if (act == null) { stopped[0] = true; return null; }
+        if (act.error != null) {
+            Util.msg("Chest " + op.chest + ": " + act.error);
+            return null;
+        }
+        return act.result instanceof Double d ? d : 0.0;
+    }
+
+    /**
+     * take/take_upto over several chests, by the chest index: first the chests known to hold the item (nearest to
+     * where the player is now), then, if that was not enough, the unknown or stale ones (each opened once, which
+     * refreshes the index). Chests that are known to be empty of it, and fresh, are not visited at all.
+     */
+    private static Object listTake(Interp in, List<Object[]> cs, Item it, int n, boolean upto, int keepFree, int line) {
+        String name = ChestOp.name(it), id = itemId(it);
+        List<Object[]> left = new ArrayList<>(cs);
+        int total = 0, visited = 0;
+        boolean[] stopped = {false};
+        while (!left.isEmpty() && !stopped[0]) {
+            LocalPlayer p = player(line);
+            int have = count(p, name);
+            int need = upto ? n - have : n < 0 ? Integer.MAX_VALUE : n - total;
+            if (need <= 0) break;
+            if (keepFree > 0 && freeSlots(p) <= keepFree) break;
+            BlockPos me = p.blockPosition();
+            Object[] best = null;
+            int bestRank = 9;
+            double bestDist = 0;
+            for (Object[] c : left) {
+                var info = dev.survivalkit.Api.chestInfo((BlockPos) c[0], id);
+                if (info.known() && info.fresh() && info.count() == 0) continue;   // seen lately, none of it in there
+                int rank = info.known() && info.count() > 0 ? 0 : 1;
+                double d = ((BlockPos) c[0]).distSqr(me);
+                if (best == null || rank < bestRank || (rank == bestRank && d < bestDist)) { best = c; bestRank = rank; bestDist = d; }
+            }
+            if (best == null) break;
+            left.remove(best);
+            visited++;
+            ChestOp op = new ChestOp((String) best[1], ChestOp.Kind.GET, it, upto ? n : need, upto, true);
+            Double got = softAwait(in, op, (BlockPos) best[0], "take " + name, line, stopped);
+            if (got != null) total += got.intValue();
+            if (QueueMod.chest.full()) break;
+        }
+        if (visited == 0 && count(player(line), name) < (upto ? n : 1)) {
+            Util.msg("No " + name + " in the " + cs.size() + " chests (as far as the chest index knows, seen within "
+                    + (int) dev.survivalkit.Api.indexRefresh() + " min): not walking anywhere.");
+        }
+        return (double) total;
+    }
+
+    /** put over several chests: only those the index knows to hold the item, nearest first, until it is all in. */
+    private static Object listPut(Interp in, List<Object[]> cs, Item it, int n, int line) {
+        String name = ChestOp.name(it), id = itemId(it);
+        List<Object[]> left = new ArrayList<>(cs);
+        int total = 0;
+        boolean[] stopped = {false};
+        while (!left.isEmpty() && !stopped[0]) {
+            LocalPlayer p = player(line);
+            if (count(p, name) == 0 || (n >= 0 && total >= n)) break;
+            BlockPos me = p.blockPosition();
+            Object[] best = null;
+            double bestDist = 0;
+            for (Object[] c : left) {
+                var info = dev.survivalkit.Api.chestInfo((BlockPos) c[0], id);
+                if (!info.known() || info.count() == 0) continue;
+                double d = ((BlockPos) c[0]).distSqr(me);
+                if (best == null || d < bestDist) { best = c; bestDist = d; }
+            }
+            if (best == null) break;
+            left.remove(best);
+            ChestOp op = new ChestOp((String) best[1], ChestOp.Kind.PUT, it, n < 0 ? -1 : n - total, false, true);
+            Double put = softAwait(in, op, (BlockPos) best[0], "put " + name, line, stopped);
+            if (put != null) total += put.intValue();
+        }
+        return (double) total;
+    }
+
     private static void chests() {
         String g = "chests";
-        def(g, "take", 2, 3, "take(chest, \"item\" [, count | \"all\"])", "walk to the chest and take items (default one stack); returns how many", (in, a, l) -> {
-            Object[] c = chest(a.get(0), "take()", l);
+        def(g, "take", 2, 3, "take(chest | chests, \"item\" [, count | \"all\"])", "walk to the chest and take items (default one stack); returns how many. Given a list of chests it uses the chest index: only chests known to hold the item, nearest first, until it has that many; unknown or stale chests are opened once to look", (in, a, l) -> {
+            List<Object[]> many = chestList(a.get(0), "take()", l);
             Item it = item(a.get(1), "take()", l);
             int n = 0;
             if (a.size() > 2) n = "all".equals(a.get(2)) ? -1 : Math.max(1, toInt(a.get(2), "The count", l));
+            if (many != null) return listTake(in, many, it, n == 0 ? new ItemStack(it).getMaxStackSize() : n, false, 0, l);
+            Object[] c = chest(a.get(0), "take()", l);
             ChestOp op = new ChestOp((String) c[1], ChestOp.Kind.GET, it, n, false);
             return in.await(() -> new Actions.Chest(op, (BlockPos) c[0]), "take " + ChestOp.name(it), l);
         });
-        def(g, "take_upto", 3, 3, "take_upto(chest, \"item\", count)", "take only as many as needed to carry that many in all; returns how many were taken", (in, a, l) -> {
-            Object[] c = chest(a.get(0), "take_upto()", l);
+        def(g, "take_upto", 3, 4, "take_upto(chest | chests, \"item\", count [, keep_free])", "take only as many as needed to carry that many in all; returns how many were taken. Given a list of chests it uses the chest index (see take); keep_free = stop when only that many inventory slots are empty", (in, a, l) -> {
+            List<Object[]> many = chestList(a.get(0), "take_upto()", l);
             Item it = item(a.get(1), "take_upto()", l);
             int n = Math.max(1, toInt(a.get(2), "The count", l));
+            if (many != null) return listTake(in, many, it, n, true, a.size() > 3 ? Math.max(0, toInt(a.get(3), "keep_free", l)) : 0, l);
+            if (a.size() > 3) throw error("keep_free only works with a list of chests.", l);
+            Object[] c = chest(a.get(0), "take_upto()", l);
             ChestOp op = new ChestOp((String) c[1], ChestOp.Kind.GET, it, n, true);
             return in.await(() -> new Actions.Chest(op, (BlockPos) c[0]), "take up to " + n + " " + ChestOp.name(it), l);
         });
-        def(g, "put", 2, 3, "put(chest, \"item\" [, count])", "walk to the chest and put that item in (default all of it); returns how many", (in, a, l) -> {
-            Object[] c = chest(a.get(0), "put()", l);
+        def(g, "put", 2, 3, "put(chest | chests, \"item\" [, count])", "walk to the chest and put that item in (default all of it); returns how many. Given a list of chests it goes only to those the index knows to hold that item, nearest first, until all is in", (in, a, l) -> {
+            List<Object[]> many = chestList(a.get(0), "put()", l);
             Item it = item(a.get(1), "put()", l);
             int n = a.size() > 2 && !"all".equals(a.get(2)) ? Math.max(1, toInt(a.get(2), "The count", l)) : -1;
+            if (many != null) return listPut(in, many, it, n, l);
+            Object[] c = chest(a.get(0), "put()", l);
             ChestOp op = new ChestOp((String) c[1], ChestOp.Kind.PUT, it, n, false);
             return in.await(() -> new Actions.Chest(op, (BlockPos) c[0]), "put " + ChestOp.name(it), l);
         });
@@ -443,7 +553,16 @@ final class GameBuiltins {
             }
             return out;
         });
-        def(g, "chest_contents", 1, 3, "chest_contents(chest)", "what the chest held when it was last open: a map item -> count (null if never seen)", (in, a, l) -> {
+        def(g, "index_refresh", 0, 1, "index_refresh([minutes])", "how old a chest index entry may get before take/take_upto/put with a list of chests open that chest again (default 30; 0 = always); with a number it sets it; returns the value", (in, a, l) -> {
+            if (!a.isEmpty()) dev.survivalkit.Api.setIndexRefresh(toNum(a.get(0), "The minutes", l));
+            return dev.survivalkit.Api.indexRefresh();
+        });
+        def(g, "chest_age", 1, 3, "chest_age(chest)", "minutes since the chest was last seen open (null if never seen); never walks anywhere", (in, a, l) -> {
+            Pos p = toPos(a, 0, "chest_age()", l);
+            var info = dev.survivalkit.Api.chestInfo(p.block(), "minecraft:air");
+            return info.known() ? (Object) info.ageMinutes() : null;
+        });
+        def(g, "chest_contents", 1, 3, "chest_contents(chest)", "what the chest held when it was last open: a map item -> count (null if never seen); reads the chest index, never walks anywhere", (in, a, l) -> {
             Pos p = toPos(a, 0, "chest_contents()", l);
             var m = dev.survivalkit.Api.chestContents(p.block());
             if (m == null) return null;

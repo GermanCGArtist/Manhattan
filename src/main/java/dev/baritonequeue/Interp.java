@@ -54,6 +54,14 @@ final class Interp {
 
     /** Runs something that takes time in the world (a Baritone task, a chest trip ...) and waits for it. */
     Object await(Supplier<Actions.Action> factory, String text, int line) {
+        Actions.Action a = awaitRaw(factory, text, line);
+        if (a == null) return null;
+        if (a.error != null) throw error(a.error, line);
+        return a.result;
+    }
+
+    /** Like await, but hands back the finished action (null if it was skipped) so the caller can read a failure. */
+    Actions.Action awaitRaw(Supplier<Actions.Action> factory, String text, int line) {
         if (fiber == null) throw error("An 'on' condition cannot start '" + text + "'. Put it inside the block.", line);
         fiber.actionText = text;
         fiber.actionLine = line;
@@ -64,8 +72,6 @@ final class Interp {
         fiber.action = null;
         fiber.wanted = null;
         budget = 0;
-        if (a == null) return null;
-        if (a.error != null) throw error(a.error, line);
-        return a.result;
+        return a;
     }
 }

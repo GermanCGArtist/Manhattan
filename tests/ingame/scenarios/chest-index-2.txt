@@ -1,0 +1,17 @@
+// chest index after a rejoin: the index comes from the file
+stall(1)
+let a = pos(96, -60, 96)
+let b = pos(96, -60, 98)
+let c = pos(96, -60, 100)
+let all = [a, b, c]
+let known = chest_contents(a)
+let n_a = known.stone
+print("TEST known stone_in_a={n_a}")
+print("TEST start 7")
+let got = take_upto(all, "emerald", 1)
+print("TEST end 7 got={got}")
+print("TEST start 8")
+got = take_upto(all, "sand", 10)
+let have = count("sand")
+print("TEST end 8 got={got} have={have}")
+print("TEST done")

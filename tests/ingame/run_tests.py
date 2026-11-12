@@ -1490,6 +1490,59 @@ CANAL_TESTS = [("canal_layers", test_canal_layers), ("canal_pillar_scaffold", te
                ("canal_tools_schem", test_canal_tools_schem), ("canal_schem_water", test_canal_schem_water), ("canal_move", test_canal_move), ("canal_flood_resume", test_canal_flood_resume)]
 
 
+def chest_opens(t, n):
+    """How many chests the script opened between its 'TEST start n' and 'TEST end n' lines, and the end line."""
+    lines = t.lines()
+    i = next((k for k, l in enumerate(lines) if "TEST start %d" % n in l), None)
+    j = next((k for k, l in enumerate(lines) if "TEST end %d" % n in l), None)
+    if i is None or j is None:
+        raise Fail("step %d did not run (chat: %s)" % (n, lines[-3:]))
+    return sum(1 for l in lines[i:j] if "] Chest: " in l or l.strip().startswith("Chest: ")), lines[j], lines[i:j]
+
+
+def test_chest_index(t):
+    """The chest index: a fetch from a list of chests opens only the chests known to hold the item (nearest first),
+    one that is nowhere opens nothing while the index is fresh, stale entries are opened again, and the index
+    survives leaving and rejoining the world."""
+    name = "chest-index-%d" % RUN_ID
+    new_world(t, "chest-index", kit=False)
+    chest_with(t, (96, -60, 96), [("stone", 64)])
+    chest_with(t, (96, -60, 98), [("gravel", 64)])
+    chest_with(t, (96, -60, 100), [("sand", 64)])
+    time.sleep(1)
+    line = run_scenario(t, "chest-index.txt", "TEST done", 240)
+    expect = {1: (2, "got=10 have=10"), 2: (1, "got=5 have=5"), 3: (1, "got=10 have=20"), 4: (0, "got=0 have=0"),
+              5: (3, "got=0"), 6: (1, "put=20 gravel_in_b=64 young=true")}
+    problems = []
+    for n, (opens, text) in expect.items():
+        k, end, steps = chest_opens(t, n)
+        if k != opens or text not in end:
+            problems.append("step %d: %d chests opened (expected %d), %s" % (n, k, opens, end.split("] ")[-1]))
+    if problems:
+        raise Fail("; ".join(problems))
+    # leave and come back: the index is read from its file, the chests were not opened again
+    t.b("leave")
+    t.b.wait(lambda: t.b("state")["screen"].endswith("TitleScreen"), 120, step=1, what="the title screen")
+    t.b("world " + name)
+    t.b.wait(lambda: t.b("state")["inWorld"], 300, step=1, what="the world to load")
+    t.b.wait(lambda: t.b("state")["screen"] == "", 60, step=1, what="the loading screen to close")
+    wait_server(t)
+    time.sleep(3)
+    t.start_log()
+    t.cmd("/tp @s 100 -60 100 0 0")
+    line = run_scenario(t, "chest-index-2.txt", "TEST done", 120)
+    k7, end7, _ = chest_opens(t, 7)
+    k8, end8, _ = chest_opens(t, 8)
+    stone = next((l for l in t.lines() if "TEST known" in l), "")
+    if "stone_in_a=59" not in stone:
+        raise Fail("after the rejoin the index lost the chest contents: %s" % (stone or t.lines()[-3:]))
+    if k7 != 0 or "got=0" not in end7:
+        raise Fail("after the rejoin an item that is nowhere opened %d chests: %s" % (k7, end7))
+    if k8 != 1 or "got=10" not in end8:
+        raise Fail("after the rejoin sand opened %d chests (expected 1, the one that holds it): %s" % (k8, end8))
+    return "cold: 2 opens, then 1, 1, nowhere 0, stale 3, put 1; after the rejoin: nowhere 0, sand 1"
+
+
 def test_hotbar_tools(t):
     """Wanted tools that only sit in the main inventory are moved into the hotbar (not over food or pinned slots)."""
     reset_area(t)
@@ -1635,7 +1688,7 @@ def test_trees_forest(t):
 TREE_TESTS = [("trees_small", test_trees_small), ("trees_forest", test_trees_forest)]
 
 
-TESTS = [("smoke", test_smoke), ("imgui_spike", test_imgui_spike), ("viewport", test_viewport), ("docked_shell", test_docked_shell), ("panels", test_panels), ("fill_water", test_fill_water), ("eat", test_eat), ("defend", test_defend), ("clear_resume", test_clear_resume), ("dump", test_dump), ("hotbar_tools", test_hotbar_tools), ("air", test_air), ("clear_wet", test_clear_wet),
+TESTS = [("smoke", test_smoke), ("imgui_spike", test_imgui_spike), ("viewport", test_viewport), ("docked_shell", test_docked_shell), ("panels", test_panels), ("fill_water", test_fill_water), ("eat", test_eat), ("defend", test_defend), ("clear_resume", test_clear_resume), ("dump", test_dump), ("chest_index", test_chest_index), ("hotbar_tools", test_hotbar_tools), ("air", test_air), ("clear_wet", test_clear_wet),
          ("schem_list", test_schem_list), ("schem_add", test_schem_add), ("schem_fix", test_schem_fix), ("schem_fix_wrong", test_schem_fix_wrong), ("schem_exact", test_schem_exact)]
 
 TESTS += CANAL_TESTS

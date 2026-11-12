@@ -2,6 +2,25 @@
 
 Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
 
+## 2.11.1 – Chest index for fetching (2026-11-12)
+Fetching a material no longer walks through every supply chest, again and again (the canal build opened about 70
+chests per trip: 17 chests for each of four materials).
+- **Index of what is in which chest, saved per server/world** (`config/manhattan-chests/<sp-world|mp-server>.json`,
+  replaces the global `chestindex.json`, which is no longer read). It is filled every time a chest, barrel or shulker
+  box is open: by `take` / `put` / `dump` / `take_upto`, the restock, `unload` or the player. What a script takes out
+  or puts in is counted, each entry has a "seen at" time. Double chests record both halves. Shulker boxes are indexed too.
+- **`take`, `take_upto` and `put` accept a list of chests.** Only chests known to hold the item are visited, nearest
+  first, until there is enough; never-seen or stale chests (older than 30 min) are opened once to look; if the index
+  says nobody has it and nothing is stale, nothing is walked to. `take_upto` has an optional `keep_free` slots argument.
+- New `index_refresh(minutes)` (default 30, `0` = always refresh, lasts one run) and `chest_age(chest)`;
+  `chest_contents` and `find_item` read the index and never walk.
+- The chest the helper opens is now the chest recorded (the index could attribute the contents of a chest to a
+  neighbouring one when chests stand side by side).
+- `scripts/canal-build.txt` uses it (`take_upto(all_chests, item, share, 2)`, `put(chests, item)`). A first trip with
+  17 empty-index chests opens each chest at most once (about 21 openings instead of about 70), later trips only the
+  chests that hold the item: about 1-3 per material, 0 for a material that is nowhere.
+- New in-game test `chest_index`; new scenarios `chest-index.txt`, `chest-index-2.txt`.
+
 ## 2.11.0 – Docked panels and view-models (Stage 3) (2026-11-12)
 - Extracted view-models (`ChestIndexView`, `AreasView`, `PlacesView`, `LogBuffer`) so the docked ImGui panels and the
   vanilla screens share the same underlying state.

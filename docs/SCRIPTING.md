@@ -133,17 +133,47 @@ let canal = "canal"   // schematic: Litematica placement at 1750 64 -850, 2 regi
 
 The ones marked **waits** take time in the world: the script waits until they are finished. When one fails (for example the chest has no dirt), the script stops with the line number, unless it is inside `try`.
 
-**Chests** (a chest is `pos(x, y, z)`, or `chest("name")` for one saved with `/queue chest set <name>`):
+**Chests** (a chest is `pos(x, y, z)`, or `chest("name")` for one saved with `/queue chest set <name>`; `take`, `take_upto` and `put` also accept a **list of chests**, see "The chest index" below):
 
 | function | |
 |---|---|
 | `take(chest, "dirt" [, n \| "all"])` | waits; takes one stack, n, or all; returns how many |
-| `take_upto(chest, "dirt", 512)` | waits; tops up until you carry 512 |
+| `take_upto(chest, "dirt", 512 [, keep_free])` | waits; tops up until you carry 512 (with a list of chests: and stops when only `keep_free` inventory slots are empty) |
 | `put(chest, "dirt" [, n])` | waits; puts in all of it (or n) |
 | `dump(chest)` | waits; everything (hotbar included) except the tools and armour the want-list asks for (best first; with no want-list, the best one of each kind), food (not rotten flesh, spider eyes, raw chicken ...), buckets and the `keep` rules |
 | `unload([chest] [, "filter"])` | waits; LoadChest's trip: nearest or saved chest, its keep rules |
 | `find_item("diamond")` | chests that held it when last opened: list of `{pos, count}` |
-| `chest_contents(chest)` | what it held when last opened: map item → count |
+| `chest_contents(chest)` | what it held when last opened: map item → count, `null` if never seen. Reads the chest index, never walks |
+| `chest_age(chest)` | minutes since it was last seen open, `null` if never seen. Never walks |
+| `index_refresh([minutes])` | how old an index entry may get before a list fetch opens that chest again (default 30, `0` = always); with a number it sets it for this run; returns it |
+
+### The chest index (2.11.1)
+
+Every time a chest, barrel or shulker box is open, the mod notes what is in it: when a script chest action
+(`take`, `put`, `dump`, `take_upto`, `fill_water` / `clear_trees` with a chest), the restock or `unload` opens it, and
+when you open it yourself. What a script takes out or puts in is counted too, so the entry is right when the chest is
+closed. The index is saved per server or single-player world (`config/manhattan-chests/sp-<world>.json` or
+`mp-<server>.json`, one entry per chest and dimension with the contents and a "seen at" time) and survives a restart.
+`/survival chests` lists it, `/survival chests forget` empties the current world's index.
+
+With a **list of chests** `take`, `take_upto` and `put` use it instead of opening every chest:
+
+- `take(chests, "stone", n)` / `take_upto(chests, "stone", n)` go first to the chests the index knows to hold the
+  item, nearest to where you are first, until you have enough. If those are not enough, the chests the index does
+  not know (never opened) or whose entry is older than the refresh interval (`index_refresh`, default 30 min) are
+  opened once each, nearest first, which also refreshes them. Chests seen lately without the item are not visited.
+  When no chest is known to hold it and nothing is stale, nothing is walked to: it says so in chat and returns 0.
+- `put(chests, "stone" [, n])` goes only to the chests the index knows to hold that item, nearest first, until it is
+  all in (a full chest is skipped). With no such chest it puts nothing; give one chest to start a new pile.
+- A chest that fails (not reachable, no chest there any more) is reported in chat and skipped, it does not stop the
+  script. A single chest as the first argument works as before: it is always opened.
+
+```
+let chests = [pos(1767, 68, -847), pos(1767, 68, -846), pos(1768, 68, -847)]
+index_refresh(120)                    // nobody else touches these: trust the index for 2 hours
+take_upto(chests, "stone_bricks", 720, 2)    // keep 2 slots free
+put(chests, "stone_bricks")           // leftovers go back to a chest that holds stone bricks
+```
 
 **Water and building:**
 

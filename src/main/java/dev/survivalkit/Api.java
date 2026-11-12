@@ -144,6 +144,59 @@ public final class Api {
         return e == null ? null : e.items;
     }
 
+    /** What the index knows of one chest about one item: known = there is an entry; fresh = young enough to trust. */
+    public record ChestInfo(boolean known, boolean fresh, double ageMinutes, int count) {}
+
+    /** The index entry of the chest at that place for an item id such as "minecraft:stone". */
+    public static ChestInfo chestInfo(BlockPos at, String itemId) {
+        Minecraft mc = Minecraft.getInstance();
+        var e = ChestIndex.at(mc, at);
+        if (e == null) return new ChestInfo(false, false, Double.MAX_VALUE, 0);
+        return new ChestInfo(true, ChestIndex.fresh(e), (System.currentTimeMillis() - e.time) / 60000.0, e.countExact(itemId));
+    }
+
+    /** Notes what the open container holds as the contents of the chest at that place (call while it is open). */
+    public static void noteOpenChest(BlockPos at) {
+        ChestIndex.recordOpen(Minecraft.getInstance(), at);
+    }
+
+    /** Opens/closes of the chest at that place are about to happen: record the right chest for the player's own look. */
+    public static void chestHint(BlockPos at) {
+        ChestIndex.hint = at;
+    }
+
+    /** A script chest action starts (true) or has ended (false): it records the chests it opens itself. */
+    public static void chestBusy(boolean on) {
+        ChestIndex.external = on;
+    }
+
+    /** The chest is gone: drop it from the index. */
+    public static void forgetChest(BlockPos at) {
+        ChestIndex.forgetAt(Minecraft.getInstance(), at);
+    }
+
+    public static void saveChestIndex() {
+        ChestIndex.save();
+    }
+
+    /** Minutes after which an indexed chest is opened again to refresh it (default 30; 0 = every time). */
+    public static double indexRefresh() {
+        return ChestIndex.refreshMinutes;
+    }
+
+    public static void setIndexRefresh(double minutes) {
+        ChestIndex.refreshMinutes = Math.max(0, minutes);
+    }
+
+    public static void resetIndexRefresh() {
+        ChestIndex.resetRefresh();
+    }
+
+    /** The file name part that identifies the server or world the index belongs to (for tests). */
+    public static String indexWorld() {
+        return ChestIndex.worldKey(Minecraft.getInstance());
+    }
+
     /** Snapshot of one indexed chest for ChestIndexView (UI & tests). */
     public record IndexedChest(String dim, int x, int y, int z, long time, String age, int food, java.util.Map<String, Integer> items) {}
 

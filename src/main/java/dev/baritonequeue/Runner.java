@@ -168,6 +168,7 @@ final class Runner {
     /** Parses and starts the script; returns an error text or null. */
     String start(List<String> script) {
         if (running) return "Already running (" + current() + ").";
+        dev.survivalkit.Api.resetIndexRefresh();   // index_refresh() lasts for one run
         String text = String.join("\n", script);
         List<Ast.Stmt> program;
         try {
