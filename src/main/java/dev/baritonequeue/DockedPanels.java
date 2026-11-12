@@ -66,6 +66,13 @@ public final class DockedPanels {
     private static String editorStatus = "";
     private static boolean imguiPicking = false;
     private static boolean editorInputActive = false;
+    private static int editorCursorPos = 0;
+    private static final imgui.callback.ImGuiInputTextCallback EDITOR_CALLBACK = new imgui.callback.ImGuiInputTextCallback() {
+        @Override
+        public void accept(imgui.ImGuiInputTextCallbackData data) {
+            editorCursorPos = data.getCursorPos();
+        }
+    };
 
     // Recorded button rects for TestBridge verification
     public static float runBtnX, runBtnY, runBtnW, runBtnH;
@@ -570,8 +577,9 @@ public final class DockedPanels {
             ImGui.setCursorScreenPos(codeStartX, startY);
             ImGui.pushStyleColor(ImGuiCol.FrameBg, 0f, 0f, 0f, 0f);
             ImGui.pushStyleColor(ImGuiCol.Border, 0f, 0f, 0f, 0f);
-            ImGui.pushStyleColor(ImGuiCol.Text, 0.90f, 0.90f, 0.90f, 0.25f);
-            if (ImGui.inputTextMultiline("##ScriptEditorInput", editorBuffer, availW, contentH, ImGuiInputTextFlags.AllowTabInput)) {
+            ImGui.pushStyleColor(ImGuiCol.Text, 0f, 0f, 0f, 0f);
+            if (ImGui.inputTextMultiline("##ScriptEditorInput", editorBuffer, availW, contentH,
+                    ImGuiInputTextFlags.AllowTabInput | ImGuiInputTextFlags.CallbackAlways, EDITOR_CALLBACK)) {
                 setCurrentScriptText(editorBuffer.get());
             }
             ImGui.popStyleColor(3);
@@ -594,6 +602,27 @@ public final class DockedPanels {
                 float lineY = startY + padY + i * lineHeight;
                 drawSyntaxLine(dl, codeStartX + padX, lineY, renderLines[i], charOffset, cachedSyntaxColors);
                 charOffset += renderLines[i].length() + 1;
+            }
+
+            if (editorInputActive && ((System.currentTimeMillis() / 500L) % 2L == 0L)) {
+                int cpos = Math.max(0, Math.min(editorCursorPos, renderSrc.length()));
+                int rem = cpos;
+                int cLine = 0;
+                int cCol = 0;
+                for (int i = 0; i < renderLines.length; i++) {
+                    int lLen = renderLines[i].length();
+                    if (rem <= lLen || i == renderLines.length - 1) {
+                        cLine = i;
+                        cCol = Math.min(rem, lLen);
+                        break;
+                    }
+                    rem -= (lLen + 1);
+                }
+                String prefix = renderLines[cLine].substring(0, cCol);
+                float caretX = codeStartX + padX + ImGui.calcTextSizeX(prefix);
+                float caretY = startY + padY + cLine * lineHeight;
+                int caretCol = ImGui.colorConvertFloat4ToU32(0.92f, 0.95f, 1.0f, 0.95f);
+                dl.addRectFilled(caretX, caretY, caretX + 2f, caretY + lineHeight, caretCol);
             }
         }
         ImGui.endChild();
@@ -635,7 +664,6 @@ public final class DockedPanels {
         }
         int len = line.length();
         int runStart = 0;
-        float curX = x;
         for (int i = 0; i <= len; i++) {
             int curColor = (i < len && startOffset + i < colors.length) ? colors[startOffset + i] : Syntax.DEFAULT;
             int startColor = (startOffset + runStart < colors.length) ? colors[startOffset + runStart] : Syntax.DEFAULT;
@@ -646,8 +674,8 @@ public final class DockedPanels {
                     float g = ((startColor >> 8) & 0xFF) / 255f;
                     float b = (startColor & 0xFF) / 255f;
                     int colU32 = ImGui.colorConvertFloat4ToU32(r, g, b, 1.0f);
-                    dl.addText(curX, y, colU32, seg);
-                    curX += ImGui.calcTextSizeX(seg);
+                    float segX = x + (runStart == 0 ? 0f : ImGui.calcTextSizeX(line.substring(0, runStart)));
+                    dl.addText(segX, y, colU32, seg);
                 }
                 runStart = i;
             }

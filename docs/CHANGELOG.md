@@ -12,10 +12,17 @@ Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
   blitted `mainRenderTarget` into the Game Viewport after `gl3.renderDrawData` so the dock node background never tints the
   game view; loaded crisp TrueType fonts (`segoeui.ttf` 16px for UI, `consola.ttf` 15px for code) with a Top Bar UI scale
   selector (`100%` / `125%` / `150%`, persisted as `Config.uiScale`) and auto-sized buttons across all panels.
+- **Aspect-ratio-preserving Game Viewport (`ImGuiManager.fittedViewportRect`)**: Resizing docked panels fits the blitted
+  game frame within the viewport node while preserving Minecraft's aspect ratio, preventing distorted or stretched rendering.
+- **Mouse isolation in UI mode (`MouseHandlerMixin`)**: Blocks `grabMouse` and `turnPlayer` while ImGui is active,
+  forwarding clicks inside the Game Viewport to interact with world UI screens (Game Menu, Chat, Chests) without
+  letting mouse movements alter player pitch/yaw, unless toggled to F8 Fullscreen game mode.
 - **Unified Script Editor (`DockedPanels.renderScriptEditorPanel`)**: single full-height editable code view (`Consolas`
   font) where you type directly inside the syntax-coloured, line-numbered editor with active running-step highlight (`▶`),
-  inline `ScriptCheck` error/warning markers (`!`), and `Suggest` Tab completion. Pressing **J** or **K** in docked mode
-  releases the cursor and focuses the docked `Script Editor` or `Capture` panel directly.
+  inline `ScriptCheck` error/warning markers (`!`), and `Suggest` Tab completion. Single-pass `ImDrawList` syntax text
+  rendering with prefix measurement and a custom blinking caret over a 100% transparent `InputTextMultiline` buffer
+  eliminates double-rendered ghost text. Pressing **J** or **K** in docked mode releases the cursor and focuses the docked
+  `Script Editor` or `Capture` panel directly.
 - **Presets panel (`DockedPanels.renderPresetsPanel`)**: filterable list of `Config.presets` with code preview tooltips,
   **Insert**, **Copy**, delete (**X**), **Save script as preset**, and `PresetShare` **Copy all / Paste / Export / Import**.
 - **Chests panel (`DockedPanels.renderChestsPanel`, `ChestIndexView`)**: searchable, sortable 4-column table (`Item`,

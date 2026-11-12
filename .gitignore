@@ -7,3 +7,4 @@ libs/*.jar
 tools/
 tmp/
 __pycache__/
+logs/

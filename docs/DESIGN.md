@@ -49,9 +49,13 @@ acts on its own: the script starts them. The packages talk through small `Api` c
   When `ui.mode = docked` and F8 fullscreen (`key.baritonequeue.fullscreen`) is off, `ImGuiManager` hosts a persistent
   2x2 `DockSpace` (Top-left: `Script Editor`, `Presets`; Top-right: `Game Viewport`; Bottom-left: `Chests`, `Areas`, `Capture`;
   Bottom-right: `Log`, `Assistant`) saved to `config/manhattan-imgui.ini` with a Top Bar (`Reset layout`, `Skip`, `Stop`, `Fullscreen game (F8)` — Pause is omitted because `Runner` and custom processes do not support mid-action pause/resume outside `on` handlers).
-  `mainRenderTarget` is blitted into the top-right quarter Game Viewport via `GlStateManager._glBlitFrameBuffer`,
-  `MouseHandlerMixin` linearly remaps cursor coordinates from the Game Viewport rectangle to full-screen GUI coordinates,
-  and keyboard input is routed to the game only when the Game Viewport is focused.
+  `mainRenderTarget` is blitted into the top-right quarter Game Viewport via `GlStateManager._glBlitFrameBuffer` using
+  aspect-ratio-preserving bounds (`ImGuiManager.fittedViewportRect`) so resizing docked panels never stretches the game view.
+  `MouseHandlerMixin` isolates mouse look in UI mode (blocking `grabMouse` and `turnPlayer` while ImGui is active) and
+  linearly remaps cursor coordinates from the Game Viewport rectangle to full-screen GUI coordinates so clicks inside
+  the viewport open and interact with UI screens (Game Menu, Chat, Chests). Keyboard input is routed to the game only when the Game Viewport is focused.
+  The Script Editor in `DockedPanels` uses single-pass `ImDrawList` syntax text rendering with token prefix measurement and
+  a custom blinking caret over a 100% transparent `InputTextMultiline` buffer, eliminating double-rendered text.
 - Capture menu: `CaptureScreen` (the menu), `Capture` (roles, sheet files per world and set, rapid aiming,
   particle outlines, full context), `CaptureSheet` (the sheet's text without the game; tested in `LangTest`).
 - `Migrate` converts pre-2.0 scripts and presets once on load.

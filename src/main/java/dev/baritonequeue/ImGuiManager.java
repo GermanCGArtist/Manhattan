@@ -100,6 +100,13 @@ public final class ImGuiManager {
             gameFocused = true;
             focused = false;
             unfocusRequested = true;
+            if (mc != null && mc.screen == null && mc.level != null && !"true".equals(System.getProperty("manhattan.tests"))) {
+                mc.mouseHandler.grabMouse();
+            }
+        } else {
+            if (mc != null && mc.mouseHandler != null && mc.mouseHandler.isMouseGrabbed()) {
+                mc.mouseHandler.releaseMouse();
+            }
         }
         if (mc != null && mc.getWindow() != null) {
             updateViewportMetrics(mc.getWindow());
@@ -230,6 +237,28 @@ public final class ImGuiManager {
         return new float[]{vpX, vpY, vpW, vpH};
     }
 
+    public static float[] fittedViewportRect() {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc != null && mc.getWindow() != null) updateViewportMetrics(mc.getWindow());
+        if (!isDockedViewportActive() || vpW <= 0f || vpH <= 0f) {
+            return new float[]{vpX, vpY, vpW, vpH};
+        }
+        float sw = Math.max(1f, lastDisplayW);
+        float sh = Math.max(1f, lastDisplayH);
+        float aspect = sw / sh;
+        float fw = vpW;
+        float fh = fw / aspect;
+        if (fh > vpH) {
+            fh = vpH;
+            fw = fh * aspect;
+        }
+        float fx = (float) Math.floor(vpX + (vpW - fw) * 0.5f);
+        float fy = (float) Math.floor(vpY + (vpH - fh) * 0.5f);
+        fw = Math.max(1f, (float) Math.floor(fw));
+        fh = Math.max(1f, (float) Math.floor(fh));
+        return new float[]{fx, fy, fw, fh};
+    }
+
     public static String noteText() {
         return initialized ? Backend.note.get() : "";
     }
@@ -282,8 +311,10 @@ public final class ImGuiManager {
         if (mc == null || mc.getWindow() == null) return rawX;
         Window win = mc.getWindow();
         updateViewportMetrics(win);
-        if (!isDockedViewportActive() || vpW <= 0f) return rawX;
-        return (rawX - vpX) * (double) win.getScreenWidth() / (double) vpW;
+        if (!isDockedViewportActive()) return rawX;
+        float[] fit = fittedViewportRect();
+        if (fit[2] <= 0f) return rawX;
+        return (rawX - fit[0]) * (double) win.getScreenWidth() / (double) fit[2];
     }
 
     public static double remapMouseY(double rawY) {
@@ -291,8 +322,10 @@ public final class ImGuiManager {
         if (mc == null || mc.getWindow() == null) return rawY;
         Window win = mc.getWindow();
         updateViewportMetrics(win);
-        if (!isDockedViewportActive() || vpH <= 0f) return rawY;
-        return (rawY - vpY) * (double) win.getScreenHeight() / (double) vpH;
+        if (!isDockedViewportActive()) return rawY;
+        float[] fit = fittedViewportRect();
+        if (fit[3] <= 0f) return rawY;
+        return (rawY - fit[1]) * (double) win.getScreenHeight() / (double) fit[3];
     }
 
     public static double guiToWindowX(double guiX) {
@@ -301,7 +334,9 @@ public final class ImGuiManager {
         Window win = mc.getWindow();
         updateViewportMetrics(win);
         double normX = guiX / Math.max(1, win.getGuiScaledWidth());
-        return isDockedViewportActive() ? vpX + normX * vpW : normX * win.getScreenWidth();
+        if (!isDockedViewportActive()) return normX * win.getScreenWidth();
+        float[] fit = fittedViewportRect();
+        return fit[0] + normX * fit[2];
     }
 
     public static double guiToWindowY(double guiY) {
@@ -310,7 +345,9 @@ public final class ImGuiManager {
         Window win = mc.getWindow();
         updateViewportMetrics(win);
         double normY = guiY / Math.max(1, win.getGuiScaledHeight());
-        return isDockedViewportActive() ? vpY + normY * vpH : normY * win.getScreenHeight();
+        if (!isDockedViewportActive()) return normY * win.getScreenHeight();
+        float[] fit = fittedViewportRect();
+        return fit[1] + normY * fit[3];
     }
 
     public static double viewportCenterX() {
@@ -366,6 +403,9 @@ public final class ImGuiManager {
         if (win == null || win.isMinimized() || win.getWidth() <= 0 || win.getHeight() <= 0) return;
         updateViewportMetrics(win);
         if (!isActive() || initFailed) return;
+        if (mc.mouseHandler != null && mc.mouseHandler.isMouseGrabbed()) {
+            mc.mouseHandler.releaseMouse();
+        }
         if (!initialized) {
             if (!init(win.handle())) return;
         }
@@ -661,6 +701,7 @@ public final class ImGuiManager {
                 io.removeConfigFlags(ImGuiConfigFlags.NoMouse);
             }
 
+            io.setWantSetMousePos(false);
             glfw.newFrame();
             gl3.newFrame();
             ImGui.newFrame();
@@ -685,11 +726,8 @@ public final class ImGuiManager {
             ImGui.render();
 
             GlStateManager._glBindFramebuffer(GL30.GL_FRAMEBUFFER, 0);
-            if (dockedActive && spikeOpen) {
-                blitGameViewport(mc, win);
-            }
             gl3.renderDrawData(ImGui.getDrawData());
-            if (dockedActive && !spikeOpen) {
+            if (dockedActive) {
                 blitGameViewport(mc, win);
             }
 
@@ -699,22 +737,57 @@ public final class ImGuiManager {
         }
 
         private static void blitGameViewport(Minecraft mc, Window win) {
-            GlStateManager._disableScissorTest();
             RenderTarget mainTarget = mc.getMainRenderTarget();
             if (mainTarget != null && mainTarget.getColorTexture() instanceof GlTexture glTex) {
                 if (blitReadFbo == 0) {
                     blitReadFbo = GlStateManager.glGenFramebuffers();
                 }
-                GlStateManager._glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, blitReadFbo);
-                GlStateManager._glFramebufferTexture2D(GL30.GL_READ_FRAMEBUFFER, GL30.GL_COLOR_ATTACHMENT0, GL11.GL_TEXTURE_2D, glTex.glId(), 0);
-                GlStateManager._glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, 0);
+
+                float[] fit = fittedViewportRect();
+                float fx = fit[0], fy = fit[1], fw = fit[2], fh = fit[3];
 
                 double sx = (double) win.getWidth() / Math.max(1, win.getScreenWidth());
                 double sy = (double) win.getHeight() / Math.max(1, win.getScreenHeight());
-                int dstX0 = (int) Math.round(vpX * sx);
-                int dstX1 = (int) Math.round((vpX + vpW) * sx);
-                int dstY0 = (int) Math.round((win.getScreenHeight() - (vpY + vpH)) * sy);
-                int dstY1 = (int) Math.round((win.getScreenHeight() - vpY) * sy);
+
+                int paneX0 = (int) Math.round(vpX * sx);
+                int paneX1 = (int) Math.round((vpX + vpW) * sx);
+                int paneY0 = (int) Math.round((win.getScreenHeight() - (vpY + vpH)) * sy);
+                int paneY1 = (int) Math.round((win.getScreenHeight() - vpY) * sy);
+
+                int dstX0 = (int) Math.round(fx * sx);
+                int dstX1 = (int) Math.round((fx + fw) * sx);
+                int dstY0 = (int) Math.round((win.getScreenHeight() - (fy + fh)) * sy);
+                int dstY1 = (int) Math.round((win.getScreenHeight() - fy) * sy);
+
+                GlStateManager._glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, 0);
+
+                int paneW = Math.max(1, paneX1 - paneX0);
+                int paneH = Math.max(1, paneY1 - paneY0);
+                GL11.glEnable(GL11.GL_SCISSOR_TEST);
+                GL11.glScissor(paneX0, paneY0, paneW, paneH);
+                GL11.glClearColor(0.094f, 0.102f, 0.125f, 1.0f);
+                GL11.glClear(GL11.GL_COLOR_BUFFER_BIT);
+
+                int bx0 = Math.max(paneX0, dstX0 - 2);
+                int by0 = Math.max(paneY0, dstY0 - 2);
+                int bx1 = Math.min(paneX1, dstX1 + 2);
+                int by1 = Math.min(paneY1, dstY1 + 2);
+                int bw = Math.max(0, bx1 - bx0);
+                int bh = Math.max(0, by1 - by0);
+                if (bw > 0 && bh > 0) {
+                    GL11.glScissor(bx0, by0, bw, bh);
+                    if (isGameFocused()) {
+                        GL11.glClearColor(0.290f, 0.620f, 0.878f, 1.0f);
+                    } else {
+                        GL11.glClearColor(0.204f, 0.224f, 0.267f, 1.0f);
+                    }
+                    GL11.glClear(GL11.GL_COLOR_BUFFER_BIT);
+                }
+                GL11.glDisable(GL11.GL_SCISSOR_TEST);
+                GlStateManager._disableScissorTest();
+
+                GlStateManager._glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, blitReadFbo);
+                GlStateManager._glFramebufferTexture2D(GL30.GL_READ_FRAMEBUFFER, GL30.GL_COLOR_ATTACHMENT0, GL11.GL_TEXTURE_2D, glTex.glId(), 0);
 
                 GlStateManager._glBlitFrameBuffer(
                         0, 0, mainTarget.width, mainTarget.height,
@@ -867,7 +940,6 @@ public final class ImGuiManager {
             ImGui.pushStyleColor(ImGuiCol.WindowBg, 0f, 0f, 0f, 0f);
 
             ImGui.begin("##ManhattanDockSpaceHost", hostFlags);
-            ImGui.popStyleColor();
             ImGui.popStyleVar(3);
 
             int dockspaceId = ImGui.getID("ManhattanDockSpace");
@@ -888,6 +960,7 @@ public final class ImGuiManager {
             }
 
             ImGui.dockSpace(dockspaceId, 0f, 0f, ImGuiDockNodeFlags.PassthruCentralNode | imgui.internal.flag.ImGuiDockNodeFlags.NoWindowMenuButton);
+            ImGui.popStyleColor();
             ImGui.end();
 
             // Top-Right: Game Viewport dock pane (transparent so FBO 0 blit shows through cleanly)
@@ -973,12 +1046,6 @@ public final class ImGuiManager {
                 ImGui.setWindowFocus(pendingWindowFocus);
                 pendingWindowFocus = null;
             }
-
-            // Draw 1.5px focus border around the outside of the Top-Right Game Viewport
-            int borderCol = isGameFocused()
-                    ? ImGui.colorConvertFloat4ToU32(0.290f, 0.620f, 0.878f, 1.0f)   // #4a9ee0 active focus
-                    : ImGui.colorConvertFloat4ToU32(0.204f, 0.224f, 0.267f, 1.0f);  // #343944 unfocused
-            ImGui.getForegroundDrawList().addRect(vpX - 1f, vpY - 1f, vpX + vpW + 1f, vpY + vpH + 1f, borderCol, 0f, 0, 1.5f);
         }
 
         private static void renderDashboardSection(ProgressModel.Snapshot snap) {
@@ -1030,7 +1097,7 @@ public final class ImGuiManager {
         }
 
         private static void renderSpikeWindow(ProgressModel.Snapshot snap) {
-            ImGui.setNextWindowPos(24f, 24f, ImGuiCond.FirstUseEver);
+            ImGui.setNextWindowPos(24f, 38f, ImGuiCond.FirstUseEver);
             ImGui.setNextWindowSize(340f, 220f, ImGuiCond.FirstUseEver);
             if (focusRequested) {
                 ImGui.setNextWindowFocus();

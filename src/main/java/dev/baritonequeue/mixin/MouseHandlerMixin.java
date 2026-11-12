@@ -4,7 +4,6 @@ import dev.baritonequeue.ImGuiManager;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.MouseHandler;
 import net.minecraft.client.input.MouseButtonInfo;
-import org.lwjgl.glfw.GLFW;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -23,6 +22,23 @@ public abstract class MouseHandlerMixin {
     @Shadow private double accumulatedDY;
     @Shadow private MouseButtonInfo activeButton;
 
+    @Inject(method = "grabMouse", at = @At("HEAD"), cancellable = true)
+    private void manhattan$onGrabMouse(CallbackInfo ci) {
+        if (ImGuiManager.isActive()) {
+            this.mouseGrabbed = false;
+            ci.cancel();
+        }
+    }
+
+    @Inject(method = "turnPlayer", at = @At("HEAD"), cancellable = true)
+    private void manhattan$onTurnPlayer(double movementTime, CallbackInfo ci) {
+        if (ImGuiManager.isActive()) {
+            this.accumulatedDX = 0.0;
+            this.accumulatedDY = 0.0;
+            ci.cancel();
+        }
+    }
+
     @Inject(method = "onMove", at = @At("HEAD"), cancellable = true)
     private void manhattan$onMove(long window, double xpos, double ypos, CallbackInfo ci) {
         if (ImGuiManager.onMouseMove(window, xpos, ypos)) {
@@ -30,27 +46,11 @@ public abstract class MouseHandlerMixin {
             return;
         }
         if (!this.mouseGrabbed && ImGuiManager.isDockedViewportActive()) {
-            if (window != this.minecraft.getWindow().handle()) {
-                ci.cancel();
-                return;
-            }
-            if (!ImGuiManager.insideViewport(xpos, ypos) && this.activeButton == null) {
-                ci.cancel();
-                return;
-            }
-            double rx = ImGuiManager.remapMouseX(xpos);
-            double ry = ImGuiManager.remapMouseY(ypos);
-            if (this.ignoreFirstMove) {
-                this.xpos = rx;
-                this.ypos = ry;
-                this.ignoreFirstMove = false;
-            } else {
-                if (this.minecraft.isWindowActive()) {
-                    this.accumulatedDX += rx - this.xpos;
-                    this.accumulatedDY += ry - this.ypos;
-                }
-                this.xpos = rx;
-                this.ypos = ry;
+            this.accumulatedDX = 0.0;
+            this.accumulatedDY = 0.0;
+            if (this.minecraft.screen != null || "true".equals(System.getProperty("manhattan.tests"))) {
+                this.xpos = ImGuiManager.remapMouseX(xpos);
+                this.ypos = ImGuiManager.remapMouseY(ypos);
             }
             ci.cancel();
         }
@@ -63,6 +63,10 @@ public abstract class MouseHandlerMixin {
             return;
         }
         if (!this.mouseGrabbed && ImGuiManager.isDockedViewportActive()) {
+            if (this.minecraft.screen == null && !"true".equals(System.getProperty("manhattan.tests"))) {
+                ci.cancel();
+                return;
+            }
             this.xpos = ImGuiManager.remapMouseX(ImGuiManager.lastMouseX());
             this.ypos = ImGuiManager.remapMouseY(ImGuiManager.lastMouseY());
         }
@@ -72,13 +76,6 @@ public abstract class MouseHandlerMixin {
     private void manhattan$onScroll(long window, double xoffset, double yoffset, CallbackInfo ci) {
         if (ImGuiManager.onMouseScroll(window, xoffset, yoffset)) {
             ci.cancel();
-        }
-    }
-
-    @Inject(method = "releaseMouse", at = @At("TAIL"))
-    private void manhattan$onReleaseMouse(CallbackInfo ci) {
-        if (ImGuiManager.isDockedViewportActive() && !"true".equals(System.getProperty("manhattan.tests"))) {
-            GLFW.glfwSetCursorPos(this.minecraft.getWindow().handle(), ImGuiManager.viewportCenterX(), ImGuiManager.viewportCenterY());
         }
     }
 }
