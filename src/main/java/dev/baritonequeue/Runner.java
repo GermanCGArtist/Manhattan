@@ -105,6 +105,24 @@ final class Runner {
         return "Running, line " + line() + ": " + current();
     }
 
+    List<String> scriptLines() {
+        return running && lines.length > 0 ? List.of(lines) : cfg.script;
+    }
+
+    List<String> interrupts() {
+        if (!running) return List.of();
+        List<String> out = new ArrayList<>();
+        for (Frame fr : stack) {
+            int ln = fr.h().on.line;
+            out.add("active: line " + ln + " (" + lineText(ln) + ")");
+        }
+        for (Handler h : handlers) {
+            int ln = h.on.line;
+            out.add("armed: line " + ln + " (fired " + h.fired + "x)");
+        }
+        return out;
+    }
+
     static int stallLimit() {
         return Math.max(0, cfg.stallMinutes) * 1200;
     }

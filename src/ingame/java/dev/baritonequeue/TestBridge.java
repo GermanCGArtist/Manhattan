@@ -386,6 +386,7 @@ public class TestBridge implements ClientModInitializer {
                     if (a.length > 1) ImGuiManager.setFullscreenGame(Boolean.parseBoolean(a[1]));
                     else ImGuiManager.toggleFullscreenGame();
                 }
+                case "resetlayout" -> ImGuiManager.resetLayout();
                 case "guiscale" -> {
                     int scale = Integer.parseInt(a[1]);
                     mc.options.guiScale().set(scale);
@@ -414,12 +415,19 @@ public class TestBridge implements ClientModInitializer {
         float[] sr = ImGuiManager.stopButtonRect();
         float[] vr = ImGuiManager.viewportRect();
         float[] fr = ImGuiManager.fullscreenButtonRect();
+        float[] rr = ImGuiManager.resetButtonRect();
+        ProgressModel.Snapshot snap = ProgressModel.snapshot();
+        long segDone = snap.segments().stream().filter(s -> s.state() == ProgressModel.State.DONE).count();
+        long segRun = snap.segments().stream().filter(s -> s.state() == ProgressModel.State.RUNNING).count();
+        long segPend = snap.segments().stream().filter(s -> s.state() == ProgressModel.State.PENDING).count();
         return ok("\"initialized\":" + ImGuiManager.isInitialized()
                 + ",\"spikeOpen\":" + ImGuiManager.isSpikeOpen()
                 + ",\"focused\":" + ImGuiManager.isFocused()
                 + ",\"gameFocused\":" + ImGuiManager.isGameFocused()
                 + ",\"fullscreenGame\":" + ImGuiManager.isFullscreenGame()
                 + ",\"dockedActive\":" + ImGuiManager.isDockedViewportActive()
+                + ",\"layoutLabel\":" + q(ImGuiManager.layoutLabel())
+                + ",\"layoutResets\":" + ImGuiManager.layoutResetCount()
                 + ",\"framesRendered\":" + ImGuiManager.framesRendered()
                 + ",\"displayW\":" + ImGuiManager.displayWidth()
                 + ",\"displayH\":" + ImGuiManager.displayHeight()
@@ -428,11 +436,21 @@ public class TestBridge implements ClientModInitializer {
                 + ",\"guiScaledH\":" + mc.getWindow().getGuiScaledHeight()
                 + ",\"vpX\":" + vr[0] + ",\"vpY\":" + vr[1] + ",\"vpW\":" + vr[2] + ",\"vpH\":" + vr[3]
                 + ",\"fsX\":" + fr[0] + ",\"fsY\":" + fr[1] + ",\"fsW\":" + fr[2] + ",\"fsH\":" + fr[3]
+                + ",\"resetX\":" + rr[0] + ",\"resetY\":" + rr[1] + ",\"resetW\":" + rr[2] + ",\"resetH\":" + rr[3]
                 + ",\"winX\":" + wr[0] + ",\"winY\":" + wr[1] + ",\"winW\":" + wr[2] + ",\"winH\":" + wr[3]
                 + ",\"stopX\":" + sr[0] + ",\"stopY\":" + sr[1] + ",\"stopW\":" + sr[2] + ",\"stopH\":" + sr[3]
-                + ",\"runnerRunning\":" + RunnerView.running()
-                + ",\"runnerLine\":" + RunnerView.line()
-                + ",\"runnerActions\":" + RunnerView.actionsDone()
+                + ",\"runnerRunning\":" + snap.running()
+                + ",\"runnerLine\":" + snap.line()
+                + ",\"runnerActions\":" + snap.actionsDone()
+                + ",\"currentStep\":" + snap.currentStep()
+                + ",\"totalSteps\":" + snap.totalSteps()
+                + ",\"overallPercent\":" + snap.overallPercent()
+                + ",\"segDone\":" + segDone
+                + ",\"segRunning\":" + segRun
+                + ",\"segPending\":" + segPend
+                + ",\"controller\":" + q(snap.controller())
+                + ",\"posText\":" + q(snap.posText())
+                + ",\"interruptCount\":" + snap.interrupts().size()
                 + ",\"picking\":" + QueueMod.picking
                 + ",\"uiMode\":" + q(Config.cfg.uiMode)
                 + ",\"note\":" + q(ImGuiManager.noteText()));

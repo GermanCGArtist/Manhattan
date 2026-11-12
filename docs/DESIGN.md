@@ -35,14 +35,17 @@ acts on its own: the script starts them. The packages talk through small `Api` c
   Getters such as `health` work without `()`. `Modules` reads and writes every helper setting by reflection for
   `option("group.field", v)`.
 - Editor: `QueueScreen`, `Syntax` (colours from the lexer), `Suggest` (Tab completion, looked-at block as `pos(…)`),
-  `ScriptCheck` (Test), `Places` (raycast up to 96 blocks), `Estimate` / `ProgressView` (time and progress).
-- Dear ImGui (`ImGuiManager`, `RunnerView`): `imgui-java` 1.90.0 rendered at `RenderSystem.flipFrame` before buffer swap,
+  `ScriptCheck` (Test), `Places` (raycast up to 96 blocks), `Estimate` / `ProgressModel` / `ProgressView` (time and
+  segmented step progress shared by the vanilla HUD/editor and the ImGui dashboard).
+- Dear ImGui (`ImGuiManager`, `RunnerView`, `ProgressModel`): `imgui-java` 1.90.0 rendered at `RenderSystem.flipFrame` before buffer swap,
   with input forwarded from `KeyboardHandlerMixin` and `MouseHandlerMixin` (`installCallbacks = false` so GLFW callbacks
   are never overwritten). `ui.mode = vanilla | docked` (default `vanilla`); key **F9** toggles the Stage 0 runner spike window.
-  When `ui.mode = docked` and F8 fullscreen (`key.baritonequeue.fullscreen`) is off, `mainRenderTarget` is blitted into the
-  top-right quarter Game Viewport via `GlStateManager._glBlitFrameBuffer`, `MouseHandlerMixin` linearly remaps cursor
-  coordinates from the Game Viewport rectangle to full-screen GUI coordinates, and keyboard input is routed to the game
-  only when the Game Viewport is focused.
+  When `ui.mode = docked` and F8 fullscreen (`key.baritonequeue.fullscreen`) is off, `ImGuiManager` hosts a persistent
+  2x2 `DockSpace` (Top-left: `Script Editor`, `Presets`; Top-right: `Game Viewport`; Bottom-left: `Chests`, `Areas`, `Capture`;
+  Bottom-right: `Log`, `Assistant`) saved to `config/manhattan-imgui.ini` with a Top Bar (`Reset layout`, `Skip`, `Stop`, `Fullscreen game (F8)` — Pause is omitted because `Runner` and custom processes do not support mid-action pause/resume outside `on` handlers).
+  `mainRenderTarget` is blitted into the top-right quarter Game Viewport via `GlStateManager._glBlitFrameBuffer`,
+  `MouseHandlerMixin` linearly remaps cursor coordinates from the Game Viewport rectangle to full-screen GUI coordinates,
+  and keyboard input is routed to the game only when the Game Viewport is focused.
 - Capture menu: `CaptureScreen` (the menu), `Capture` (roles, sheet files per world and set, rapid aiming,
   particle outlines, full context), `CaptureSheet` (the sheet's text without the game; tested in `LangTest`).
 - `Migrate` converts pre-2.0 scripts and presets once on load.

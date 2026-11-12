@@ -139,6 +139,20 @@ public class LangTest {
         same("ui mode docked", Modules.get("ui.mode", 1), "docked");
         Modules.set("ui.mode", "vanilla", 1);
 
+        List<String> progScript = List.of(
+                "// header comment",
+                "let a = 1",
+                "#goto 100 -60 100",
+                "fill_water(\"dirt\")",
+                "dump(pos(1, 2, 3))"
+        );
+        List<ProgressModel.Segment> segs = ProgressModel.computeSegments(progScript, true, 3, 0.5);
+        same("progress segments count", String.valueOf(segs.size()), "4");
+        same("progress seg 0 done", segs.get(0).state().name(), "DONE");
+        same("progress seg 1 running", segs.get(1).state().name(), "RUNNING");
+        same("progress seg 2 pending", segs.get(2).state().name(), "PENDING");
+        same("progress overall pct", String.valueOf(ProgressModel.computeOverallPercent(segs, true)), "38");
+
         // the old script of the user, converted
         List<String> old = List.of(
                 "def_chest dirt 1794 74 -840",

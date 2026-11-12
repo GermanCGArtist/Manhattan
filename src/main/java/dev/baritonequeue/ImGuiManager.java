@@ -4,18 +4,24 @@ import com.mojang.blaze3d.opengl.GlStateManager;
 import com.mojang.blaze3d.opengl.GlTexture;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.platform.Window;
+import imgui.ImDrawList;
 import imgui.ImGui;
 import imgui.ImGuiIO;
 import imgui.ImGuiStyle;
 import imgui.flag.ImGuiCol;
 import imgui.flag.ImGuiCond;
 import imgui.flag.ImGuiConfigFlags;
+import imgui.flag.ImGuiDir;
+import imgui.flag.ImGuiDockNodeFlags;
 import imgui.flag.ImGuiFocusedFlags;
+import imgui.flag.ImGuiStyleVar;
 import imgui.flag.ImGuiWindowFlags;
 import imgui.gl3.ImGuiImplGl3;
 import imgui.glfw.ImGuiImplGlfw;
 import imgui.internal.ImGuiContext;
+import imgui.internal.ImGuiDockNode;
 import imgui.type.ImBoolean;
+import imgui.type.ImInt;
 import imgui.type.ImString;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.KeyMapping;
@@ -29,17 +35,15 @@ import org.lwjgl.opengl.GL30;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 import static dev.baritonequeue.Config.cfg;
 
 /**
- * Dear ImGui lifecycle, input routing, Stage 0 spike window (key F9), and Stage 1 Game Viewport (top-right quarter
- * with mouse remapping, keyboard focus gating, and F8 fullscreen game toggle).
- *
- * <p>Natives are extracted into {@code <gameDir>/config/manhattan-natives} before {@link ImGui} is loaded so multiple
- * game instances (or another ImGui mod such as Flashback) never share a temp DLL or {@code imgui.ini}.
- * Input is forwarded from Minecraft's {@code KeyboardHandler} and {@code MouseHandler} mixins (with
- * {@code installCallbacks = false}) so GLFW callbacks are never overwritten.
+ * Dear ImGui lifecycle, input routing, Stage 0 spike window (key F9), Stage 1 Game Viewport (top-right quarter
+ * with mouse remapping, keyboard focus gating, and F8 fullscreen game toggle), and Stage 2 Docked Shell & Dashboard
+ * (ImGui DockSpace with default 2x2 DockBuilder layout, Reset layout, Top Bar with status/Skip/Stop/F8, and
+ * ProgressModel segmented step bar + player telemetry).
  */
 public final class ImGuiManager {
     public static final float TOP_BAR_H = 30f;
@@ -54,12 +58,16 @@ public final class ImGuiManager {
     private static boolean focusRequested;
     private static boolean unfocusRequested;
     private static boolean stopRequested;
+    private static boolean resetLayoutRequested;
+    private static int layoutResetCount;
     private static long framesRendered;
     private static int lastDisplayW, lastDisplayH;
     private static float winX = 24, winY = 24, winW = 340, winH = 220;
     private static float stopBtnX, stopBtnY, stopBtnW, stopBtnH;
     private static float fsBtnX, fsBtnY, fsBtnW, fsBtnH;
+    private static float resetBtnX, resetBtnY, resetBtnW, resetBtnH;
     private static float vpX, vpY, vpW, vpH;
+    private static boolean customDockedViewport;
     private static double lastMouseX, lastMouseY;
 
     private ImGuiManager() {}
@@ -94,6 +102,24 @@ public final class ImGuiManager {
         if (mc != null && mc.getWindow() != null) {
             updateViewportMetrics(mc.getWindow());
         }
+    }
+
+    /** Requests a reset of the ImGui DockSpace back to the default 2x2 layout and saves it to config/manhattan-imgui.ini. */
+    public static void resetLayout() {
+        resetLayoutRequested = true;
+        customDockedViewport = false;
+        Minecraft mc = Minecraft.getInstance();
+        if (mc != null && mc.getWindow() != null) {
+            updateViewportMetrics(mc.getWindow());
+        }
+    }
+
+    public static int layoutResetCount() {
+        return layoutResetCount;
+    }
+
+    public static String layoutLabel() {
+        return "2x2 Docked";
     }
 
     /** Whether keyboard input currently goes to the Minecraft game view rather than ImGui panels. */
@@ -159,6 +185,10 @@ public final class ImGuiManager {
         return new float[]{fsBtnX, fsBtnY, fsBtnW, fsBtnH};
     }
 
+    public static float[] resetButtonRect() {
+        return new float[]{resetBtnX, resetBtnY, resetBtnW, resetBtnH};
+    }
+
     public static float[] viewportRect() {
         Minecraft mc = Minecraft.getInstance();
         if (mc != null && mc.getWindow() != null) updateViewportMetrics(mc.getWindow());
@@ -181,22 +211,27 @@ public final class ImGuiManager {
         if (win == null) return;
         int sw = Math.max(1, win.getScreenWidth());
         int sh = Math.max(1, win.getScreenHeight());
+        boolean sizeChanged = sw != lastDisplayW || sh != lastDisplayH;
         lastDisplayW = sw;
         lastDisplayH = sh;
         if (isDockedViewportActive()) {
-            float contentY = TOP_BAR_H;
-            float contentH = Math.max(2f, sh - contentY);
-            float halfW = (float) Math.floor(sw * 0.5f);
-            float halfH = (float) Math.floor(contentH * 0.5f);
-            vpX = halfW;
-            vpY = contentY;
-            vpW = Math.max(1f, sw - halfW);
-            vpH = Math.max(1f, halfH);
+            if (!customDockedViewport || sizeChanged || vpW <= 0f || vpH <= 0f) {
+                float contentY = TOP_BAR_H;
+                float contentH = Math.max(2f, sh - contentY);
+                float halfW = (float) Math.floor(sw * 0.5f);
+                float halfH = (float) Math.floor(contentH * 0.5f);
+                vpX = halfW;
+                vpY = contentY;
+                vpW = Math.max(1f, sw - halfW);
+                vpH = Math.max(1f, halfH);
+                customDockedViewport = false;
+            }
         } else {
             vpX = 0f;
             vpY = 0f;
             vpW = sw;
             vpH = sh;
+            customDockedViewport = false;
         }
     }
 
@@ -486,6 +521,8 @@ public final class ImGuiManager {
         private static ImGuiImplGlfw glfw;
         private static ImGuiImplGl3 gl3;
         private static int blitReadFbo;
+        private static boolean dockLayoutInitialized;
+        private static int dockBuiltW = -1, dockBuiltH = -1;
         private static final ImBoolean openFlag = new ImBoolean(true);
         private static final ImString note = new ImString(128);
 
@@ -540,6 +577,9 @@ public final class ImGuiManager {
             s.setColor(ImGuiCol.Tab, 0.173f, 0.188f, 0.227f, 1.00f);
             s.setColor(ImGuiCol.TabHovered, 0.290f, 0.620f, 0.878f, 0.80f);
             s.setColor(ImGuiCol.TabActive, 0.290f, 0.620f, 0.878f, 1.00f);
+            s.setColor(ImGuiCol.TabUnfocused, 0.137f, 0.149f, 0.180f, 1.00f);
+            s.setColor(ImGuiCol.TabUnfocusedActive, 0.173f, 0.188f, 0.227f, 1.00f);
+            s.setColor(ImGuiCol.DockingEmptyBg, 0.0f, 0.0f, 0.0f, 0.0f);
         }
 
         static void render(Minecraft mc, Window win) {
@@ -562,13 +602,14 @@ public final class ImGuiManager {
                 focused = false;
             }
 
+            ProgressModel.Snapshot snap = ProgressModel.snapshot();
             boolean dockedActive = isDockedViewportActive();
             if (dockedActive) {
-                renderTopBar();
-                renderDockedShell(mc);
+                renderTopBar(snap);
+                renderDockedShell(mc, snap);
             }
             if (spikeOpen) {
-                renderSpikeWindow();
+                renderSpikeWindow(snap);
             }
 
             ImGui.render();
@@ -616,46 +657,57 @@ public final class ImGuiManager {
             }
         }
 
-        private static void renderTopBar() {
+        private static void renderTopBar(ProgressModel.Snapshot snap) {
             int flags = ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoMove
                     | ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse
                     | ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoSavedSettings;
             ImGui.setNextWindowPos(0f, 0f);
             ImGui.setNextWindowSize(lastDisplayW, TOP_BAR_H);
-            ImGui.pushStyleVar(imgui.flag.ImGuiStyleVar.WindowRounding, 0f);
-            ImGui.pushStyleVar(imgui.flag.ImGuiStyleVar.WindowPadding, 8f, 4f);
+            ImGui.pushStyleVar(ImGuiStyleVar.WindowRounding, 0f);
+            ImGui.pushStyleVar(ImGuiStyleVar.WindowPadding, 8f, 4f);
             if (ImGui.begin("##ManhattanTopBar", flags)) {
-                boolean running = RunnerView.running();
                 ImGui.text("Manhattan");
-                ImGui.sameLine(0f, 12f);
-                if (running) {
+                ImGui.sameLine(0f, 10f);
+                if (snap.running()) {
                     ImGui.textColored(0.247f, 0.698f, 0.498f, 1.0f, "Running");
                     ImGui.sameLine(0f, 8f);
-                    ImGui.textDisabled("Line " + RunnerView.line() + " (" + RunnerView.elapsedText() + ")");
+                    ImGui.text("Step " + snap.currentStep() + "/" + snap.totalSteps() + " (" + snap.overallPercent() + "%)");
+                    ImGui.sameLine(0f, 8f);
+                    ImGui.textDisabled(snap.elapsedText());
                 } else {
-                    ImGui.textDisabled("Idle");
+                    ImGui.textDisabled("Idle (" + snap.totalSteps() + " steps)");
                 }
 
-                float rightButtonsW = 280f;
-                float startX = Math.max(ImGui.getCursorPosX() + 12f, lastDisplayW - rightButtonsW);
+                float rightButtonsW = 440f;
+                float startX = Math.max(ImGui.getCursorPosX() + 10f, lastDisplayW - rightButtonsW);
                 ImGui.sameLine(startX);
-                if (ImGui.button("Skip", 54f, 22f)) {
+                ImGui.textDisabled("Layout: " + layoutLabel());
+                ImGui.sameLine(0f, 6f);
+                resetBtnX = ImGui.getCursorScreenPosX();
+                resetBtnY = ImGui.getCursorScreenPosY();
+                resetBtnW = 86f;
+                resetBtnH = 22f;
+                if (ImGui.button("Reset layout", resetBtnW, resetBtnH)) {
+                    resetLayout();
+                }
+                ImGui.sameLine(0f, 6f);
+                if (ImGui.button("Skip", 46f, 22f)) {
                     RunnerView.skip();
                 }
                 ImGui.sameLine(0f, 6f);
                 if (!spikeOpen) {
                     stopBtnX = ImGui.getCursorScreenPosX();
                     stopBtnY = ImGui.getCursorScreenPosY();
-                    stopBtnW = 54f;
+                    stopBtnW = 46f;
                     stopBtnH = 22f;
                 }
-                if (ImGui.button("Stop", 54f, 22f)) {
+                if (ImGui.button("Stop", 46f, 22f)) {
                     RunnerView.stop();
                 }
-                ImGui.sameLine(0f, 8f);
+                ImGui.sameLine(0f, 6f);
                 fsBtnX = ImGui.getCursorScreenPosX();
                 fsBtnY = ImGui.getCursorScreenPosY();
-                fsBtnW = 148f;
+                fsBtnW = 136f;
                 fsBtnH = 22f;
                 if (ImGui.button("Fullscreen game (F8)", fsBtnW, fsBtnH)) {
                     toggleFullscreenGame();
@@ -665,44 +717,181 @@ public final class ImGuiManager {
             ImGui.popStyleVar(2);
         }
 
-        private static void renderDockedShell(Minecraft mc) {
-            int panelFlags = ImGuiWindowFlags.NoMove | ImGuiWindowFlags.NoResize
-                    | ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoSavedSettings;
-            float leftW = vpX;
-            float topH = vpH;
-            float bottomY = vpY + vpH;
-            float bottomH = Math.max(1f, lastDisplayH - bottomY);
+        private static void buildDefault2x2Layout(int dockspaceId) {
+            float contentH = Math.max(2f, lastDisplayH - TOP_BAR_H);
+            imgui.internal.ImGui.dockBuilderRemoveNode(dockspaceId);
+            imgui.internal.ImGui.dockBuilderAddNode(dockspaceId, imgui.internal.flag.ImGuiDockNodeFlags.DockSpace);
+            imgui.internal.ImGui.dockBuilderSetNodePos(dockspaceId, 0f, TOP_BAR_H);
+            imgui.internal.ImGui.dockBuilderSetNodeSize(dockspaceId, lastDisplayW, contentH);
 
-            ImGui.pushStyleVar(imgui.flag.ImGuiStyleVar.WindowRounding, 0f);
+            ImInt leftId = new ImInt();
+            ImInt rightId = new ImInt();
+            imgui.internal.ImGui.dockBuilderSplitNode(dockspaceId, ImGuiDir.Left, 0.5f, leftId, rightId);
 
-            // Top-left: Script Editor shell
+            ImInt topLeftId = new ImInt();
+            ImInt bottomLeftId = new ImInt();
+            imgui.internal.ImGui.dockBuilderSplitNode(leftId.get(), ImGuiDir.Up, 0.5f, topLeftId, bottomLeftId);
+
+            ImInt topRightId = new ImInt();
+            ImInt bottomRightId = new ImInt();
+            imgui.internal.ImGui.dockBuilderSplitNode(rightId.get(), ImGuiDir.Up, 0.5f, topRightId, bottomRightId);
+
+            ImGuiDockNode trNode = imgui.internal.ImGui.dockBuilderGetNode(topRightId.get());
+            if (trNode != null && trNode.ptr != 0) {
+                trNode.setLocalFlags(trNode.getLocalFlags()
+                        | imgui.internal.flag.ImGuiDockNodeFlags.NoTabBar
+                        | imgui.internal.flag.ImGuiDockNodeFlags.NoWindowMenuButton);
+            }
+
+            imgui.internal.ImGui.dockBuilderDockWindow("Script Editor", topLeftId.get());
+            imgui.internal.ImGui.dockBuilderDockWindow("Presets", topLeftId.get());
+            imgui.internal.ImGui.dockBuilderDockWindow("Game Viewport", topRightId.get());
+            imgui.internal.ImGui.dockBuilderDockWindow("Chests", bottomLeftId.get());
+            imgui.internal.ImGui.dockBuilderDockWindow("Areas", bottomLeftId.get());
+            imgui.internal.ImGui.dockBuilderDockWindow("Capture", bottomLeftId.get());
+            imgui.internal.ImGui.dockBuilderDockWindow("Log", bottomRightId.get());
+            imgui.internal.ImGui.dockBuilderDockWindow("Assistant", bottomRightId.get());
+            imgui.internal.ImGui.dockBuilderFinish(dockspaceId);
+
+            String ini = ImGui.getIO().getIniFilename();
+            if (ini != null && !ini.isEmpty()) {
+                ImGui.saveIniSettingsToDisk(ini);
+            }
+        }
+
+        private static void renderDockedShell(Minecraft mc, ProgressModel.Snapshot snap) {
+            float contentH = Math.max(2f, lastDisplayH - TOP_BAR_H);
+            int hostFlags = ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoCollapse
+                    | ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoMove
+                    | ImGuiWindowFlags.NoBringToFrontOnFocus | ImGuiWindowFlags.NoNavFocus
+                    | ImGuiWindowFlags.NoBackground | ImGuiWindowFlags.NoSavedSettings;
+
             ImGui.setNextWindowPos(0f, TOP_BAR_H);
-            ImGui.setNextWindowSize(leftW, topH);
-            if (ImGui.begin("Script Editor##DockedTopLeft", panelFlags)) {
-                ImGui.textDisabled("Script lines: " + cfg.script.size());
-                String cur = RunnerView.current();
-                ImGui.textWrapped("Current step: " + (cur.isEmpty() ? "(none)" : cur));
+            ImGui.setNextWindowSize(lastDisplayW, contentH);
+            ImGui.pushStyleVar(ImGuiStyleVar.WindowRounding, 0f);
+            ImGui.pushStyleVar(ImGuiStyleVar.WindowBorderSize, 0f);
+            ImGui.pushStyleVar(ImGuiStyleVar.WindowPadding, 0f, 0f);
+            ImGui.pushStyleColor(ImGuiCol.WindowBg, 0f, 0f, 0f, 0f);
+
+            ImGui.begin("##ManhattanDockSpaceHost", hostFlags);
+            ImGui.popStyleColor();
+            ImGui.popStyleVar(3);
+
+            int dockspaceId = ImGui.getID("ManhattanDockSpace");
+            ImGuiDockNode rootNode = imgui.internal.ImGui.dockBuilderGetNode(dockspaceId);
+            boolean resizedDefault = !customDockedViewport && (dockBuiltW != lastDisplayW || dockBuiltH != lastDisplayH);
+            boolean needBuild = !dockLayoutInitialized || resetLayoutRequested || resizedDefault
+                    || rootNode == null || rootNode.ptr == 0 || !rootNode.isSplitNode();
+            if (needBuild) {
+                buildDefault2x2Layout(dockspaceId);
+                dockLayoutInitialized = true;
+                dockBuiltW = lastDisplayW;
+                dockBuiltH = lastDisplayH;
+                customDockedViewport = false;
+                if (resetLayoutRequested) {
+                    resetLayoutRequested = false;
+                    layoutResetCount++;
+                }
+            }
+
+            ImGui.dockSpace(dockspaceId, 0f, 0f, ImGuiDockNodeFlags.PassthruCentralNode | imgui.internal.flag.ImGuiDockNodeFlags.NoWindowMenuButton);
+            ImGui.end();
+
+            // Top-Right: Game Viewport dock pane (transparent so FBO 0 blit shows through cleanly)
+            ImGui.pushStyleColor(ImGuiCol.WindowBg, 0f, 0f, 0f, 0f);
+            int vpFlags = ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoBackground
+                    | ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.NoCollapse;
+            if (ImGui.begin("Game Viewport", vpFlags)) {
+                float gx = ImGui.getWindowPosX();
+                float gy = ImGui.getWindowPosY();
+                float gw = ImGui.getWindowSizeX();
+                float gh = ImGui.getWindowSizeY();
+                float defX = (float) Math.floor(lastDisplayW * 0.5f);
+                float defY = TOP_BAR_H;
+                float defW = Math.max(1f, lastDisplayW - defX);
+                float defH = Math.max(1f, (float) Math.floor(contentH * 0.5f));
+                if (needBuild) {
+                    vpX = defX;
+                    vpY = defY;
+                    vpW = defW;
+                    vpH = defH;
+                    customDockedViewport = false;
+                } else if (gw > 10f && gh > 10f) {
+                    if (Math.abs(gx - defX) <= 6f && Math.abs(gy - defY) <= 6f
+                            && Math.abs(gw - defW) <= 6f && Math.abs(gh - defH) <= 6f) {
+                        vpX = defX;
+                        vpY = defY;
+                        vpW = defW;
+                        vpH = defH;
+                        customDockedViewport = false;
+                    } else {
+                        vpX = gx;
+                        vpY = gy;
+                        vpW = gw;
+                        vpH = gh;
+                        customDockedViewport = true;
+                    }
+                }
+            }
+            ImGui.end();
+            ImGui.popStyleColor();
+
+            // Top-Left: Script Editor + Dashboard telemetry & segmented step bar
+            if (ImGui.begin("Script Editor")) {
+                renderDashboardSection(snap);
+                ImGui.separator();
+                ImGui.textDisabled("Script lines (" + cfg.script.size() + "):");
+                for (int i = 0; i < Math.min(cfg.script.size(), 12); i++) {
+                    int ln = i + 1;
+                    if (snap.running() && snap.line() == ln) {
+                        ImGui.textColored(0.290f, 0.620f, 0.878f, 1.0f, ln + ": " + cfg.script.get(i));
+                    } else {
+                        ImGui.text(ln + ": " + cfg.script.get(i));
+                    }
+                }
             }
             ImGui.end();
 
-            // Bottom-left: Chests / Areas / Capture shell
-            ImGui.setNextWindowPos(0f, bottomY);
-            ImGui.setNextWindowSize(leftW, bottomH);
-            if (ImGui.begin("Chests / Areas / Capture##DockedBottomLeft", panelFlags)) {
-                ImGui.textDisabled("Saved chests: " + cfg.chests.size() + " | Saved areas: " + cfg.areas.size());
+            if (ImGui.begin("Presets")) {
+                ImGui.textDisabled("Saved presets: " + cfg.presets.size());
             }
             ImGui.end();
 
-            // Bottom-right: Log / Assistant shell
-            ImGui.setNextWindowPos(vpX, bottomY);
-            ImGui.setNextWindowSize(vpW, bottomH);
-            if (ImGui.begin("Log / Assistant##DockedBottomRight", panelFlags)) {
-                String ctrl = RunnerView.controller();
-                ImGui.textDisabled("Control: " + (ctrl.isEmpty() ? "idle" : ctrl) + " | Actions done: " + RunnerView.actionsDone());
+            // Bottom-Left: Chests, Areas, Capture tabs
+            if (ImGui.begin("Chests")) {
+                ImGui.textDisabled("Saved chests: " + cfg.chests.size());
             }
             ImGui.end();
 
-            ImGui.popStyleVar();
+            if (ImGui.begin("Areas")) {
+                ImGui.textDisabled("Saved areas: " + cfg.areas.size());
+            }
+            ImGui.end();
+
+            if (ImGui.begin("Capture")) {
+                ImGui.textDisabled("Capture role: " + Capture.type().label);
+            }
+            ImGui.end();
+
+            // Bottom-Right: Log, Assistant tabs
+            if (ImGui.begin("Log")) {
+                ImGui.text("Controller: " + (snap.controller().isEmpty() ? "idle" : snap.controller()));
+                ImGui.sameLine(0f, 14f);
+                ImGui.text("Elapsed: " + (snap.running() ? snap.elapsedText() : "-"));
+                ImGui.sameLine(0f, 14f);
+                ImGui.text("Estimate: " + (snap.stepEtaText().isEmpty() ? (snap.stepLeftText().isEmpty() ? "-" : snap.stepLeftText()) : snap.stepEtaText()));
+                ImGui.text("Health: " + String.format(java.util.Locale.ROOT, "%.1f/%.1f", snap.health(), snap.maxHealth())
+                        + "  |  Hunger: " + snap.food() + "/20"
+                        + "  |  Pos: " + snap.posText());
+                List<String> ints = snap.interrupts();
+                ImGui.textDisabled("Active interrupts: " + (ints.isEmpty() ? "none" : String.join(", ", ints)));
+            }
+            ImGui.end();
+
+            if (ImGui.begin("Assistant")) {
+                ImGui.textDisabled("Assistant (out of scope for this build)");
+            }
+            ImGui.end();
 
             // Draw 1px focus border around the Top-Right Game Viewport
             int borderCol = isGameFocused()
@@ -711,7 +900,55 @@ public final class ImGuiManager {
             ImGui.getForegroundDrawList().addRect(vpX, vpY, vpX + vpW, vpY + vpH, borderCol, 0f, 0, 1.5f);
         }
 
-        private static void renderSpikeWindow() {
+        private static void renderDashboardSection(ProgressModel.Snapshot snap) {
+            // Segmented step bar: green (#3fb27f) done, blue (#4a9ee0) running with partial fill, grey (#2c303a) pending
+            float availW = Math.max(80f, ImGui.getContentRegionAvailX());
+            float barX = ImGui.getCursorScreenPosX();
+            float barY = ImGui.getCursorScreenPosY();
+            float barH = 10f;
+            ImDrawList dl = ImGui.getWindowDrawList();
+
+            int colPending = ImGui.colorConvertFloat4ToU32(0.173f, 0.188f, 0.227f, 1.0f);  // #2c303a
+            int colBorder = ImGui.colorConvertFloat4ToU32(0.204f, 0.224f, 0.267f, 1.0f);   // #343944
+            int colDone = ImGui.colorConvertFloat4ToU32(0.247f, 0.698f, 0.498f, 1.0f);     // #3fb27f
+            int colRunning = ImGui.colorConvertFloat4ToU32(0.290f, 0.620f, 0.878f, 1.0f);  // #4a9ee0
+
+            List<ProgressModel.Segment> segs = snap.segments();
+            if (segs.isEmpty()) {
+                dl.addRectFilled(barX, barY, barX + availW, barY + barH, colPending, 2f);
+                dl.addRect(barX, barY, barX + availW, barY + barH, colBorder, 2f);
+            } else {
+                int n = segs.size();
+                float gap = n > 1 ? 2f : 0f;
+                float segW = Math.max(2f, (availW - gap * (n - 1)) / n);
+                for (int i = 0; i < n; i++) {
+                    float sx0 = barX + i * (segW + gap);
+                    float sx1 = (i == n - 1) ? (barX + availW) : (sx0 + segW);
+                    dl.addRectFilled(sx0, barY, sx1, barY + barH, colPending, 1f);
+                    ProgressModel.Segment seg = segs.get(i);
+                    if (seg.state() == ProgressModel.State.DONE) {
+                        dl.addRectFilled(sx0, barY, sx1, barY + barH, colDone, 1f);
+                    } else if (seg.state() == ProgressModel.State.RUNNING) {
+                        float fillW = Math.max(2f, (float) ((sx1 - sx0) * seg.fraction()));
+                        dl.addRectFilled(sx0, barY, Math.min(sx1, sx0 + fillW), barY + barH, colRunning, 1f);
+                    }
+                    dl.addRect(sx0, barY, sx1, barY + barH, colBorder, 1f);
+                }
+            }
+            ImGui.dummy(availW, barH + 2f);
+
+            String ctrl = snap.controller().isEmpty() ? "idle" : snap.controller();
+            ImGui.text("Control: " + ctrl + "  |  Elapsed: " + (snap.running() ? snap.elapsedText() : "-")
+                    + "  |  " + snap.stepTailText());
+            ImGui.text("HP: " + String.format(java.util.Locale.ROOT, "%.0f/%.0f", snap.health(), snap.maxHealth())
+                    + "  |  Food: " + snap.food() + "/20"
+                    + "  |  Pos: " + snap.posText());
+            if (!snap.stallWarning().isEmpty()) {
+                ImGui.textColored(1.0f, 0.627f, 0.251f, 1.0f, snap.stallWarning());
+            }
+        }
+
+        private static void renderSpikeWindow(ProgressModel.Snapshot snap) {
             ImGui.setNextWindowPos(24f, 24f, ImGuiCond.FirstUseEver);
             ImGui.setNextWindowSize(340f, 220f, ImGuiCond.FirstUseEver);
             if (focusRequested) {
@@ -729,7 +966,7 @@ public final class ImGuiManager {
                 winW = ImGui.getWindowSizeX();
                 winH = ImGui.getWindowSizeY();
 
-                boolean running = RunnerView.running();
+                boolean running = snap.running();
                 ImGui.text("Status:");
                 ImGui.sameLine();
                 if (running) {
@@ -739,14 +976,14 @@ public final class ImGuiManager {
                 }
 
                 ImGui.separator();
-                ImGui.text("Line: " + RunnerView.line());
+                ImGui.text("Line: " + snap.line());
                 ImGui.sameLine(140f);
-                ImGui.text("Actions done: " + RunnerView.actionsDone());
-                ImGui.text("Elapsed: " + (running ? RunnerView.elapsedText() : "-"));
+                ImGui.text("Actions done: " + snap.actionsDone());
+                ImGui.text("Elapsed: " + (running ? snap.elapsedText() : "-"));
                 ImGui.sameLine(140f);
-                String ctrl = RunnerView.controller();
+                String ctrl = snap.controller();
                 ImGui.text("Control: " + (ctrl.isEmpty() ? "idle" : ctrl));
-                String cur = RunnerView.current();
+                String cur = snap.currentCommand();
                 ImGui.textWrapped("Step: " + (cur.isEmpty() ? "(none)" : cur));
 
                 ImGui.spacing();

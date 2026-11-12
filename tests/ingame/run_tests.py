@@ -310,6 +310,64 @@ def test_viewport(t):
     return "top-right viewport %.0fx%.0f, focus gating ok, walking/Baritone mining/Pick block/chest slot click ok, resize/GUI scale/F8 ok" % (exp_w, exp_h)
 
 
+def test_docked_shell(t):
+    """Stage 2 docked shell: 2x2 DockSpace layout, Reset layout button + ini persistence, Top Bar status/Skip/Stop/F8,
+    and ProgressModel segmented step bar + telemetry while a script runs."""
+    reset_area(t)
+    t.b("imgui close")
+    t.b("imgui fullscreen off")
+    t.b("imgui guiscale 0")
+    t.b("chat /queue ui docked")
+    t.wait_chat("UI mode set to 'docked'.", 5)
+    time.sleep(0.3)
+
+    st = t.b("imgui")
+    if not st["dockedActive"] or st["layoutLabel"] != "2x2 Docked":
+        raise Fail("docked shell not active with '2x2 Docked' label: %s" % st)
+
+    # 1. Click 'Reset layout' in the Top Bar and check layoutResets increments & ini is saved
+    resets0 = st["layoutResets"]
+    if st["resetW"] <= 0 or st["resetH"] <= 0:
+        raise Fail("Top Bar Reset layout button rect not recorded: %s" % st)
+    rx = st["resetX"] + st["resetW"] / 2.0
+    ry = st["resetY"] + st["resetH"] / 2.0
+    t.b("imgui click %.1f %.1f 0" % (rx, ry))
+    st = t.b.wait(lambda: (lambda s: s if s["layoutResets"] > resets0 else None)(t.b("imgui")),
+                  5, step=0.2, what="Reset layout button click to rebuild 2x2 DockSpace")
+    ini_path = os.path.join(os.environ.get("MANHATTAN_PROFILE", mc.PROFILE), "config", "manhattan-imgui.ini")
+    if not os.path.exists(ini_path):
+        raise Fail("manhattan-imgui.ini was not saved after layout build: %s" % ini_path)
+
+    # 2. Run a multi-step script with an 'on' handler and verify ProgressModel segments + telemetry
+    t.run("docked-shell.txt")
+    t.wait_chat("TEST docked_shell started", 10)
+    st = t.b.wait(lambda: (lambda s: s if s["runnerRunning"] and s["segRunning"] == 1 and s["segDone"] >= 1 else None)(t.b("imgui")),
+                  10, step=0.2, what="ProgressModel running step segment")
+    if st["totalSteps"] < 3 or st["currentStep"] < 2:
+        raise Fail("unexpected step counts in ProgressModel: %s" % st)
+    if st["interruptCount"] < 1:
+        raise Fail("expected at least 1 active interrupt ('food < 14'): %s" % st)
+    if "100" not in st["posText"]:
+        raise Fail("expected player position near 100 in posText: %s" % st)
+
+    # 3. Click Top Bar Stop button and verify the script stops cleanly
+    if st["stopW"] <= 0 or st["stopH"] <= 0:
+        raise Fail("Top Bar Stop button rect not recorded: %s" % st)
+    sx = st["stopX"] + st["stopW"] / 2.0
+    sy = st["stopY"] + st["stopH"] / 2.0
+    t.b("imgui click %.1f %.1f 0" % (sx, sy))
+    t.b.wait(lambda: not t.b("script")["running"], 10, step=0.2, what="Top Bar Stop button to stop script")
+    st2 = t.b("imgui")
+    if st2["runnerRunning"]:
+        raise Fail("RunnerView still reports running after Top Bar Stop click: %s" % st2)
+
+    t.b("chat /queue ui vanilla")
+    t.wait_chat("UI mode set to 'vanilla'.", 5)
+    return "2x2 Docked layout + Reset layout ok, ProgressModel (%d/%d steps, done=%d, running=%d, int=%d) ok, Top Bar Stop ok" % (
+        st["currentStep"], st["totalSteps"], st["segDone"], st["segRunning"], st["interruptCount"])
+
+
+
 def test_fill_water(t):
     """fill_water("dirt") fills a 3x3, 2-deep pool, never a cell above water."""
     reset_area(t)
@@ -1434,7 +1492,7 @@ def test_trees_forest(t):
 TREE_TESTS = [("trees_small", test_trees_small), ("trees_forest", test_trees_forest)]
 
 
-TESTS = [("smoke", test_smoke), ("imgui_spike", test_imgui_spike), ("viewport", test_viewport), ("fill_water", test_fill_water), ("eat", test_eat), ("defend", test_defend), ("clear_resume", test_clear_resume), ("dump", test_dump), ("hotbar_tools", test_hotbar_tools), ("air", test_air), ("clear_wet", test_clear_wet),
+TESTS = [("smoke", test_smoke), ("imgui_spike", test_imgui_spike), ("viewport", test_viewport), ("docked_shell", test_docked_shell), ("fill_water", test_fill_water), ("eat", test_eat), ("defend", test_defend), ("clear_resume", test_clear_resume), ("dump", test_dump), ("hotbar_tools", test_hotbar_tools), ("air", test_air), ("clear_wet", test_clear_wet),
          ("schem_list", test_schem_list), ("schem_add", test_schem_add), ("schem_fix", test_schem_fix), ("schem_fix_wrong", test_schem_fix_wrong), ("schem_exact", test_schem_exact)]
 
 TESTS += CANAL_TESTS

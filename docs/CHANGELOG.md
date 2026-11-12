@@ -2,6 +2,21 @@
 
 Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
 
+## 2.10.0 – Docked shell and dashboard (Stage 2) (2026-11-12)
+- Enabled Dear ImGui `DockSpace` (`ImGuiConfigFlags.DockingEnable`) with a default 2x2 layout built via `DockBuilder`
+  (`ImGuiManager.buildDefault2x2Layout`): Top-left (`Script Editor`, `Presets`), Top-right (`Game Viewport` with tab bar
+  hidden), Bottom-left (`Chests`, `Areas`, `Capture`), Bottom-right (`Log`, `Assistant`).
+- Layout state is saved to `config/manhattan-imgui.ini` and restorable via the Top Bar **Reset layout** button
+  (`ImGuiManager.resetLayout()`).
+- Updated Top Bar with running step status (`Step i/n: ...`), layout indicator (`2x2 Docked`), **Reset layout**,
+  **Skip**, **Stop**, and **Fullscreen game (F8)**. Pause is omitted because `Runner` and custom Baritone processes
+  (`ClearProcess`, `TerminatorProcess`, `SchemProcess`) do not support safe mid-action pause/resume outside `on` handlers.
+- Extracted `ProgressModel` (`ProgressModel.computeSegments`, `computeOverallPercent`, `snapshot`) shared by the vanilla
+  `ProgressView` overlay and the ImGui dashboard: segmented step bar (green `#3fb27f` done, blue `#4a9ee0` running with
+  partial fill, grey `#2c303a` pending), controller name, elapsed time, estimate, health, hunger, player position, and
+  active `on` interrupts.
+- Tested with unit tests in `LangTest` (`testProgressModel`) and in-game test `docked_shell`.
+
 ## 2.9.0 – Game viewport (Stage 1) (2026-11-12)
 - When `ui.mode = docked` and F8 fullscreen is off, the Minecraft frame (`mainRenderTarget`) is blitted into the
   top-right quarter of the window (`ImGuiManager`, `GlStateManager._glBlitFrameBuffer`) with a 1px focus border,

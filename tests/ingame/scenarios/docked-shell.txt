@@ -1,0 +1,7 @@
+on food < 14
+  eat()
+end
+print("TEST docked_shell started")
+wait 1
+wait 30
+print("TEST docked_shell finished")
