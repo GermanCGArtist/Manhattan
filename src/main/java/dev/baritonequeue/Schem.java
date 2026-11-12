@@ -320,8 +320,11 @@ final class Schem {
         final Phase phase;
         /** Items not in the inventory right now; their blocks are left out (skip mode). null = all or nothing. */
         final java.util.function.Supplier<java.util.Set<Item>> missing;
+        /** Cells (plan indices) to ignore for now: the builder stalled on them. null = none. */
+        final java.util.function.IntPredicate skip;
 
-        Wrapper(Plan plan, Mode mode, Phase phase, java.util.function.Supplier<java.util.Set<Item>> missing) {
+        Wrapper(Plan plan, Mode mode, Phase phase, java.util.function.Supplier<java.util.Set<Item>> missing, java.util.function.IntPredicate skip) {
+            this.skip = skip;
             this.plan = plan;
             this.mode = mode;
             this.phase = phase;
@@ -333,6 +336,7 @@ final class Schem {
             BlockState d = plan.at(x, y, z);
             if (d == null || plan.excluded.get(plan.idx(x, y, z))) return false;
             if (phase == Phase.CLEAR || phase == Phase.ORIENTED) return false;   // our own placer does these
+            if (skip != null && skip.test(plan.idx(x, y, z))) return false;
             if (d.isAir() || phaseAt(plan, plan.idx(x, y, z), d, current) != phase) return false;
             if (!(mode != Mode.ADD || norm(current).equals(d) || replaceable(current) || plan.wasOpen(plan.idx(x, y, z)))) return false;
             if (missing != null && !norm(current).equals(d)) {
@@ -352,6 +356,49 @@ final class Schem {
         @Override public int widthX() { return plan.sx; }
         @Override public int heightY() { return plan.sy; }
         @Override public int lengthZ() { return plan.sz; }
+    }
+
+
+    // ------------------------------------------------------------------ why a block is still missing
+
+    /** Why a block that still has to be built was not built (the groups of the end report). */
+    enum Reason {
+        NO_ITEM("no material with you"), WET("water in the cell"), NO_SUPPORT("nothing to place against"), STALLED("not reached (the builder found no way to it or stopped making progress)");
+
+        final String label;
+
+        Reason(String label) { this.label = label; }
+    }
+
+    record Why(Reason reason, String item) {}
+
+    /** Reason for one block of the plan that is still wrong (given what is in the world and the inventory now). */
+    static Why whyLeft(Level level, BlockPos p, BlockState d, BlockState cur) {
+        Object[] cost = cost(d);
+        if (cost != null && (Item) cost[0] != Items.AIR && have((Item) cost[0]) == 0) return new Why(Reason.NO_ITEM, itemName((Item) cost[0]));
+        if (cur.getBlock() instanceof LiquidBlock) return new Why(Reason.WET, null);
+        for (net.minecraft.core.Direction dir : net.minecraft.core.Direction.values()) {
+            BlockPos n = p.relative(dir);
+            if (level.hasChunkAt(n) && !replaceable(level.getBlockState(n))) return new Why(Reason.STALLED, null);
+        }
+        return new Why(Reason.NO_SUPPORT, null);
+    }
+
+    /** Every loaded, not excluded block of the plan that still has to be built (not dug), with the reason. Key: BlockPos.asLong(). */
+    static Map<Long, Why> leftCells(Plan plan, Mode mode, Level level) {
+        Map<Long, Why> out = new LinkedHashMap<>();
+        BlockPos.MutableBlockPos mp = new BlockPos.MutableBlockPos();
+        for (int y = 0; y < plan.sy; y++) for (int z = 0; z < plan.sz; z++) for (int x = 0; x < plan.sx; x++) {
+            int i = plan.idx(x, y, z);
+            BlockState d = plan.st[i];
+            if (d == null || d.isAir() || plan.excluded.get(i) || cost(d) == null) continue;
+            mp.set(plan.min.getX() + x, plan.min.getY() + y, plan.min.getZ() + z);
+            if (!level.hasChunkAt(mp)) continue;
+            BlockState cur = norm(level.getBlockState(mp));
+            if (cur.equals(d) || !todo(plan, i, mode, d, cur)) continue;
+            out.put(mp.asLong(), whyLeft(level, mp, d, cur));
+        }
+        return out;
     }
 
     // ------------------------------------------------------------------ counting

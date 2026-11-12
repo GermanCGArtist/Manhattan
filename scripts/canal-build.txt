@@ -185,6 +185,7 @@ end
 // ------------------------------------------------------------------ build, section by section
 // Back to the chests only when the materials run low; when a section has nothing more to build with what is
 // carried, straight on to the next one.
+schem_left("reset")             // forget the leftovers of earlier runs
 let low = 192                   // fewer needed blocks carried than this: fetch more
 let left = -1
 let now_left = 0
@@ -216,7 +217,7 @@ loop
     if not progress then break end
   end
   collect_scaffold()
-  if now_left == 0 then break end
+  // (no early stop at "0 left": that count only covers the chunks loaded around you, the next sections are not in it)
   if (dir == 1 and sz >= canal_z_to) or (dir == -1 and sz <= canal_z_to) then break end
   sz += dir * section
   if (dir == 1 and sz > canal_z_to) or (dir == -1 and sz < canal_z_to) then sz = canal_z_to end
@@ -241,5 +242,12 @@ for item in fetched
 end
 dump(dump_chest)
 schem_check(schem, mode)
-if now_left > 0 then print("Canal: {now_left} blocks left. Missing in the chests: {join(unavailable, ', ')}") end
-print("Canal build done.")
+// The honest end: schem_left() counts what is missing over ALL sections (also the ones no longer loaded) and says why.
+let remaining = schem_left()
+if remaining > 0 then
+  print("Canal build NOT finished: {remaining} blocks are not built (reasons above).")
+  if len(unavailable) > 0 then print("Missing in the material chests: {join(unavailable, ', ')}: put them in and run the script again.") end
+  print("Run the script again to try those blocks once more (it only builds what is missing).")
+else
+  print("Canal build done: every block is there.")
+end

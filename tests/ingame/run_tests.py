@@ -1426,6 +1426,37 @@ def test_canal_schem_water(t):
     return "floor built over the water and the row on top of it (%s)" % line.split("] ", 1)[-1]
 
 
+UNSUP_WALL = ((100, -60, 100), (3, 3, 24))
+UNSUP_WALL_MODEL = {(x, y, z): "minecraft:stone_bricks" for x in range(3) for y in range(3) for z in range(24)}
+UNSUP_ISLAND = ((110, -60, 110), (2, 1, 1))
+UNSUP_ISLAND_MODEL = {(0, 0, 0): "minecraft:stone_bricks", (1, 0, 0): "minecraft:stone_bricks"}
+
+
+def test_canal_schem_unsupported(t):
+    """The live canal run: Baritone builds one layer at a time, and cells it could not reach in the bottom row kept it
+    pathing for ever, so every layer above them was never started (thousands of blocks "stalled", the script went on and
+    ended with "done"). Here a wall 3 wide, 3 high, 24 long is built next to two bricks in the bottom layer that sit in a
+    hole in a stone box (nothing can be reached or clicked). The wall must be built completely although those two never
+    get done; the build says how many are left and why (schem_left: "2 not reached")."""
+    new_world(t, "canal-schem-unsupported", [("wall", UNSUP_WALL[1], UNSUP_WALL[0], UNSUP_WALL_MODEL),
+                                             ("island", UNSUP_ISLAND[1], UNSUP_ISLAND[0], UNSUP_ISLAND_MODEL)])
+    fill(t, (109, -61, 109, 112, -59, 111), "stone")     # the island: a one-block hole in a stone box, nowhere to stand or click from
+    fill(t, (110, -60, 110, 111, -60, 110), "air")
+    t.cmd("/give @s stone_bricks 230", "/give @s dirt 64")
+    time.sleep(2)
+    t.start_log()
+    line = run_scenario(t, "canal-schem-unsupported.txt", "TEST unsup left", 400)
+    bad = model_diff(t, UNSUP_WALL[0], UNSUP_WALL[1], UNSUP_WALL_MODEL)
+    if bad:
+        raise Fail("the wall is not complete: %d blocks differ, e.g. %s (%s)" % (len(bad), bad[:4], line))
+    if "left=2" not in line:
+        raise Fail("expected the 2 floating bricks left: %s" % line)
+    text = " ".join(l.split("] ", 1)[-1] for l in t.lines())
+    if "2 not reached" not in text or "TEST unsup report=2" not in text:
+        raise Fail("the report does not say why the 2 bricks are left: %s" % [l for l in t.lines() if "NOT built" in l or "not built" in l or "report=" in l][-3:])
+    return "wall built over the water; the 2 walled-in bricks reported as not reached (%s)" % line.split("] ", 1)[-1]
+
+
 MOVE_MODEL = {(x, 0, z): "minecraft:spruce_planks" for x in range(3) for z in range(3)}
 
 
@@ -1487,7 +1518,7 @@ CANAL_TESTS = [("canal_layers", test_canal_layers), ("canal_pillar_scaffold", te
                ("canal_flood_pond", test_canal_flood_pond), ("canal_flood_none", test_canal_flood_none), ("canal_flood_wide", test_canal_flood_wide), ("canal_smoke", test_canal_smoke),
                ("canal_schem_two", test_canal_schem_two), ("canal_schem_needed", test_canal_schem_needed),
                ("canal_survival_dump", test_canal_survival_dump), ("canal_survival_restock", test_canal_survival_restock),
-               ("canal_tools_schem", test_canal_tools_schem), ("canal_schem_water", test_canal_schem_water), ("canal_move", test_canal_move), ("canal_flood_resume", test_canal_flood_resume)]
+               ("canal_tools_schem", test_canal_tools_schem), ("canal_schem_water", test_canal_schem_water), ("canal_move", test_canal_move), ("canal_schem_unsupported", test_canal_schem_unsupported), ("canal_flood_resume", test_canal_flood_resume)]
 
 
 def test_hotbar_tools(t):

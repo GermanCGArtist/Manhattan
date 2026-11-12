@@ -72,6 +72,8 @@ final class GameBuiltins {
             String[] sm = schemArgs(a, "schem_check()", l, "fix");
             return (double) SchemCmd.check(sm[0], Schem.Mode.of(sm[1]));
         });
+        def(g, "schem_left", 0, 1, "schem_left([\"reset\"])", "print how many blocks of the schematics built so far are still NOT there, over all schem_build() calls (also in sections no longer loaded), grouped by reason (no material, water in the cell, nothing to place against, not reached); returns that number (0 = everything is built). \"reset\" forgets the list", (in, a, l) ->
+                (double) QueueMod.schem.reportLeft(!a.isEmpty() && "reset".equals(a.get(0))));
         def(g, "schem_stop", 0, 0, "schem_stop()", "stop the running schematic build", (in, a, l) -> (double) SchemCmd.stop());
     }
 

@@ -168,6 +168,7 @@ A placement is its number in `schem_list()`, or (2.6.0) its name in Litematica: 
 | `schem_materials([n \| "name" \| "all"] [, mode])` | prints the items still needed (minus what is built) against the inventory; returns how many items are missing |
 | `schem_needed([n \| "name" \| "all"] [, mode])` | the items still needed (minus what is built, not minus the inventory) as a map item → count, e.g. `{stone: 120, oak_stairs: 8}`; use it to fetch from chests |
 | `schem_check([n \| "name" \| "all"] [, mode])` | prints the diff: correct, missing, wrong, to dig out, with examples; returns the blocks that still need work |
+| `schem_left(["reset"])` | (2.11.1) prints how many blocks of everything built so far are **still not there**, over all `schem_build()` calls (also in sections that are no longer loaded), grouped by reason: no material with you, water in the cell, nothing to place against, not reached. Returns that number (0 = really done); use it at the end of a long build instead of the last `schem_build()` result. `"reset"` forgets the list |
 | `schem_stop()` | stops the running build |
 
 The same as chat commands: `/schem list`, `/schem build [n|all] [add|fix|exact] [skip|strict]`, `/schem materials [n|all] [mode]`, `/schem check [n|all] [mode]`, `/schem move <n|all> <dx> <dy> <dz>`, `/schem stop`.

@@ -2,6 +2,28 @@
 
 Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
 
+## 2.11.1 – Canal build: honest end report, no more stalls behind unreachable cells (2026-11-12)
+Why the canal run of 2026-11-12 (1 h 35 min) ended with "Canal build done." while ~1100 blocks were missing:
+- **Baritone builds one layer at a time** (`SchemProcess.apply`, `buildInLayers`). Cells it cannot reach in the bottom
+  row kept its pathfinder searching for ever (the game log shows millions of "movements considered", never a path), so
+  every layer above them was never started: thousands of blocks "stalled" behind a few cells, and after 60 s without
+  progress `schem_build` just moved on. Now, after such a stall, the cells of the lowest unfinished layer are **given up**
+  (`giveUpLayer`: the builder ignores them), the layers above are built, and the given-up cells get one more try at the
+  end; what still fails is reported. A phase that built something then stalled is restarted this way up to 3 times
+  without progress in between. Test `canal_schem_unsupported` (a 3x3x24 wall next to two bricks in a hole in a stone box):
+  before, the 144 wall blocks above the unreachable cells were never built; now only the two are left and reported.
+  (Turning layers off in add mode was tried and rejected: it entombs cells, e.g. the middle bottom cell of a wall.)
+- **The script ignored the leftovers.** `canal-build.txt` stopped a section at "no progress", stopped the whole loop when the
+  loaded chunks showed 0 left (the next sections were not loaded and so not counted), and ended with "Canal build done."
+  whatever was left. It now ends with `schem_left()` and says "NOT finished: N blocks" with the reasons.
+- **New `schem_left(["reset"])`** (also printed after every `schem_build` that leaves blocks): the blocks still not built over
+  all builds, also in sections no longer loaded, grouped by reason: no material with you (with the item names), water in
+  the cell, nothing to place against, not reached.
+- **`schem_check` counted fewer than `schem_build`** (793 vs 1147 at the end of the run): a fresh plan does not know which
+  cells were open when the build started, so in add mode a block that scaffolding had left in a schematic cell counted as
+  "foreign, leave alone". The check now takes that memory over from the last build of the same placements.
+- Missing materials (stone, gravel: 212 blocks on that run) are only part of it; they are listed in the report as such.
+
 ## 2.11.0 – Docked panels and view-models (Stage 3) (2026-11-12)
 - Extracted view-models (`ChestIndexView`, `AreasView`, `PlacesView`, `LogBuffer`) so the docked ImGui panels and the
   vanilla screens share the same underlying state.
