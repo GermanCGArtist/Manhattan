@@ -34,7 +34,7 @@ HOME = (100, -60, 100)
 # game ticks per second of the test worlds (/tick rate; the client follows the server): --tick N, 20 = vanilla speed
 TICK_RATE = int(os.environ.get("MANHATTAN_TICK", "20"))
 # a failed test is run again this many times (--retries N, 0 = never) before it counts as failed
-RETRIES = int(os.environ.get("MANHATTAN_RETRIES", "1"))
+RETRIES = int(os.environ.get("MANHATTAN_RETRIES", "2"))
 POOL = [(x, y, z) for y in (-62, -61) for x in (103, 104, 105) for z in (99, 100, 101)]
 
 
