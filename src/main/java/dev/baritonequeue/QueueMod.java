@@ -269,7 +269,7 @@ public class QueueMod implements ClientModInitializer {
     }
 
     private static int run() {
-        String err = runner.start(cfg.script);
+        String err = runner.start(cfg.script, Jobs.editorScript());
         if (err != null) Util.msg(err);
         return err == null ? 1 : 0;
     }

@@ -915,6 +915,7 @@ public final class ImGuiManager {
             imgui.internal.ImGui.dockBuilderDockWindow("Chests", bottomLeftId.get());
             imgui.internal.ImGui.dockBuilderDockWindow("Areas", bottomLeftId.get());
             imgui.internal.ImGui.dockBuilderDockWindow("Capture", bottomLeftId.get());
+            imgui.internal.ImGui.dockBuilderDockWindow("Queue", bottomLeftId.get());
             imgui.internal.ImGui.dockBuilderDockWindow("Log", bottomRightId.get());
             imgui.internal.ImGui.dockBuilderDockWindow("Assistant", bottomRightId.get());
             imgui.internal.ImGui.dockBuilderFinish(dockspaceId);
@@ -1028,6 +1029,11 @@ public final class ImGuiManager {
 
             if (ImGui.begin("Capture")) {
                 DockedPanels.renderCapturePanel();
+            }
+            ImGui.end();
+
+            if (ImGui.begin("Queue")) {
+                DockedPanels.renderQueuePanel();
             }
             ImGui.end();
 

@@ -169,6 +169,90 @@ public class LangTest {
         }
     }
 
+    /** job "name" ... end: skip when done, restore variables, FAILED on error, duplicate-name warning. */
+    static void jobs() {
+        try {
+            java.nio.file.Path dir = java.nio.file.Files.createTempDirectory("manhattan-jobs");
+            java.nio.file.Path f = dir.resolve("jobs.json");
+            Jobs.useLedger(Ledger.load(f));
+            Jobs.startRun();
+            String script = "let total = 0\nlet spot = null\nlet names = []\nlet fn = null\n"
+                    + "job \"a\"\n  out(\"ran a\")\n  total = 5\n  total += 2\n  spot = pos(1, 2, 3)\n  push(names, \"x\")\n  let m = {k: [1, 2.5, \"t\"]}\n  fn = func() return 1 end\nend\n"
+                    + "out(total, spot, names, m, type(fn))";
+            same("job first run", run(script), "ran a | 7 1 2 3 [\"x\"] {k: [1, 2.5, \"t\"]} function");
+            same("job done in ledger", Jobs.ledger().state("a", null), "DONE");
+            same("job saved vars", new java.util.TreeSet<>(Jobs.ledger().get("a").vars.keySet()), "[m, names, spot, total]");
+            // a second run (the ledger is read back from the file): the body is skipped, the variables come back
+            Jobs.useLedger(Ledger.load(f));
+            Jobs.startRun();
+            same("job skip and restore", run(script), "7 1 2 3 [\"x\"] {k: [1, 2.5, \"t\"]} null");
+            same("restored position is a position", run("let spot = null\njob \"a\"\n  out(\"no\")\nend\nout(spot.x + spot.y + spot.z, type(spot))"), "6 pos");
+            // reset: it runs again
+            Jobs.reset("a");
+            Jobs.startRun();
+            same("job after reset runs again", run("job \"a\"\n  out(\"ran a\")\nend"), "ran a");
+            // an error: FAILED with the message, the script stops, the next run goes into the job again
+            Jobs.useLedger(Ledger.load(dir.resolve("fail.json")));
+            Jobs.startRun();
+            String bad = "job \"one\"\n  out(\"one\")\nend\njob \"two\"\n  out(\"two\")\n  let x = nothing\nend\nout(\"after\")";
+            same("job error stops the script", run(bad), "one | two | ERROR line 6: 'nothing' is not defined. Give it a value first (let nothing = ...).");
+            same("job failed state", Jobs.ledger().state("one", null) + " " + Jobs.ledger().state("two", null), "DONE FAILED");
+            same("job failed reason", Jobs.ledger().get("two").reason, "line 6: 'nothing' is not defined. Give it a value first (let nothing = ...).");
+            Jobs.startRun();
+            same("next run continues at the failed job", run("job \"one\"\n  out(\"one\")\nend\njob \"two\"\n  out(\"two\")\nend\nout(\"after\")"), "two | after");
+            // lines outside jobs always run
+            Jobs.startRun();
+            same("lines outside jobs run again", run("out(\"top\")\njob \"one\"\n  out(\"never\")\nend\nout(\"end\")"), "top | end");
+            // a job with a chunk that is still deferred is not done
+            Jobs.useLedger(Ledger.load(dir.resolve("deferred.json")));
+            Jobs.startRun();
+            Ledger l = Jobs.ledger();
+            l.set("big/schem_build@3(all,add)#1/0,0", Ledger.State.DEFERRED, 2, 4, "attached", null);
+            run("job \"big\"\n  out(\"x\")\nend");
+            same("job with a deferred chunk is DEFERRED", l.state("big", null), "DEFERRED");
+            same("job names", Jobs.jobName(" a/b ", 1), "a-b");
+            same("script name for the ledger file", Jobs.fileSafe("my build.txt") + " " + Jobs.fileSafe(null) + " " + Jobs.fileSafe("main"), "my_build main main");
+            // skip and rows for the panel
+            Jobs.useLedger(Ledger.load(dir.resolve("rows.json")));
+            Jobs.startRun();
+            Ledger r = Jobs.ledger();
+            String a = "dig/clear_area@5(2)#1";
+            r.set(a + "/0,0", Ledger.State.DONE, 1, 0, null, "s");
+            r.set(a + "/32,0", Ledger.State.DEFERRED, 2, 9, "stuck at 1 2 3", "s");
+            r.set(a + "/64,0", Ledger.State.PENDING, 0, 0, null, "s");
+            r.set("dig", Ledger.State.RUNNING, 1, 0, null, null);
+            same("panel rows", Jobs.rows().stream().map(x -> x.depth() + ":" + x.label() + ":" + x.state() + ":" + x.open()).toList().toString(),
+                    "[0:dig:RUNNING:2, 1:clear_area@5(2)#1:DEFERRED:2, 2:0,0:DONE:0, 2:32,0:DEFERRED:0, 2:64,0:PENDING:0]");
+            same("skip a chunk", Jobs.skip(a + "/32,0") + " " + r.get(a + "/32,0").state + " " + r.get(a + "/32,0").reason + " " + r.get(a + "/32,0").sig, "1 DONE skipped s");
+            same("skip a job", Jobs.skip("dig") + " " + r.state("dig", null) + " " + r.state(a + "/64,0", null), "2 DONE DONE");
+            same("skipped job is skipped by the script", run("job \"dig\"\n  out(\"dig\")\nend\nout(\"next\")"), "next");
+            // parse errors and the check
+            same("job needs a name", run("job\nend"), "PARSE line 1: 'job' needs a name in quotes: job \"build\" ... end");
+            same("job not closed", run("job \"a\"\n  out(1)\n"), "PARSE line 1: 'job' (line 1) is never closed with 'end'.");
+            same("no nested jobs", run("job \"a\"\n  job \"b\"\n  end\nend"), "PARSE line 2: A 'job' cannot be inside another job (line 2). Put them one after the other.");
+            same("reserved job name", run("job \"script\"\nend"), "ERROR line 1: The job name 'script' is reserved for the lines outside jobs. Pick another name.");
+            List<ScriptCheck.Entry> chk = ScriptCheck.run(List.of("job \"a\"", "  out(1)", "end", "job \"a\"", "  out(2)", "end", "job \"b\"", "  func f()", "  end", "end"));
+            String warnings = chk.stream().filter(e -> e.level() != ScriptCheck.Level.OK).map(e -> e.line() + ": " + e.text()).toList().toString();
+            same("duplicate job name warning", warnings.contains("4: There is already a job called \"a\" (line 1)"), true);
+            same("function in a job warning", warnings.contains("8: The function 'f' is defined inside a job"), true);
+            same("job is a keyword", Lexer.KEYWORDS.contains("job"), true);
+            // chunk text for the progress display
+            Jobs.startRun();
+            Jobs.Node act = Jobs.action("schem_build", 1, "all", true);
+            Jobs.Node c1 = Jobs.chunk(act, new Chunker.Box(0, 0, 0, 31, 10, 31)), c2 = Jobs.chunk(act, new Chunker.Box(32, 0, 0, 63, 10, 31)), c3 = Jobs.chunk(act, new Chunker.Box(64, 0, 0, 95, 10, 31));
+            c1.state = Ledger.State.DONE;
+            c2.state = Ledger.State.RUNNING;
+            same("chunk text", Jobs.chunkText(), "chunk 2/3");
+            c2.state = Ledger.State.DONE;
+            c3.state = Ledger.State.PENDING;
+            same("no chunk text when none runs", Jobs.chunkText(), null);
+        } catch (Exception ex) {
+            fails++;
+            System.out.println("FAIL jobs: " + ex);
+            ex.printStackTrace(System.out);
+        }
+    }
+
     /** chunk_needed's engine: items per chunk from the world where it is loaded, from the plan alone where it is not. */
     static void chunkNeeded() {
         try {
@@ -429,6 +513,7 @@ public class LangTest {
         chunkNeeded();
         chunkedMining();
         wantedAt();
+        jobs();
         System.out.println(passes + " passed, " + fails + " failed");
         System.exit(fails == 0 ? 0 : 1);
     }

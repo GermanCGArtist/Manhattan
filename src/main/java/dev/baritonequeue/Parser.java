@@ -107,6 +107,8 @@ final class Parser {
 
     // ------------------------------------------------------------------ statements
 
+    private int jobDepth;
+
     private List<Stmt> block() {
         List<Stmt> out = new ArrayList<>();
         while (true) {
@@ -190,6 +192,19 @@ final class Parser {
                     Expr c = cond();
                     if (!accept("do")) accept("then");
                     return new Ast.On(line, c, blockUntilEnd("on", line));
+                }
+                case "job" -> {
+                    next();
+                    if (jobDepth > 0) throw new ParseError("A 'job' cannot be inside another job (line " + line + "). Put them one after the other.", line);
+                    if (peek().type() != T.STR) throw new ParseError("'job' needs a name in quotes: job \"build\" ... end", line);
+                    Expr nm = expr();
+                    accept("do");
+                    jobDepth++;
+                    try {
+                        return new Ast.Job(line, nm, blockUntilEnd("job", line));
+                    } finally {
+                        jobDepth--;
+                    }
                 }
                 case "try" -> {
                     next();

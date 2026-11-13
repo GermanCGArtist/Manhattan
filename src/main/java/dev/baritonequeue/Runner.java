@@ -167,6 +167,11 @@ final class Runner {
 
     /** Parses and starts the script; returns an error text or null. */
     String start(List<String> script) {
+        return start(script, Jobs.SCRIPT);
+    }
+
+    /** As start, for the script of this name (the editor tab; its ledger file is per world and name). */
+    String start(List<String> script, String scriptName) {
         if (running) return "Already running (" + current() + ").";
         String text = String.join("\n", script);
         List<Ast.Stmt> program;
@@ -187,7 +192,7 @@ final class Runner {
         awaitRecovery = false;
         Areas.scripted.clear();
         Areas.restoreIfNeeded(text);
-        String resume = Jobs.startRun();   // the saved ledger of this world: what an earlier run finished
+        String resume = Jobs.startRun(scriptName);   // the saved ledger of this world: what an earlier run finished
         if (resume != null) Util.msg(resume);
         globals = new Ast.Env(Builtins.root());
         main = new Fiber("queue-script", () -> Ast.run(program, mainIn, globals));
