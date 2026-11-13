@@ -846,6 +846,16 @@ def give_kit(t):
 RUN_ID = int(time.time())
 
 
+def wait_script_end(t, timeout):
+    """Waits until no script runs any more."""
+    end = time.time() + timeout
+    time.sleep(0.5)
+    while t.b("script")["running"]:
+        if time.time() > end:
+            raise Fail("a helper script did not end in %d s" % timeout)
+        time.sleep(0.2)
+
+
 def new_world(t, name, placements=(), kit=True):
     """Leaves the current world, creates (flat, creative cheats, then survival) a world of its own and puts the player
     at (100, -60, 100). The Litematica placements are written before the world loads. kit: the tools of the real run."""
@@ -856,6 +866,9 @@ def new_world(t, name, placements=(), kit=True):
     wait_server(t)
     t.cmd("/clear @s", "/tp @s 100 -60 100 0 0")
     t.cmd("/buildtools protect clear")     # safe areas live in the game's config: none may leak in from an earlier test
+    # the chunk scenarios set queue.chunkSize 8, which lives in the game's config: it must not leak into the next test
+    t.run("reset-options.txt")
+    wait_script_end(t, 20)
     if kit:
         give_kit(t)
     time.sleep(2)
