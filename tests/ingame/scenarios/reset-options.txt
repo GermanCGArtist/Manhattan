@@ -1,0 +1,2 @@
+// resets the options a test may have changed in the game config (run by new_world)
+option("queue.chunkSize", 32)
