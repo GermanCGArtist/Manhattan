@@ -136,6 +136,20 @@ def install():
             shutil.copyfile(src, dst)
             log("installed:", name)
     _write_options()
+    _reset_mod_config()
+
+
+def _reset_mod_config():
+    """The mod's own settings (want-list, bed/supply places, safe areas, chest index ...) start from the defaults for every
+    game: they live in config/ and would otherwise carry from one test run into the next (a `want("_shovel", 2)` of an
+    earlier canal test made a later dump test keep two shovels). Litematica's and the other mods' files stay."""
+    cfg = os.path.join(PROFILE, "config")
+    for f in ("baritonequeue.json", "buildtools.json", "loadchest.json", "survivalkit.json"):
+        try:
+            os.remove(os.path.join(cfg, f))
+        except FileNotFoundError:
+            pass
+    shutil.rmtree(os.path.join(cfg, "manhattan-chests"), ignore_errors=True)
 
 
 def _fabric_api_jar():

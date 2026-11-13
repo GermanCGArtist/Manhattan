@@ -117,6 +117,10 @@ keeps exactly this in its `mods` folder, copying only when a file changed:
 | `baritonequeue-<version>.jar` | `build\libs` |
 | `manhattan-testbridge-<version>.jar` | `build\libs` (test only, see below) |
 
+Every game also starts with the mod's own settings reset (`config/baritonequeue.json`, `buildtools.json`, `loadchest.json`,
+`survivalkit.json`, `manhattan-chests/`: want-list, safe areas, chest index), so one run's `want(...)` cannot change the next run.
+Test commands wait for the server to have run them (`Ctx.sync`, a `/time query` answer), not for a fixed time.
+
 Older `baritonequeue-*` / `manhattan-testbridge-*` / `fabric-api-*` jars there are deleted; the old `survivalkit`,
 `buildtools` and `loadchest` jars are never installed (and removed if found). It also sets a few `options.txt`
 values for unattended runs: no pause when the window loses focus, sound off, no accessibility first-start screen,
