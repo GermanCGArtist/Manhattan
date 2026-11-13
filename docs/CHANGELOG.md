@@ -2,6 +2,15 @@
 
 Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
 
+## 2.11.3 – flood() refills, faster in-game tests (2026-11-13)
+- `flood()` placed its first two water sources far apart, so they never made new water and it ran out ("No water
+  source to refill from within 16 blocks"). With few buckets it now places them with a one-block gap, so the water
+  between them refills.
+- `clear_trees` tries a tree three times instead of twice.
+- In-game tests: up to 16 games at once, longest tests first, the forest test split into four, setup commands
+  awaited instead of fixed waits, a clean mod config per test game, a failed test retried on a fresh world (shown as
+  "PASSED ON RETRY"). A full run takes about 9-11 min instead of 17-26.
+
 ## 2.11.2 – chest index, canal build finishes honestly (2026-11-12)
 Fetching a material no longer walks through every supply chest, again and again (the canal build opened about 70
 chests per trip: 17 chests for each of four materials).
