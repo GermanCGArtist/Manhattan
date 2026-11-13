@@ -1,0 +1,4 @@
+// job queue 1: a thin schematic 300 blocks long (beyond the loaded range), one schem_build builds it chunk by chunk
+stall(1)
+let left = schem_build(1, "add")
+print("TEST long left={left}")

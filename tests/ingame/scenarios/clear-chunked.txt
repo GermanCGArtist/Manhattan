@@ -1,0 +1,6 @@
+// job queue 7: clear_area on a selection of 4 chunks (chunk size 8)
+stall(1)
+option("queue.chunkSize", 8)
+select(pos(100, -60, 104), pos(131, -59, 107))
+let left = clear_area()
+print("TEST clearc left={left}")

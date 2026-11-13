@@ -1,0 +1,5 @@
+// job queue 5: a 24-block bar in chunks of 8, built twice (the test removes a block of a done chunk in between)
+stall(1)
+option("queue.chunkSize", 8)
+let left = schem_build(1, "add")
+print("TEST rebuild left={left}")

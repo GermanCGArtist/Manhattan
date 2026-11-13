@@ -102,6 +102,70 @@ there; the Litematica printer is never installed.
 | `trees_forest` | oak, birch, fancy oak, 2x2 mega spruce, dark oak, jungle, mangrove, two huge mushrooms and a bee nest; `clear_trees(chest)`: nothing of them left, no scaffolding, the logs in the chest (needs `--test-timeout 1500`: about 11 min) |
 | `canal_smoke` | the whole `scripts/canal.txt` (from "survival" on) on a small copy of the canal: dig, plug the water, dig the water trench, build two placements from a shulker box, fill with water |
 
+| test | what it checks (job queue, `chunk_*`, `clear_*`, `job_block`) |
+|---|---|
+| `chunk_build_long` | a 300x2x1 bar (stone floor, a cobblestone block every 25), beyond the loaded range: one `schem_build` builds it in 10 chunks, every block is compared (the player is teleported along), the ledger has the chunks DONE (needs about 5 min; the test has its own 900 s limit) |
+| `chunk_resume` | a 96-long bar in chunks of 8, stopped after 3 DONE chunks (ledger polled), run again: "Resuming:", the player's x never goes back into the finished chunks, bar complete, all 12 DONE |
+| `chunk_deferred` | one schematic cell 6 above the bar shut into a bedrock cube: exactly that chunk ends DEFERRED, the others DONE, the chat names the cell (120 -54 104), the reachable blocks are built |
+| `clear_protects_schem` | dirt around a built 4x2x4 stone schematic, `clear_area()`: all dirt gone, the 32 stone blocks stand |
+| `chunk_rebuild` | a block removed from a DONE chunk that is still loaded is put back by the next run |
+| `chunk_needs_handler` | `on chunk_needs` prints once per chunk of a 5-chunk build |
+| `clear_chunked` | `clear_area` over 4 chunks (size 8); stopped after the first DONE chunk, dirt put into it, rerun: the chunk is skipped (the dirt stays), the rest is emptied |
+| `job_block` | `job "a"` sets a variable, `job "b"` prints it; the rerun skips both and the variable comes back from the ledger |
+
+The ledger is read from `<game dir>\config\manhattan-jobs\<world>_<script>.json`.
+
+## In-game tests through Deming (`tests\ingame\deming.bat`)
+
+```
+tests\ingame\deming.bat                          every test, as many games in parallel as fit (up to 16)
+tests\ingame\deming.bat smoke fill_water eat     only these tests
+tests\ingame\deming.bat schem_add -j 4           at most 4 games; --test-timeout 600 per test
+```
+
+Same tests, same checks and the same `PASS`/`FAIL` lines and exit code as `run.bat` (0 only if every test passed), but
+every game is launched and supervised by [Deming](https://github.com/GermanCGArtist/Deming) instead of
+`mc.launch()`. `run.bat` stays as the old path. `deming.bat` does not build: it installs the jars that are in
+`build\libs` (run `build.bat` first when the mod changed).
+
+| who | does what |
+|---|---|
+| `run_tests.py --deming` | the orchestrator: queue of tests, one worker process per game (game dir `tmp\ingame\wN`, bridge port 25700+N), summary, `results.json` |
+| `deming_backend.py` | per worker: prepares the game dir (`mc.install()`, `prepare_schem()`), writes a one-instance Deming job and runs `deming run submit` with a pre-assigned run id |
+| Deming | resolves Java, Fabric Loader 0.20.1 and Minecraft 26.1.1 from its own cache, starts the JVM in a Windows Job Object (3 GB, `-Dmanhattan.testbridge.port=N -Dmanhattan.tests=true`, offline account `ManhattanTest`, 854x480), archives stdout, `latest.log` and screenshots, evaluates the rule, kills the game with the job |
+| the Python worker | drives the game over the bridge exactly as before (world, `reset_area`, scenario scripts, checks). When it is out of tests it writes `deming-report.json` into the game dir and sends `quit` |
+
+The Deming job's rule is `exit_code_zero` + `game_test_report deming-report.json`, so `deming run status <run id>` shows
+that worker's tests as passed or failed too. A game that hangs on a test is closed through its bridge (the test fails,
+a fresh Deming run replaces it); if it does not exit, the `deming run submit` process is ended, which closes the job
+object and with it the JVM. Failed tests get a window screenshot (`deming run capture <pid> <png>`);
+`MANHATTAN_SHOT_ALL=1` takes one after every test.
+
+Needs a `deming.exe` from the `manhattan-port` branch of `F:\workflow\Deming` (it adds `game_dir` to the instance spec,
+`run submit --run-id` and `run capture`). It is looked for in `DEMING_EXE`, `..\Deming	arget-manhattanelease`,
+`..\Deming	argetelease`, `PATH`, and must know `--run-id`. Deming uses its normal workspace
+(`%LOCALAPPDATA%\deming`, shared caches and run archive); the harness passes its own config
+(`tmp\ingame\deming-config.json`: 16 instances, 128 GB, no run pruning, no CPU pinning).
+
+### Results for a later analysis step: `tmp\ingame\demingesults.json`
+
+```json
+{ "finished": "2026-11-13T18:02:11", "seconds": 202.1, "workers": 16, "passed": 15, "failed": 1, "all_passed": false,
+  "launcher": "deming", "deming_exe": "...",
+  "runs": [ { "run_id": "...", "worker": "w4", "status": "passed|failed|aborted", "state": "...", "reason": "...",
+              "exit_code": 0, "run_dir": "%LOCALAPPDATA%\deming\runs\<time>_<run id>", "seconds": 61.2 } ],
+  "tests": [ { "name": "schem_add", "pass": false, "seconds": 31.0, "message": "failure text incl. the last chat lines",
+               "worker": "w4", "deming_run_id": "...", "deming_run_dir": "...",
+               "log_path": "tmp\ingame\deming\logs\schem_add.log",
+               "game_log": "<run_dir>\instances\w4\latest.log",
+               "screenshots": [ "tmp\ingame\deming\screenshots\schem_add.png" ] } ] }
+```
+
+`log_path` is the part of the game's own `latest.log` written while that test ran (the file to read first);
+`game_log` is the whole log of that game in Deming's archive (`stdout.log`, `stderr.log`, `events.jsonl` and
+`manifest.json` are next to it). `screenshots` are only there for failed tests (or all with `MANHATTAN_SHOT_ALL=1`).
+Tests that never ran (a worker died) are listed with `pass: false` and no run id.
+
 ## How it works
 
 ### The testing profile

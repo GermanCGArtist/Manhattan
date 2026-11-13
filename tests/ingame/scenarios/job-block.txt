@@ -1,0 +1,10 @@
+// job queue 8: job "a" sets x, job "b" uses it; a rerun skips both and x comes back from the ledger
+let x = 0
+job "a"
+  x = 41
+  print("TEST job a ran")
+end
+job "b"
+  print("TEST job b x={x}")
+end
+print("TEST job end x={x}")

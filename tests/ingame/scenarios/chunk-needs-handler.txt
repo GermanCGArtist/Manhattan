@@ -1,0 +1,8 @@
+// job queue 6: on chunk_needs fires once per chunk of a multi-chunk build
+stall(1)
+option("queue.chunkSize", 8)
+on chunk_needs
+  print("TEST need fired")
+end
+let left = schem_build(1, "add")
+print("TEST needs left={left}")

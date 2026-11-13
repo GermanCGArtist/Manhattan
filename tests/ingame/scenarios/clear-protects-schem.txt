@@ -1,0 +1,5 @@
+// job queue 4: clear_area over a built, enabled schematic: the dirt around goes, the schematic's blocks stay
+stall(1)
+select(pos(104, -60, 104), pos(115, -59, 115))
+let left = clear_area()
+print("TEST protect left={left}")

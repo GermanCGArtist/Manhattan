@@ -1,0 +1,5 @@
+// job queue 2: a 96-block bar in chunks of 8; the test stops it halfway and runs it again
+stall(1)
+option("queue.chunkSize", 8)
+let left = schem_build(1, "add")
+print("TEST resume left={left}")

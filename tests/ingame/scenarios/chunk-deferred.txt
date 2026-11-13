@@ -1,0 +1,5 @@
+// job queue 3: one schematic cell is shut into bedrock (unreachable): its chunk ends deferred, the others are done
+stall(1)
+option("queue.chunkSize", 8)
+let left = schem_build(1, "add")
+print("TEST deferred left={left}")

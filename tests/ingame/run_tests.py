@@ -5,6 +5,8 @@
   python tests/ingame/run_tests.py -j 1            one game (still a copy, tmp/ingame/w1)
   python tests/ingame/run_tests.py --keep-open     leave the game running afterwards (drive it with bridge.py)
   python tests/ingame/run_tests.py --attach        use the copy game (tmp/ingame/w1) that is already running
+  python tests/ingame/run_tests.py --deming ...    the same tests, but Deming launches and supervises every game
+                                                   (see deming_backend.py, tests/ingame/deming.bat, docs/TESTING.md)
 
 Every game is a copy of the testing setup under tmp/ingame/wN (own mods, saves, logs, bridge port 25700+N).
 The user's "Manhatten Testing" profile is never started, installed into or saved to.
@@ -1635,11 +1637,277 @@ def test_trees_forest(t):
 TREE_TESTS = [("trees_small", test_trees_small), ("trees_forest", test_trees_forest)]
 
 
+# ------------------------------------------------------------------ job queue: chunked builds, clears, job blocks
+
+def bar_model(n, pillar=25):
+    """A thin bar n long: stone floor, a cobblestone block on top of every `pillar`-th cell."""
+    m = {(x, 0, 0): "minecraft:stone" for x in range(n)}
+    m.update({(x, 1, 0): "minecraft:cobblestone" for x in range(pillar, n, pillar)})
+    return m
+
+
+def ledger_jobs(world):
+    """All entries of the ledger files of this run's world (config/manhattan-jobs/<world>-<run>_<script>.json)."""
+    d = os.path.join(mc.PROFILE, "config", "manhattan-jobs")
+    pre = "%s-%d_" % (world, RUN_ID)
+    jobs = {}
+    for f in (os.listdir(d) if os.path.isdir(d) else []):
+        if f.startswith(pre) and f.endswith(".json"):
+            try:
+                with open(os.path.join(d, f), encoding="utf-8") as fh:
+                    jobs.update(json.load(fh).get("jobs", {}))
+            except (OSError, ValueError):
+                pass   # being rewritten right now
+    return jobs
+
+
+def chunk_entries(jobs, action):
+    """{(x0, z0): entry} for the chunk entries of an action ('schem_build', 'clear_area')."""
+    out = {}
+    for jid, e in jobs.items():
+        m = re.search(r"/%s@[^/]*/(-?\d+),(-?\d+)$" % action, jid)
+        if m:
+            out[(int(m.group(1)), int(m.group(2)))] = e
+    return out
+
+
+def ledger_text(jobs):
+    return "; ".join("%s=%s%s" % (k.split("/", 1)[-1], v.get("state"), "(%s)" % v["reason"] if v.get("reason") else "")
+                     for k, v in jobs.items())
+
+
+def track_run(t, scenario, marker, timeout, world, action, stop_after_done=None):
+    """Starts the scenario and samples the player's x every 0.25 s until the marker shows (or, with stop_after_done,
+    until that many chunks are DONE in the ledger: then the script is stopped). Returns the x samples."""
+    t.run(scenario)
+    xs, end = [], time.time() + timeout
+    while time.time() < end:
+        xs.append(t.state()["x"])
+        if stop_after_done is not None:
+            done = sum(1 for e in chunk_entries(ledger_jobs(world), action).values() if e.get("state") == "DONE")
+            if done >= stop_after_done:
+                t.b("stopscript")
+                break
+        elif any(marker in l for l in t.lines()):
+            break
+        if not t.b("script")["running"]:
+            break
+        time.sleep(0.25)
+    else:
+        t.b("stopscript")
+        raise Fail("no '%s' within %d s; ledger: %s" % (marker, timeout, ledger_text(ledger_jobs(world))))
+    t.b.wait(lambda: not t.b("script")["running"], 60, step=0.5, what="the script to end")
+    return xs
+
+
+def check_bar(t, origin, n, model, step=48):
+    """Compares the bar with the model in segments (the player is teleported along, so every part is loaded)."""
+    bad = []
+    for x0 in range(0, n, step):
+        x1 = min(n - 1, x0 + step - 1)
+        t.cmd("/tp @s %d -58 %d" % (origin[0] + x0, origin[2] + 4))
+        time.sleep(2.5)
+        bad += model_diff(t, origin, (n, 2, 1), model, region=((origin[0] + x0, origin[1], origin[2]), (origin[0] + x1, origin[1] + 1, origin[2])))
+    return bad
+
+
+def test_chunk_build_long(t):
+    """One schem_build of a 300-block bar (beyond the loaded range, 10 chunks of 32) builds all of it."""
+    origin, n = (100, -60, 104), 300
+    model = bar_model(n)
+    new_world(t, "chunk-long", [("long bar", (n, 2, 1), origin, model)])
+    t.cmd("/give @s stone 320", "/give @s cobblestone 16")
+    time.sleep(1)
+    line = run_scenario(t, "chunk-build-long.txt", "TEST long left", 780)
+    bad = check_bar(t, origin, n, model)
+    jobs = ledger_jobs("chunk-long")
+    chunks = chunk_entries(jobs, "schem_build")
+    notdone = {k: v.get("state") for k, v in chunks.items() if v.get("state") != "DONE"}
+    if bad:
+        raise Fail("%d of %d cells differ, e.g. %s (%s); ledger: %s" % (len(bad), len(model), bad[:6], line, ledger_text(jobs)))
+    if len(chunks) < 9 or notdone:
+        raise Fail("ledger: %d chunk entries, not DONE: %s" % (len(chunks), notdone))
+    return "all %d blocks of the 300-long bar correct, %d chunks DONE (%s)" % (len(model), len(chunks), line.split("TEST ", 1)[-1])
+
+
+test_chunk_build_long.test_timeout = 900
+
+
+def test_chunk_resume(t):
+    """Stopped after 3+ chunks and run again: 'Resuming:', the finished chunks are not walked to, the rest is built."""
+    origin, n = (100, -60, 104), 96
+    model = bar_model(n, 10)
+    new_world(t, "chunk-resume", [("resume bar", (n, 2, 1), origin, model)])
+    t.cmd("/give @s stone 128", "/give @s cobblestone 16")
+    time.sleep(1)
+    track_run(t, "chunk-resume.txt", "TEST resume left", 300, "chunk-resume", "schem_build", stop_after_done=3)
+    first = chunk_entries(ledger_jobs("chunk-resume"), "schem_build")
+    done = {k: dict(v) for k, v in first.items() if v.get("state") == "DONE"}
+    if len(done) < 3 or len(done) >= 12:
+        raise Fail("stopped with %d chunks DONE (wanted 3..11): %s" % (len(done), ledger_text(ledger_jobs("chunk-resume"))))
+    edge = max(k[0] for k in done) + 8
+    x_stop = t.state()["x"]
+    t.start_log()
+    xs = track_run(t, "chunk-resume.txt", "TEST resume left", 300, "chunk-resume", "schem_build")
+    t.script_done(60)
+    lines = t.lines()
+    if not any("Resuming:" in l for l in lines):
+        raise Fail("no 'Resuming:' line on the second run; chat tail %s" % lines[-6:])
+    low = min(xs)
+    if low < edge - 8 - 8:   # the bot may stand a few blocks back while it builds the first open chunk
+        raise Fail("second run walked back into finished chunks: min x %.1f, finished chunks end at x=%d (stopped at x=%.1f)" % (low, edge, x_stop))
+    after = chunk_entries(ledger_jobs("chunk-resume"), "schem_build")
+    still = [k for k, e in after.items() if e.get("state") != "DONE"]
+    bad = check_bar(t, origin, n, model)
+    if bad or still:
+        raise Fail("after the rerun: %d cells differ (%s), chunks not DONE: %s" % (len(bad), bad[:4], still))
+    changed = [k for k, e in done.items() if after.get(k, {}).get("time") != e.get("time")]
+    return "stopped with %d of 12 chunks done at x=%.0f; rerun said Resuming, min x %.1f (finished area ends x=%d), bar complete, %d finished entries rewritten" % (
+        len(done), x_stop, low, edge, len(changed))
+
+
+def test_chunk_deferred(t):
+    """One cell shut into bedrock: its chunk is DEFERRED, the other chunks DONE, the report names the cell."""
+    origin, n = (100, -60, 104), 40
+    model = bar_model(n, 1000)
+    model[(20, 6, 0)] = "minecraft:stone"          # the unreachable cell: world (120, -54, 104)
+    new_world(t, "chunk-deferred", [("walled bar", (n, 7, 1), origin, model)])
+    t.cmd("/give @s stone 64")
+    cell = (origin[0] + 20, origin[1] + 6, origin[2])
+    fill(t, (cell[0] - 1, cell[1] - 1, cell[2] - 1, cell[0] + 1, cell[1] + 1, cell[2] + 1), "bedrock")
+    t.cmd("/setblock %d %d %d air" % cell)
+    time.sleep(1)
+    line = run_scenario(t, "chunk-deferred.txt", "TEST deferred left", 420)
+    chat = t.lines()
+    jobs = ledger_jobs("chunk-deferred")
+    chunks = chunk_entries(jobs, "schem_build")
+    states = {k: e.get("state") for k, e in chunks.items()}
+    deferred = [k for k, s in states.items() if s == "DEFERRED"]
+    named = [l for l in chat if str(cell[0]) in l and str(cell[1]) in l and str(cell[2]) in l]
+    floor_bad = model_diff(t, origin, (n, 7, 1), model, region=((origin[0], origin[1], origin[2]), (origin[0] + n - 1, origin[1], origin[2])))
+    if len(deferred) != 1 or any(s != "DONE" for k, s in states.items() if k not in deferred):
+        raise Fail("chunk states %s (wanted exactly one DEFERRED, the rest DONE); %s; ledger %s" % (states, line, ledger_text(jobs)))
+    if not named:
+        raise Fail("no chat line names the cell %s; deferred chunk %s; chat tail %s" % (cell, deferred, [l[-120:] for l in chat[-8:]]))
+    if floor_bad:
+        raise Fail("the reachable blocks are not all built: %s" % floor_bad[:6])
+    return "chunk %s DEFERRED, %d others DONE, report names the cell: %s" % (deferred[0], len(states) - 1, named[-1].split("] ", 1)[-1][:140])
+
+
+def test_clear_protects_schem(t):
+    """clear_area over a built, enabled schematic: the dirt around it goes, the schematic's own blocks stay."""
+    origin, size = (108, -60, 108), (4, 2, 4)
+    model = {(x, y, z): "minecraft:stone" for x in range(4) for y in range(2) for z in range(4)}
+    new_world(t, "clear-protect", [("stone block", size, origin, model)])
+    fill(t, (104, -60, 104, 115, -59, 115), "dirt")
+    fill(t, (108, -60, 108, 111, -59, 111), "stone")
+    time.sleep(1)
+    line = run_scenario(t, "clear-protects-schem.txt", "TEST protect left", 240)
+    bad = model_diff(t, origin, size, model, region=((104, -60, 104), (115, -59, 115)))
+    if bad:
+        raise Fail("%d cells differ from 'schematic + air', e.g. %s (%s)" % (len(bad), bad[:6], line))
+    return "dirt around gone, the 32 stone blocks of the schematic stand (%s)" % line.split("TEST ", 1)[-1]
+
+
+def test_chunk_rebuild(t):
+    """A block removed from a DONE chunk that is still loaded is put back by the next run."""
+    origin, n = (100, -60, 104), 24
+    model = bar_model(n, 10)
+    new_world(t, "chunk-rebuild", [("rebuild bar", (n, 2, 1), origin, model)])
+    t.cmd("/give @s stone 64", "/give @s cobblestone 8")
+    time.sleep(1)
+    run_scenario(t, "chunk-rebuild.txt", "TEST rebuild left", 240)
+    states = {k: e.get("state") for k, e in chunk_entries(ledger_jobs("chunk-rebuild"), "schem_build").items()}
+    if len(states) != 3 or set(states.values()) != {"DONE"}:
+        raise Fail("first run: chunk states %s" % states)
+    hole = (origin[0] + 3, origin[1], origin[2])
+    t.cmd("/setblock %d %d %d air" % hole)
+    time.sleep(0.5)
+    if "air" not in t.block(hole):
+        raise Fail("could not remove the block at %s" % (hole,))
+    t.start_log()
+    line = run_scenario(t, "chunk-rebuild.txt", "TEST rebuild left", 240)
+    got = t.block(hole)
+    if "stone" not in got:
+        raise Fail("the removed block at %s was not put back (now %s); %s; ledger %s" % (hole, got, line, ledger_text(ledger_jobs("chunk-rebuild"))))
+    bad = check_bar(t, origin, n, model)
+    if bad:
+        raise Fail("%d cells differ after the rerun: %s" % (len(bad), bad[:4]))
+    return "block at %s put back on the rerun (%s)" % (hole, line.split("TEST ", 1)[-1])
+
+
+def test_chunk_needs_handler(t):
+    """on chunk_needs ... end fires once per chunk of a 5-chunk build."""
+    origin, n = (100, -60, 104), 40
+    model = bar_model(n, 10)
+    new_world(t, "chunk-needs", [("needs bar", (n, 2, 1), origin, model)])
+    t.cmd("/give @s stone 64", "/give @s cobblestone 8")
+    time.sleep(1)
+    run_scenario(t, "chunk-needs-handler.txt", "TEST needs left", 300)
+    fired = sum(1 for l in t.lines() if "TEST need fired" in l)
+    chunks = len(chunk_entries(ledger_jobs("chunk-needs"), "schem_build"))
+    if fired != 5 or chunks != 5:
+        raise Fail("handler fired %d times for %d chunks (wanted 5 and 5)" % (fired, chunks))
+    bad = check_bar(t, origin, n, model)
+    if bad:
+        raise Fail("%d cells differ: %s" % (len(bad), bad[:4]))
+    return "handler fired once per chunk (5), bar complete"
+
+
+def test_clear_chunked(t):
+    """clear_area over 4 chunks (size 8) empties them; stopped after the first finished chunk, a rerun skips it."""
+    new_world(t, "clear-chunked")
+    sel = (100, -60, 104, 131, -59, 107)
+    fill(t, sel, "dirt")
+    t.cmd("/tp @s 100 -60 100 0 0")
+    time.sleep(1)
+    track_run(t, "clear-chunked.txt", "TEST clearc left", 240, "clear-chunked", "clear_area", stop_after_done=1)
+    first = chunk_entries(ledger_jobs("clear-chunked"), "clear_area")
+    done = [k for k, e in first.items() if e.get("state") == "DONE"]
+    if not done or len(done) >= 4:
+        raise Fail("stopped with %d chunks DONE (wanted 1..3): %s" % (len(done), ledger_text(ledger_jobs("clear-chunked"))))
+    mark = (done[0][0] + 1, -60, done[0][1] + 1)
+    t.cmd("/setblock %d %d %d dirt" % mark)    # dirt in a DONE chunk, which must not be entered again
+    time.sleep(0.5)
+    t.start_log()
+    line = run_scenario(t, "clear-chunked.txt", "TEST clearc left", 240)
+    after = chunk_entries(ledger_jobs("clear-chunked"), "clear_area")
+    solid = sum(layers(t, [sel])["solid"])
+    kept = "dirt" in t.block(mark)
+    if solid != 1 or not kept or any(e.get("state") != "DONE" for e in after.values()) or len(after) != 4:
+        raise Fail("solid left %d (wanted 1: the marker in the finished chunk, kept=%s); chunks %s; %s" % (
+            solid, kept, {k: e.get("state") for k, e in after.items()}, line))
+    return "4 chunks cleared; the rerun after the stop skipped the finished chunk %s (marker dirt stayed), emptied the rest (%s)" % (done[0], line.split("TEST ", 1)[-1])
+
+
+def test_job_block(t):
+    """job "a" sets x, job "b" uses it; the rerun skips both and x comes back from the ledger."""
+    new_world(t, "job-block", kit=False)
+    run_scenario(t, "job-block.txt", "TEST job end", 60)
+    first = [l for l in t.lines() if "TEST job" in l]
+    if not any("TEST job a ran" in l for l in first) or not any("TEST job b x=41" in l for l in first):
+        raise Fail("first run: %s" % first)
+    t.start_log()
+    run_scenario(t, "job-block.txt", "TEST job end", 60)
+    second = [l.split("] ", 1)[-1] for l in t.lines() if "TEST job" in l]
+    jobs = ledger_jobs("job-block")
+    if any("job a ran" in l or "job b" in l for l in second) or not any("TEST job end x=41" in l for l in second):
+        raise Fail("rerun printed %s (wanted only 'TEST job end x=41'); ledger %s" % (second, ledger_text(jobs)))
+    states = {k.split("/", 1)[-1]: v.get("state") for k, v in jobs.items() if v.get("state")}
+    return "first run: a ran, b saw x=41; rerun skipped both and restored x=41 (%s)" % states
+
+
+CHUNK_TESTS = [("chunk_build_long", test_chunk_build_long), ("chunk_resume", test_chunk_resume), ("chunk_deferred", test_chunk_deferred),
+               ("clear_protects_schem", test_clear_protects_schem), ("chunk_rebuild", test_chunk_rebuild),
+               ("chunk_needs_handler", test_chunk_needs_handler), ("clear_chunked", test_clear_chunked), ("job_block", test_job_block)]
+
+
 TESTS = [("smoke", test_smoke), ("imgui_spike", test_imgui_spike), ("viewport", test_viewport), ("docked_shell", test_docked_shell), ("panels", test_panels), ("fill_water", test_fill_water), ("eat", test_eat), ("defend", test_defend), ("clear_resume", test_clear_resume), ("dump", test_dump), ("hotbar_tools", test_hotbar_tools), ("air", test_air), ("clear_wet", test_clear_wet),
          ("schem_list", test_schem_list), ("schem_add", test_schem_add), ("schem_fix", test_schem_fix), ("schem_fix_wrong", test_schem_fix_wrong), ("schem_exact", test_schem_exact)]
 
 TESTS += CANAL_TESTS
 TESTS += TREE_TESTS
+TESTS += CHUNK_TESTS
 
 
 # ------------------------------------------------------------------ main
@@ -1667,7 +1935,7 @@ def enter_world(b):
 TEST_TIMEOUT = 300          # seconds; a test that takes longer fails and its game is restarted
 RAM_PER_CLIENT_GB = 3.5     # a game with its 3 GB heap (MANHATTAN_XMX) and its own memory
 MAX_WORKERS = 8             # bridge ports 25700+N for worker N: 25701..25708 (the other harness uses 25599 and 25601..25603)
-LONG_FIRST = ["trees_forest", "trees_small", "clear_resume", "schem_exact", "schem_fix_wrong", "schem_fix", "fill_water", "schem_add"]   # start the slow ones first
+LONG_FIRST = ["chunk_build_long", "trees_forest", "trees_small", "clear_resume", "schem_exact", "schem_fix_wrong", "schem_fix", "fill_water", "schem_add"]   # start the slow ones first
 
 
 def free_ram_gb():
@@ -1755,10 +2023,36 @@ def start_game(b, attach):
     return proc
 
 
+class LocalBackend:
+    """Starts and stops the game itself (mc.launch), the original path. deming_backend.DemingBackend has the same
+    hooks but lets Deming launch and supervise the game; the tests, the bridge and the checks are the same."""
+    name = "local"
+
+    def start(self, b, attach):
+        return start_game(b, attach)
+
+    def test_begin(self, name):
+        pass
+
+    def test_done(self, name, ok, info, seconds):
+        pass
+
+    def stop(self, b, keep, attach):
+        if not keep and not attach:
+            mc.stop_testing_instance(b)
+
+    def dump(self, path):
+        pass
+
+
+BACKEND = LocalBackend()
+
+
 def worker(claim, keep, attach, timeout, tag=""):
     """Starts one game, takes tests from claim() until it returns None, returns [(name, ok, info, seconds)]."""
+    be = BACKEND
     b = mc.Bridge()
-    start_game(b, attach)
+    be.start(b, attach)
     log(tag + "bridge connected")
     results = []
     try:
@@ -1769,21 +2063,23 @@ def worker(claim, keep, attach, timeout, tag=""):
                 break
             name, fn = item
             log(tag + "running", name, "...")
-            ok, info, dt, hung = run_one(t, name, fn, timeout)
+            be.test_begin(name)
+            ok, info, dt, hung = run_one(t, name, fn, max(timeout, getattr(fn, "test_timeout", 0)))
+            be.test_done(name, ok, info, dt)
             results.append((name, ok, info, dt))
             if hung:   # a stuck game is closed through its own bridge, then a fresh one carries on
                 try:
-                    mc.stop_testing_instance(b)
+                    be.stop(b, False, False)
                 except Exception as e:   # noqa: BLE001
                     log(tag + "closing the stuck game:", e)
                 b.close()
                 b = mc.Bridge()
-                start_game(b, False)
+                be.start(b, False)
                 t = enter_world(b)
     finally:
         if not keep and not attach:
             log(tag + "closing the game")
-            mc.stop_testing_instance(b)
+        be.stop(b, keep, attach)
         b.close()
     return results
 
@@ -1814,6 +2110,15 @@ def main(argv):
         return 0
     keep = "--keep-open" in argv
     attach = "--attach" in argv
+    use_deming = "--deming" in argv
+    if use_deming and (keep or attach):
+        print("--deming starts its own games; --keep-open and --attach do not apply")
+        return 2
+    global BACKEND, MAX_WORKERS
+    if use_deming:
+        import deming_backend
+        BACKEND = deming_backend.DemingBackend(prepare=prepare_schem)
+        MAX_WORKERS = 16   # bridge ports 25701..25716
     timeout = int(opt(argv, "--test-timeout", TEST_TIMEOUT))
     values = {opt(argv, f, None) for f in ("--workers", "-j", "--worker", "--queue", "--test-timeout")}
     names = [a for a in argv if not a.startswith("-") and a not in values]
@@ -1838,6 +2143,7 @@ def main(argv):
         res = worker(claim, False, False, timeout, tag="[w%s] " % k)
         with open(os.path.join(qdir, "results-%s.json" % k), "w", encoding="utf-8") as f:
             json.dump([list(r) + [k] for r in res], f)
+        BACKEND.dump(os.path.join(qdir, "backend-%s.json" % k))
         return 0
 
     # up to 8 games at once (MAX_WORKERS), as many as the free RAM allows at RAM_PER_CLIENT_GB each; -j N sets it
@@ -1866,7 +2172,8 @@ def main(argv):
         env = dict(os.environ, MANHATTAN_PROFILE=home, MANHATTAN_BRIDGE_PORT=str(mc.PORT_BASE + k), MANHATTAN_XMX="3G")
         out = open(os.path.join(root, "w%d.log" % k), "w", encoding="utf-8")
         procs.append((k, subprocess.Popen([sys.executable, "-u", os.path.abspath(__file__), "--worker", str(k), "--queue", qdir,
-                                           "--test-timeout", str(timeout)], env=env, stdout=out, stderr=subprocess.STDOUT)))
+                                           "--test-timeout", str(timeout)] + (["--deming"] if use_deming else []),
+                                          env=env, stdout=out, stderr=subprocess.STDOUT)))
         log("worker %d: game dir %s, port %d, log %s" % (k, home, mc.PORT_BASE + k, os.path.join(root, "w%d.log" % k)))
         time.sleep(5)    # stagger the starts: loading many clients at once is slower than one after the other
     for k, pr in procs:
@@ -1880,7 +2187,10 @@ def main(argv):
     for n in order:
         if n not in done:
             res.append((n, False, "never ran (a worker died; see tmp/ingame/w*.log)", 0.0, "?"))
-    return summary(res, time.time() - t0, workers)
+    code = summary(res, time.time() - t0, workers)
+    if use_deming:
+        BACKEND.write_results(res, qdir, time.time() - t0, workers, [n for n, _ in TESTS])
+    return code
 
 
 if __name__ == "__main__":
