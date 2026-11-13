@@ -175,6 +175,22 @@ The same as chat commands: `/schem list`, `/schem build [n|all] [add|fix|exact] 
 To run the same thing somewhere else, `/queue move <dx> <dy> <dz>` moves every saved area, saved chest and Litematica placement by that offset (`/queue area move <name|all> <dx> <dy> <dz>` only the areas). Positions written into the script as `pos(...)` do not move: add the offset to them.
 A script line `/schem build 1 add` works too (the script waits while it builds).
 
+**Big schematics are built in chunks** (job queue, stage 1). A placement wider than `option("queue.chunkSize")` blocks in x or z (default 32, 8 or more) is cut into columns of that size, aligned to its corner, full height, and built one chunk after the other, always the nearest open one:
+1. walk to the chunk (a Baritone goal at its centre) and wait until all of it is loaded; only now are its open cells noted (the cells add mode may replace, such as scaffolding),
+2. **`chunk_needs`** is true for about a second: an `on chunk_needs ... end` block takes over here and fetches materials. `chunk_needed([n])` is a map item → count for the next n chunks (default 1; the chunk you are at counts as the first), from the world where it is loaded and from the schematic alone where it is not,
+3. the phases below run on that chunk alone, with the 60 s no-progress watchdog and Baritone's builder looking at that chunk only (it can no longer wander off to a cell far away),
+4. the chunk is counted: nothing wrong = **done**; else one retry, then it is **deferred** and the build goes on. After the last chunk the deferred ones get one more pass (their neighbours are built by then), then the report lists every chunk still wrong with a coordinate. `schem_build` returns the blocks still wrong in all chunks.
+
+```
+on chunk_needs
+  collect_scaffold()                 // the chunk before
+  let need = chunk_needed(2)         // this chunk and the next one
+  // ... take what is in `need` from the chests ...
+end
+schem_build("canal", "add", "skip")
+```
+Every chunk's result is saved (see "The job ledger" below), so after a stop or a crash a rerun does not visit finished chunks. A placement that fits one chunk is built in one piece, exactly as before (no walking, no `chunk_needs`).
+
 * **add** (default for build): schematic air is ignored; blocks that are already there are left alone; only empty or replaceable spots (air, water, grass ...) are filled.
 * **fix**: schematic air is ignored; wrong blocks are broken and replaced.
 * **exact**: like fix, and schematic air is dug out first (its own phase, top-down), for example to build into a hill.
@@ -182,6 +198,8 @@ A script line `/schem build 1 add` works too (the script waits while it builds).
 * The material list counts what is still missing: a double slab is 2 slabs, a door or bed 1 item, redstone dust is `redstone`, water or lava a (reusable) bucket.
 * Blocks inside safe areas (`protect`) are never built or dug.
 * Placements come from the running Litematica (found by reflection; the mod also works without it) or, failing that, from Litematica's own file in `config/litematica/`. Position, rotation, mirror, enabled state and sub-regions are used; where placements overlap, the later one in the list wins (air never overwrites a block).
+
+**The job ledger.** Every chunk of a chunked build is a job with a state (`PENDING`, `RUNNING`, `DONE`, `DEFERRED`, `FAILED`), saved on every change to `config/manhattan-jobs/<world>_main.json` (there is one ledger per world; scripts have no names yet). A job id is `script/schem_build@212(all,add)#1/1748,-1400`: the script line and its arguments, `#n` for the n-th time that call ran in this run (a loop), then the chunk's corner. A run that finds state prints `Resuming: 3 of 7 chunks done.` A chunk that is `DONE` and not loaded is skipped without looking at the world; one that is loaded is counted again and built again if blocks are missing (so a block you removed comes back). Chat: `/queue jobs` lists the ledger, `/queue reset [job]` forgets it (all, or one id and everything below it), `/queue retry <job>` opens deferred or failed entries again. The ledger also forgets a chunk when the placement was moved or `queue.chunkSize` changed.
 
 How `fill_water` works (2.1.0): a **wet cell** is anything holding water that is not solid, so plain water, seagrass, kelp and bubble columns all count. A cell is only filled when **no wet cell is left below it in its column**. Kelp is broken first.
 
@@ -259,7 +277,7 @@ options("survival")
 
 **What the game looks like** (the getters are read without `()`):
 
-`health`, `food`, `mobs` (hostile mobs within 7), `bed_time`, `restock_needed`, `night`, `day`, `raining`, `thundering`, `full`, `free_slots`, `busy`, `here` (your position), `looking`, `daytime`, `dimension`, `clock` ("HH:MM").
+`health`, `food`, `mobs` (hostile mobs within 7), `bed_time`, `restock_needed`, `chunk_needs` (a chunked `schem_build` waits at a new chunk, see below), `night`, `day`, `raining`, `thundering`, `full`, `free_slots`, `busy`, `here` (your position), `looking`, `daytime`, `dimension`, `clock` ("HH:MM").
 `count("dirt")`, `has("dirt" [, n])`, `block(pos)`, `is_wet(pos)`, `dist(a [, b])`, `count_blocks("stone", …)` and `water_left()` (both count in the selection), `pos()` (where you stand).
 
 **General:** `print`, `log`, `str`, `num`, `int`, `type`, `len`, `range`, `push`, `pop`, `insert`, `remove`, `contains`, `index_of`, `keys`, `values`, `join`, `split`, `upper`, `lower`, `trim`, `replace`, `starts_with`, `ends_with`, `sort`, `reverse`, `copy`, `sum`, `min`, `max`, `abs`, `floor`, `ceil`, `round`, `sqrt`, `random`, `error`, `assert`, `now`, `stop`.

@@ -60,6 +60,23 @@ acts on its own: the script starts them. The packages talk through small `Api` c
   particle outlines, full context), `CaptureSheet` (the sheet's text without the game; tested in `LangTest`).
 - `Migrate` converts pre-2.0 scripts and presets once on load.
 
+## Chunks and the job ledger (`Chunker`, `Ledger`, `Jobs`, `SchemProcess`)
+- A plan bigger than `Config.chunkSize` (32) in x or z is cut by `Chunker` (pure: boxes of full height, aligned to the plan's
+  min corner, `next` = nearest open chunk by centre, `upcoming` = the order the next n chunks will come in). `SchemProcess`
+  gets an outer loop around its phase machine (`startPhase` / `tick` / `endPhase` are unchanged, they just work on one box):
+  pick chunk, `WALK` (Baritone `GoalXZ` at the centre), `LOAD` (wait until `Schem.count(box).unloaded == 0`, then
+  `Plan.markOpen(box)` once per chunk), `NEEDS` (`chunk_needs` is true for 20 ticks), `RUN` (the phases), then `DONE`, one retry,
+  or `DEFERRED`; one more pass over the deferred chunks; the report. A plan of one chunk skips all of this.
+- The box limit is in `Schem.Wrapper` (Baritone's origin is the box's corner and its size the box's, so the builder
+  scans only the chunk), `Schem.count(.., box)`, `SchemPlacer.begin(.., box)` and `Plan.markOpen(.., box)`.
+- `chunk_needs` is a plain getter on the engine's state. The script's `on` block uses the normal suspend/resume path
+  (`suspendRun` / `carryOn`); the flag is down for at least one handler check (10 ticks) between two chunks, so the
+  block fires again for each chunk. `chunk_needed(n)` = `Schem.needed` over `Chunker.upcoming`: world where loaded, plan alone elsewhere.
+- `Ledger` is one JSON file per world (`config/manhattan-jobs/<world>_main.json`, Gson, written through a temp file and a
+  move on every change): job id -> `{state, tries, left, reason, sig, vars, time}`. `sig` is the plan's corner, size and chunk
+  size: an entry with another one is stale and ignored. `Jobs` is the in-memory tree the runner and UI read (job -> action ->
+  chunk) and builds the ids; mining/water chunks and `job` blocks are meant to use the same nodes and ledger entries.
+
 ## Water fill (`dev.buildtools.TerminatorProcess`)
 - A wet cell is any cell with a water fluid that does not block movement (seagrass, kelp, bubble columns count).
 - A cell is filled only when its column below is dry inside the selection: strictly bottom-up.

@@ -2,6 +2,19 @@
 
 Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
 
+## Unreleased – Job queue, stage 1: chunked schem_build (branch job-queue)
+- `schem_build` cuts a placement bigger than `queue.chunkSize` (32) into chunks and builds them one at a time, nearest
+  first: walk there, wait for the chunk to load, build only that chunk (Baritone cannot wander off or hang on one far
+  unreachable cell any more; the 60 s watchdog ends the chunk, not the build), count, retry once, defer, one more pass over
+  the deferred ones, report naming every chunk that is still wrong.
+- `chunk_needs` (getter) and `chunk_needed([n])` for an `on chunk_needs` block that fetches materials at each chunk.
+  `scripts/canal-build.txt` is now one `schem_build` plus that block.
+- New `Chunker`, `Ledger`, `Jobs`: every chunk's result is saved in `config/manhattan-jobs/<world>_main.json`; a rerun skips
+  finished chunks (a loaded one is counted again, so removed blocks come back). `/queue jobs`, `/queue reset [job]`,
+  `/queue retry <job>`; "Resuming: 3 of 7 chunks done." when a run starts with saved state.
+- `Plan.markOpen` runs on arrival at each chunk (cells in chunks that were not loaded at the start were never marked open).
+- Not tested in game yet.
+
 ## 2.11.0 – Docked panels and view-models (Stage 3) (2026-11-12)
 - Extracted view-models (`ChestIndexView`, `AreasView`, `PlacesView`, `LogBuffer`) so the docked ImGui panels and the
   vanilla screens share the same underlying state.

@@ -21,11 +21,10 @@ let schem = "all"        // all enabled Litematica placements
 let mode = "add"         // only empty spots (air, water) are filled; blocks that are there stay
 let scaffold = "dirt"
 
-// The canal is too long to be loaded at once: it is built in sections along z.
-let canal_x = 1748       // the middle of the canal
-let canal_z_from = -1400 // one end
-let canal_z_to = -560    // the other end: check this
-let section = 96         // blocks between two stops
+// The canal is too long to be loaded at once: schem_build cuts it into chunks (option queue.chunkSize, 32 by default)
+// and builds them one after the other, nearest first. At every chunk the "on chunk_needs" block below fetches the
+// materials. What is finished is saved (/queue jobs), so a stopped run carries on where it was.
+let section = 32         // the chunk size: the walls are plugged this far around the chunk
 // the two walls (the placements): 3 wide, from y 60 up. Below them (y 59 and deeper) old water must not stay,
 // or the wall's bottom block has nothing to be placed against
 let wall_w1 = 1741
@@ -100,9 +99,9 @@ push(chests, dump_chest)        // materials from earlier runs ended up in the d
 let unavailable = []
 let fetched = []                // every build material taken so far (they go back at the end)
 func fetch()
-  let need = schem_needed(schem, mode)
+  let need = chunk_needed(2)    // this chunk and the next one (from the schematic alone where the world is not loaded)
   for item in keys(need)
-    keep(item, -1)              // dump() leaves the build materials alone
+    keep(item, -1)            // dump() leaves the build materials alone
   end
   dump(dump_chest)
   for item in keys(need)
@@ -160,16 +159,6 @@ func fetch()
   end
 end
 
-// how many of the still needed blocks you carry
-func carried()
-  let need = schem_needed(schem, mode)
-  let n = 0
-  for item in keys(need)
-    n += min(count(item), need[item])
-  end
-  return n
-end
-
 // Plugs the water under both walls around z with dirt (only below the wall, outside the schematic: the wall cells
 // themselves stay empty, so add mode still fills them).
 func plug_under_walls(z)
@@ -182,45 +171,18 @@ func plug_under_walls(z)
   clear_selection()
 end
 
-// ------------------------------------------------------------------ build, section by section
-// Back to the chests only when the materials run low; when a section has nothing more to build with what is
-// carried, straight on to the next one.
-let low = 192                   // fewer needed blocks carried than this: fetch more
-let left = -1
-let now_left = 0
-let progress = false
-let refetched = false
-let sz = canal_z_from
-let dir = 1
-if canal_z_to < canal_z_from then dir = -1 end
-fetch()
-loop
-  print("Canal section at z {sz}")
-  left = -1
-  refetched = false
-  #goto {canal_x} {sz}
-  plug_under_walls(sz)
-  loop
-    #goto {canal_x} {sz}
-    now_left = schem_build(schem, mode, "skip")
-    if now_left == 0 then break end
-    // the count wobbles by a few as chunks load and unload: only a real drop counts as progress
-    progress = left < 0 or now_left <= left - 20
-    left = now_left
-    if carried() < low then
-      if not progress and refetched then break end   // fetched already and still nothing: on to the next section
-      refetched = not progress
-      fetch()
-      continue
-    end
-    if not progress then break end
-  end
+// ------------------------------------------------------------------ build, chunk by chunk
+// The engine stops at each chunk and gives this block a moment: the scaffolding of the chunk before comes down, the
+// materials for this and the next chunk are fetched, the water under the walls here is plugged. Then the chunk is built.
+// Chunks that fail twice are deferred and tried once more at the end; the report names what is still wrong.
+on chunk_needs
   collect_scaffold()
-  if now_left == 0 then break end
-  if (dir == 1 and sz >= canal_z_to) or (dir == -1 and sz <= canal_z_to) then break end
-  sz += dir * section
-  if (dir == 1 and sz > canal_z_to) or (dir == -1 and sz < canal_z_to) then sz = canal_z_to end
+  fetch()
+  plug_under_walls(here.z)
 end
+
+let now_left = schem_build(schem, mode, "skip")
+collect_scaffold()
 
 // what is left over goes back into the material chests that hold that block, not into the dump chest
 let held = null

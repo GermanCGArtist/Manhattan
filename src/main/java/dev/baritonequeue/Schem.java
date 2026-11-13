@@ -120,6 +120,20 @@ final class Schem {
 
     // ------------------------------------------------------------------ the plan
 
+    /** What a plan is compared with: the loaded part of a level (tests give it a map). */
+    interface World {
+        boolean loaded(BlockPos p);
+
+        BlockState at(BlockPos p);
+
+        static World of(Level level) {
+            return new World() {
+                public boolean loaded(BlockPos p) { return level.hasChunkAt(p); }
+                public BlockState at(BlockPos p) { return level.getBlockState(p); }
+            };
+        }
+    }
+
     static final class Plan {
         String name;
         BlockPos min;
@@ -136,18 +150,53 @@ final class Schem {
         boolean wasOpen(int i) { return open != null && open.get(i); }
 
         /** Remembers which cells are open now (called when a build starts). */
-        void markOpen(net.minecraft.world.level.Level level) {
-            open = new BitSet(st.length);
+        void markOpen(net.minecraft.world.level.Level level) { markOpen(World.of(level), null); }
+
+        /**
+         * Same for the cells of one chunk only (called when the bot arrives at it; the other cells keep what they had).
+         * Cells in unloaded chunks are not marked.
+         */
+        void markOpen(net.minecraft.world.level.Level level, Chunker.Box box) { markOpen(World.of(level), box); }
+
+        void markOpen(World w, Chunker.Box box) {
+            if (open == null || box == null) open = new BitSet(st.length);
+            int[] r = range(box);
             BlockPos.MutableBlockPos mp = new BlockPos.MutableBlockPos();
-            for (int y = 0; y < sy; y++) for (int z = 0; z < sz; z++) for (int x = 0; x < sx; x++) {
+            for (int y = r[2]; y < r[3]; y++) for (int z = r[4]; z < r[5]; z++) for (int x = r[0]; x < r[1]; x++) {
                 int i = idx(x, y, z);
+                open.clear(i);
                 if (st[i] == null) continue;
                 mp.set(min.getX() + x, min.getY() + y, min.getZ() + z);
-                if (!level.hasChunkAt(mp)) continue;
-                BlockState cur = level.getBlockState(mp);
+                if (!w.loaded(mp)) continue;
+                BlockState cur = w.at(mp);
                 if (cur.isAir() || replaceable(cur) || cur.getBlock() instanceof LiquidBlock) open.set(i);
             }
         }
+
+        /** {x0, x1, y0, y1, z0, z1} (upper ends exclusive) of the cells inside the box (null = the whole plan), in plan coordinates. */
+        int[] range(Chunker.Box box) {
+            if (box == null) return new int[]{0, sx, 0, sy, 0, sz};
+            return new int[]{Math.max(0, box.x0() - min.getX()), Math.min(sx, box.x1() - min.getX() + 1),
+                    Math.max(0, box.y0() - min.getY()), Math.min(sy, box.y1() - min.getY() + 1),
+                    Math.max(0, box.z0() - min.getZ()), Math.min(sz, box.z1() - min.getZ() + 1)};
+        }
+
+        /** The box around the whole plan. */
+        Chunker.Box box() {
+            return new Chunker.Box(min.getX(), min.getY(), min.getZ(), min.getX() + sx - 1, min.getY() + sy - 1, min.getZ() + sz - 1);
+        }
+
+        /** How many cells of the box have something to build or dig (safe-area cells do not count). */
+        int cells(Chunker.Box box) {
+            int[] r = range(box);
+            int n = 0;
+            for (int y = r[2]; y < r[3]; y++) for (int z = r[4]; z < r[5]; z++) for (int x = r[0]; x < r[1]; x++) {
+                int i = idx(x, y, z);
+                if (st[i] != null && !(excluded != null && excluded.get(i))) n++;
+            }
+            return n;
+        }
+
         final List<String> notes = new ArrayList<>();      // unknown blocks, regions skipped ...
         final Map<String, Integer> fluids = new LinkedHashMap<>();
 
@@ -321,15 +370,34 @@ final class Schem {
         /** Items not in the inventory right now; their blocks are left out (skip mode). null = all or nothing. */
         final java.util.function.Supplier<java.util.Set<Item>> missing;
 
+        /** The chunk this wrapper covers (null = the whole plan). Baritone's origin is then the box's min corner, so it only walks the box's cells. */
+        final Chunker.Box box;
+        private final int ox, oy, oz;
+
         Wrapper(Plan plan, Mode mode, Phase phase, java.util.function.Supplier<java.util.Set<Item>> missing) {
+            this(plan, mode, phase, missing, null);
+        }
+
+        Wrapper(Plan plan, Mode mode, Phase phase, java.util.function.Supplier<java.util.Set<Item>> missing, Chunker.Box box) {
             this.plan = plan;
             this.mode = mode;
             this.phase = phase;
             this.missing = missing;
+            this.box = box;
+            ox = box == null ? 0 : box.x0() - plan.min.getX();
+            oy = box == null ? 0 : box.y0() - plan.min.getY();
+            oz = box == null ? 0 : box.z0() - plan.min.getZ();
+        }
+
+        /** Where Baritone builds from: the plan's corner, or the box's. */
+        BlockPos origin() {
+            return box == null ? plan.min : new BlockPos(box.x0(), box.y0(), box.z0());
         }
 
         @Override
-        public boolean inSchematic(int x, int y, int z, BlockState current) {
+        public boolean inSchematic(int bx, int by, int bz, BlockState current) {
+            if (box != null && (bx < 0 || by < 0 || bz < 0 || bx >= widthX() || by >= heightY() || bz >= lengthZ())) return false;
+            int x = bx + ox, y = by + oy, z = bz + oz;   // plan coordinates
             BlockState d = plan.at(x, y, z);
             if (d == null || plan.excluded.get(plan.idx(x, y, z))) return false;
             if (phase == Phase.CLEAR || phase == Phase.ORIENTED) return false;   // our own placer does these
@@ -343,15 +411,15 @@ final class Schem {
         }
 
         @Override
-        public BlockState desiredState(int x, int y, int z, BlockState current, List<BlockState> approxPlaceable) {
-            BlockState d = plan.at(x, y, z);
+        public BlockState desiredState(int bx, int by, int bz, BlockState current, List<BlockState> approxPlaceable) {
+            BlockState d = plan.at(bx + ox, by + oy, bz + oz);
             if (phase == Phase.CLEAR || d == null) return Blocks.AIR.defaultBlockState();
             return d;
         }
 
-        @Override public int widthX() { return plan.sx; }
-        @Override public int heightY() { return plan.sy; }
-        @Override public int lengthZ() { return plan.sz; }
+        @Override public int widthX() { return box == null ? plan.sx : Math.min(box.sx(), plan.sx); }
+        @Override public int heightY() { return box == null ? plan.sy : Math.min(box.sy(), plan.sy); }
+        @Override public int lengthZ() { return box == null ? plan.sz : Math.min(box.sz(), plan.sz); }
     }
 
     // ------------------------------------------------------------------ counting
@@ -399,15 +467,42 @@ final class Schem {
     }
 
     static Counts count(Plan plan, Mode mode, Level level) {
+        return count(plan, mode, World.of(level), null, false);
+    }
+
+    /** count() for the cells of one chunk only (null = the whole plan). */
+    static Counts count(Plan plan, Mode mode, Level level, Chunker.Box box) {
+        return count(plan, mode, World.of(level), box, false);
+    }
+
+    /** The items the given chunks still need, added up: from the world where it is loaded, from the plan alone where it is not. */
+    static Map<Item, Integer> needed(Plan plan, Mode mode, World world, List<Chunker.Box> boxes) {
+        Map<Item, Integer> out = new LinkedHashMap<>();
+        for (Chunker.Box b : boxes) count(plan, mode, world, b, true).items.forEach((it, n) -> out.merge(it, n, Integer::sum));
+        return out;
+    }
+
+    /**
+     * unloadedAsAir: cells in chunks that are not loaded are counted as if the world were empty there (still counted in
+     * "unloaded" too), so the items show what a chunk will need before the bot has been near it.
+     */
+    static Counts count(Plan plan, Mode mode, World world, Chunker.Box box, boolean unloadedAsAir) {
         Counts c = new Counts();
         BlockPos.MutableBlockPos mp = new BlockPos.MutableBlockPos();
-        for (int y = 0; y < plan.sy; y++) for (int z = 0; z < plan.sz; z++) for (int x = 0; x < plan.sx; x++) {
+        int[] r = plan.range(box);
+        for (int y = r[2]; y < r[3]; y++) for (int z = r[4]; z < r[5]; z++) for (int x = r[0]; x < r[1]; x++) {
             BlockState d = plan.st[plan.idx(x, y, z)];
             if (d == null) continue;
             if (plan.excluded.get(plan.idx(x, y, z))) { c.excluded++; continue; }
             mp.set(plan.min.getX() + x, plan.min.getY() + y, plan.min.getZ() + z);
-            if (!level.hasChunkAt(mp)) { c.unloaded++; continue; }
-            BlockState cur = norm(level.getBlockState(mp));
+            BlockState cur;
+            if (!world.loaded(mp)) {
+                c.unloaded++;
+                if (!unloadedAsAir) continue;
+                cur = Blocks.AIR.defaultBlockState();
+            } else {
+                cur = norm(world.at(mp));
+            }
             if (d.isAir()) {
                 if (todo(mode, d, cur)) {
                     c.extra++;

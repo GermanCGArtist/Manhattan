@@ -187,6 +187,8 @@ final class Runner {
         awaitRecovery = false;
         Areas.scripted.clear();
         Areas.restoreIfNeeded(text);
+        String resume = Jobs.startRun();   // the saved ledger of this world: what an earlier run finished
+        if (resume != null) Util.msg(resume);
         globals = new Ast.Env(Builtins.root());
         main = new Fiber("queue-script", () -> Ast.run(program, mainIn, globals));
         mainIn = new Interp(this, main);

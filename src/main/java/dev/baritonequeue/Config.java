@@ -19,6 +19,9 @@ final class Config {
     /** A step that makes no progress for this many minutes is stopped and skipped (0 = never). */
     int stallMinutes = 30;
 
+    /** A schematic bigger than this (blocks, in x and z) is built in chunks of this size, one after the other (8 or more). */
+    int chunkSize = 32;
+
     /** Named chests for the chest lines of a script: name -> {x, y, z}. */
     java.util.Map<String, int[]> chests = new java.util.LinkedHashMap<>();
 
@@ -79,6 +82,7 @@ final class Config {
                     if (cfg.uiMode == null || (!cfg.uiMode.equals("vanilla") && !cfg.uiMode.equals("docked"))) cfg.uiMode = "vanilla";
                     if (cfg.uiScale <= 0.5f || cfg.uiScale > 2.5f) cfg.uiScale = 1.0f;
                     if (cfg.lastArea == null) cfg.lastArea = new ArrayList<>();
+                    if (cfg.chunkSize < 8) cfg.chunkSize = 32;
                 }
                 if (cfg.scriptVersion < 2) migrate();
                 if (cfg.presetsVersion < Presets.VERSION) {   // new default presets: untouched old ones are replaced

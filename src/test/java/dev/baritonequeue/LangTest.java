@@ -88,6 +88,136 @@ public class LangTest {
         }
     }
 
+    /** The chunk loop's pure parts: boxes, alignment, nearest-open order. */
+    static void chunker() {
+        var whole = new Chunker.Box(100, 60, -50, 229, 80, 20);   // 130 x 71 blocks
+        var cs = Chunker.split(whole, 32);
+        same("chunk count", cs.size(), 5 * 3);
+        same("chunk first", cs.get(0), new Chunker.Box(100, 60, -50, 131, 80, -19));
+        same("chunks aligned to the min corner", cs.get(3).x0() + " " + cs.get(3).z0() + " " + cs.get(1).z0(), "132 -50 -18");
+        same("chunk last is smaller", cs.get(cs.size() - 1), new Chunker.Box(228, 60, 14, 229, 80, 20));
+        long cells = 0;
+        for (var b : cs) cells += (long) b.sx() * b.sy() * b.sz();
+        same("chunks cover the box", cells, (long) whole.sx() * whole.sy() * whole.sz());
+        same("small box is one chunk", Chunker.split(new Chunker.Box(0, 0, 0, 31, 5, 31), 32).size(), 1);
+        same("chunk key", cs.get(0).key() + " " + cs.get(0).text(), "100,-50 100 -50 .. 131 -19");
+        // nearest open chunk by centre
+        var line = Chunker.split(new Chunker.Box(0, 0, 0, 319, 10, 9), 32);   // 10 chunks in a row
+        var open = new java.util.HashSet<>(line);
+        same("next from the west end", Chunker.next(line, new net.minecraft.core.BlockPos(2, 5, 5), open::contains).x0(), 0);
+        same("next from the middle", Chunker.next(line, new net.minecraft.core.BlockPos(170, 5, 5), open::contains).x0(), 160);
+        open.remove(line.get(5));
+        same("next skips a closed chunk", Chunker.next(line, new net.minecraft.core.BlockPos(170, 5, 5), open::contains).x0(), 128);   // 128 and 192 are equally far: the earlier one
+        open.clear();
+        same("next with none open", Chunker.next(line, new net.minecraft.core.BlockPos(0, 0, 0), open::contains), null);
+        open.addAll(line);
+        var up = Chunker.upcoming(line, line.get(3), 4, open::contains);
+        same("upcoming order", up.stream().map(b -> String.valueOf(b.x0() / 32)).collect(java.util.stream.Collectors.joining(",")), "3,2,1,0");
+        same("upcoming runs out", Chunker.upcoming(line, line.get(8), 20, open::contains).size(), 10);
+    }
+
+    /** The ledger file: save, load, states, reset, retry; the job queue's description and ids. */
+    static void ledger() {
+        try {
+            java.nio.file.Path dir = java.nio.file.Files.createTempDirectory("manhattan-ledger");
+            java.nio.file.Path f = Ledger.fileFor(dir, "my_world", "main");
+            Ledger l = Ledger.load(f);
+            same("ledger starts empty", l.size(), 0);
+            String a = "script/schem_build@12(all,add)#1";
+            l.set(a + "/0,0", Ledger.State.DONE, 1, 0, null, "sig1");
+            l.set(a + "/32,0", Ledger.State.DEFERRED, 2, 7, "attached: 7 left", "sig1");
+            l.set(a + "/64,0", Ledger.State.RUNNING, 1, 30, null, "sig1");
+            l.putVars("build", java.util.Map.of("n", 5.0));
+            same("ledger file written", java.nio.file.Files.exists(f), true);
+            same("ledger no temp file left", java.nio.file.Files.exists(f.resolveSibling(f.getFileName() + ".tmp")), false);
+            Ledger r = Ledger.load(f);
+            same("ledger size", r.size(), 4);
+            same("ledger state", r.state(a + "/0,0", "sig1") + " " + r.state(a + "/32,0", "sig1") + " " + r.state(a + "/64,0", "sig1"), "DONE DEFERRED RUNNING");
+            var e = r.get(a + "/32,0");
+            same("ledger fields", e.tries + " " + e.left + " " + e.reason + " " + e.sig, "2 7 attached: 7 left sig1");
+            same("ledger vars", r.get("build").vars, "{n=5.0}");
+            same("ledger stale signature is ignored", r.state(a + "/0,0", "other"), "PENDING");
+            same("ledger unknown id", r.state("nope", null), "PENDING");
+            same("ledger ids by state", r.ids(a, Ledger.State.DONE), "[" + a + "/0,0]");
+            same("ledger under", Ledger.under(a + "/0,0", a) + " " + Ledger.under(a + "#2/0,0", a), "true false");
+            same("ledger retry", r.retry(a), 2);
+            same("ledger retried states", r.state(a + "/32,0", null) + " " + r.get(a + "/32,0").tries + " " + r.get(a + "/0,0").state, "PENDING 0 DONE");
+            Jobs.useLedger(r);
+            same("describe counts", String.join("|", Jobs.describe()).contains("1 of 3 chunks done"), true);
+            same("ledger reset one", r.reset(a + "/0,0"), 1);
+            same("ledger reset job", r.reset(a), 2);
+            same("ledger reset all", r.reset(null), 1);
+            same("ledger reset saved", Ledger.load(f).size(), 0);
+            // the start of a run reports what is done
+            Ledger g = Ledger.load(f);
+            g.set(a + "/0,0", Ledger.State.DONE, 1, 0, null, null);
+            g.set(a + "/32,0", Ledger.State.PENDING, 0, 0, null, null);
+            g.set("canal", Ledger.State.DONE, 1, 0, null, null);
+            g.set("walls", Ledger.State.FAILED, 1, 0, "boom", null);
+            Jobs.useLedger(g);
+            same("resume text", Jobs.startRun(), "Resuming: 1 of 2 jobs done (1 of 2 chunks).");
+            Jobs.useLedger(Ledger.load(dir.resolve("none.json")));
+            same("no resume text on a fresh ledger", Jobs.startRun(), null);
+            // job ids
+            Jobs.Node n1 = Jobs.action("schem_build", 12, "all,add", true), n2 = Jobs.action("schem_build", 12, "all,add", true);
+            same("job ids", n1.id + " " + n2.id, "script/schem_build@12(all,add)#1 script/schem_build@12(all,add)#2");
+            same("chunk id", Jobs.chunk(n1, Chunker.split(new Chunker.Box(100, 60, -50, 229, 80, 20), 32).get(0)).id, "script/schem_build@12(all,add)#1/100,-50");
+        } catch (Exception ex) {
+            fails++;
+            System.out.println("FAIL ledger: " + ex);
+            ex.printStackTrace(System.out);
+        }
+    }
+
+    /** chunk_needed's engine: items per chunk from the world where it is loaded, from the plan alone where it is not. */
+    static void chunkNeeded() {
+        try {
+            net.minecraft.SharedConstants.tryDetectVersion();
+            net.minecraft.server.Bootstrap.bootStrap();
+        } catch (Throwable t) {
+            System.out.println("  (chunk_needed test skipped: Minecraft cannot start offline: " + t + ")");
+            return;
+        }
+        var stone = net.minecraft.world.level.block.Blocks.STONE.defaultBlockState();
+        var air = net.minecraft.world.level.block.Blocks.AIR.defaultBlockState();
+        Schem.Plan plan = new Schem.Plan();
+        plan.name = "test";
+        plan.min = new net.minecraft.core.BlockPos(0, 0, 0);
+        plan.sx = 64;
+        plan.sy = 1;
+        plan.sz = 2;
+        plan.st = new net.minecraft.world.level.block.state.BlockState[64 * 2];
+        java.util.Arrays.fill(plan.st, stone);
+        plan.excluded = new java.util.BitSet(plan.st.length);
+        var chunks = Chunker.split(plan.box(), 32);
+        same("test plan has two chunks", chunks.size(), 2);
+        var placed = new java.util.HashSet<net.minecraft.core.BlockPos>();   // stone already there
+        Schem.World world = new Schem.World() {
+            public boolean loaded(net.minecraft.core.BlockPos p) { return p.getX() < 32; }
+            public net.minecraft.world.level.block.state.BlockState at(net.minecraft.core.BlockPos p) { return placed.contains(p) ? stone : air; }
+        };
+        var stoneItem = net.minecraft.world.item.Items.STONE;
+        same("needed: loaded chunk", Schem.needed(plan, Schem.Mode.ADD, world, chunks.subList(0, 1)).get(stoneItem), 64);
+        same("needed: unloaded chunk from the plan alone", Schem.needed(plan, Schem.Mode.ADD, world, chunks.subList(1, 2)).get(stoneItem), 64);
+        same("needed: both", Schem.needed(plan, Schem.Mode.ADD, world, chunks).get(stoneItem), 128);
+        for (int x = 0; x < 32; x++) placed.add(new net.minecraft.core.BlockPos(x, 0, 0));
+        same("needed: half built", Schem.needed(plan, Schem.Mode.ADD, world, chunks).get(stoneItem), 96);
+        same("count with a box ignores the rest", Schem.count(plan, Schem.Mode.ADD, world, chunks.get(0), false).missing, 32);
+        same("count of the unloaded chunk without the assumption", Schem.count(plan, Schem.Mode.ADD, world, chunks.get(1), false).unloaded, 64);
+        same("plan cells in a box", plan.cells(chunks.get(1)), 64);
+        // markOpen on arrival: only the box, only loaded cells
+        plan.markOpen(world, chunks.get(0));
+        same("markOpen box: open cell", plan.wasOpen(plan.idx(0, 0, 1)), true);
+        same("markOpen box: built cell", plan.wasOpen(plan.idx(0, 0, 0)), false);
+        same("markOpen box: other chunk untouched", plan.wasOpen(plan.idx(40, 0, 1)), false);
+        // the wrapper answers only inside its box, with Baritone's coordinates relative to the box's corner
+        var w = new Schem.Wrapper(plan, Schem.Mode.ADD, Schem.Phase.FULL, null, chunks.get(1));
+        same("wrapper size and origin", w.widthX() + " " + w.heightY() + " " + w.lengthZ() + " " + w.origin(), "32 1 2 " + new net.minecraft.core.BlockPos(32, 0, 0));
+        same("wrapper in box (add mode, cell not marked open)", w.inSchematic(0, 0, 0, air), true);
+        same("wrapper outside box", w.inSchematic(32, 0, 0, air), false);
+        same("wrapper desired state", w.desiredState(5, 0, 1, air, null), stone);
+    }
+
     public static void main(String[] a) {
         check("arith", "out(1 + 2 * 3, (1 + 2) * 3, 7 / 2, 7 % 3, -2 * 3)", "7 9 3.5 1 -6");
         check("strings", "let n = 5\nout(\"n is {n}, twice {n * 2}\", 'x{y}', \"a\" + 1)", "n is 5, twice 10 x{y} a1");
@@ -204,6 +334,9 @@ public class LangTest {
             System.out.println("FAIL converted script does not parse: line " + e.line + ": " + e.getMessage());
         }
         sheet();
+        chunker();
+        ledger();
+        chunkNeeded();
         System.out.println(passes + " passed, " + fails + " failed");
         System.exit(fails == 0 ? 0 : 1);
     }

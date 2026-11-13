@@ -88,6 +88,16 @@ public class QueueMod implements ClientModInitializer {
                             return 1;
                         }))
                         .then(ClientCommands.literal("skip").executes(ctx -> { runner.skip(); return 1; }))
+                        .then(ClientCommands.literal("jobs").executes(ctx -> { Jobs.describe().forEach(Util::msg); return 1; }))
+                        .then(ClientCommands.literal("reset")
+                                .executes(ctx -> jobsReset(null))
+                                .then(ClientCommands.argument("job", StringArgumentType.greedyString()).executes(ctx -> jobsReset(StringArgumentType.getString(ctx, "job").trim()))))
+                        .then(ClientCommands.literal("retry")
+                                .then(ClientCommands.argument("job", StringArgumentType.greedyString()).executes(ctx -> {
+                                    if (runner.running()) { Util.msg("The script is running. /queue stop first; the retried jobs are taken up by the next run."); return 0; }
+                                    Util.msg(Jobs.retry(StringArgumentType.getString(ctx, "job").trim()));
+                                    return 1;
+                                })))
                         .then(ClientCommands.literal("remove")
                                 .then(ClientCommands.argument("number", IntegerArgumentType.integer(1)).executes(ctx -> {
                                     int n = IntegerArgumentType.getInteger(ctx, "number");
@@ -249,6 +259,13 @@ public class QueueMod implements ClientModInitializer {
             g.fill(x - 4, 2, x + w + 4, 6 + ProgressView.HEIGHT, 0x99000000);   // readable against any sky
             ProgressView.draw(g, mc.font, x, 6, w);
         });
+    }
+
+    /** /queue reset [job]: forget what the ledger says is done (all of it, or one job / action / chunk id and everything below it). */
+    private static int jobsReset(String job) {
+        if (runner.running()) { Util.msg("The script is running. /queue stop first."); return 0; }
+        Util.msg(Jobs.reset(job));
+        return 1;
     }
 
     private static int run() {

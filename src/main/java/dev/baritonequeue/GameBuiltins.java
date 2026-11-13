@@ -346,13 +346,19 @@ final class GameBuiltins {
                         String[] err = new String[1];
                         var pls = SchemCmd.select(sm[0], err);
                         if (pls == null) return err[0];
-                        return QueueMod.schem.begin(pls, Schem.Mode.of(sm[1]));
+                        return QueueMod.schem.begin(pls, Schem.Mode.of(sm[1]), l, (sm[0] == null ? "" : sm[0]) + "," + sm[1], true);
                     },
                     QueueMod.schem::working,
                     QueueMod.schem::cancel,
                     () -> QueueMod.schem.failure() != null ? new Modules.Failure(QueueMod.schem.failure()) : (Object) QueueMod.schem.result())
                     .resumable(QueueMod.schem::suspendRun, QueueMod.schem::carryOn), "schem_build", l);
             return r instanceof Double d ? d : 0.0;
+        });
+        getter(g, "chunk_needs", "true while a chunked schem_build waits at a new chunk for you: write on chunk_needs ... end to fetch materials there (see chunk_needed)", (in, a, l) -> QueueMod.schem.needs());
+        def(g, "chunk_needed", 0, 1, "chunk_needed([n])", "the items the next n chunks (default 1) of the running schem_build still need, as a map item -> count (not minus the inventory): from the world where it is loaded, from the schematic alone where it is not; empty when no chunked build runs", (in, a, l) -> {
+            Map<Object, Object> out = Values.newMap();
+            QueueMod.schem.chunkNeeded(a.isEmpty() ? 1 : toInt(a.get(0), "The chunks of chunk_needed()", l)).forEach((it, n) -> out.put(Schem.itemName(it), (double) n));
+            return out;
         });
         def(g, "clear_area", 0, 1, "clear_area([layers])", "mine out the selection from the top, 3 layers per pass (or 2: clear_area(2)), everything in reach at each stop, picking up drops on the way; returns the blocks left (finish those with #sel ca)", (in, a, l) ->
                 in.await(() -> new Actions.Feature(

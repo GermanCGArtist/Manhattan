@@ -67,7 +67,10 @@ final class SchemPlacer {
 
     int placed() { return placed; }
 
-    void begin(Plan plan, Mode mode, Phase phase) {
+    void begin(Plan plan, Mode mode, Phase phase) { begin(plan, mode, phase, null); }
+
+    /** Only the cells inside the box (null = the whole plan). */
+    void begin(Plan plan, Mode mode, Phase phase, Chunker.Box box) {
         this.plan = plan;
         this.mode = mode;
         clearing = phase == Phase.CLEAR;
@@ -78,7 +81,8 @@ final class SchemPlacer {
         stagnant = 0;
         badSpots.clear();
         Level level = Minecraft.getInstance().level;
-        for (int y = 0; y < plan.sy; y++) for (int z = 0; z < plan.sz; z++) for (int x = 0; x < plan.sx; x++) {
+        int[] r = plan.range(box);
+        for (int y = r[2]; y < r[3]; y++) for (int z = r[4]; z < r[5]; z++) for (int x = r[0]; x < r[1]; x++) {
             BlockState d = plan.st[plan.idx(x, y, z)];
             if (d == null || plan.excluded.get(plan.idx(x, y, z))) continue;
             BlockPos w = plan.world(x, y, z);

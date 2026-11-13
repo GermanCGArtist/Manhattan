@@ -7,13 +7,25 @@ import dev.baritonequeue.Schem.Mode;
 import dev.baritonequeue.Schem.Phase;
 import dev.baritonequeue.Schem.Plan;
 import net.minecraft.client.Minecraft;
+import net.minecraft.core.BlockPos;
 
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+
+import static dev.baritonequeue.Config.cfg;
 
 /**
+ * A plan bigger than one chunk (Config.chunkSize, default 32) is cut into chunks and worked chunk by chunk (stage 1 of the
+ * job queue): the nearest open chunk, walk there, wait until it is loaded, mark which cells are open, give the script's
+ * "on chunk_needs" block its turn to fetch materials, run the phases below on that chunk alone, count, retry once, defer.
+ * After the last chunk one more pass over the deferred ones, then the report. The result of every chunk is in the Ledger
+ * (see Jobs), so a rerun does not visit what is done. A plan that fits one chunk runs as one piece, as it always did.
+ * <p>
  * Builds a Litematica placement with Baritone's own builder, one phase at a time: the plan is wrapped in an ISchematic
  * that only "contains" the blocks of the current phase (see Schem.Wrapper), the builder runs on it layer by layer
  * (bottom-up; the clear phase top-down) and when it is done the next phase starts. Never goes through the Litematica
@@ -45,6 +57,33 @@ final class SchemProcess {
     private Object planWorld;   // the level the plan was made in
     private Boolean breakBefore;
 
+    // ------------------------------------------------------------------ the chunk loop (plans bigger than one chunk)
+
+    private enum Step { WALK, LOAD, NEEDS, RUN }
+
+    private static final int CHUNK_GAP = 12;          // ticks at a new chunk before "chunk_needs" goes up: the flag was down for a handler check
+    private static final int NEEDS_TICKS = 20;        // how long the script's "on chunk_needs" block has to take over
+    private static final int WALK_TICKS = 20 * 120;   // no arrival after this long: the walk counts as failed
+    private static final int LOAD_TICKS = 20 * 40;    // the chunk does not load
+    private static final int NEAR = 10;               // close enough to the chunk's centre (blocks)
+
+    private boolean chunked, needs;
+    private Step step = Step.RUN;
+    private List<Chunker.Box> chunks = new ArrayList<>();
+    private final Map<Chunker.Box, Jobs.Node> nodes = new HashMap<>();
+    private final Set<Chunker.Box> closed = new HashSet<>(), marked = new HashSet<>();
+    private final Map<Chunker.Box, Integer> tries = new HashMap<>();
+    private final List<Chunker.Box> deferred = new ArrayList<>();
+    private Chunker.Box box;     // the chunk being worked on (null: the whole plan)
+    private Jobs.Node action, cur;
+    private String sig;
+    private int pass, chunkTicks, walkTries, doneChunks;
+
+    static int chunkSize() { return cfg.chunkSize >= 8 ? cfg.chunkSize : Chunker.DEFAULT_SIZE; }
+
+    /** true while the engine waits at a chunk for the script's "on chunk_needs" block (the getter chunk_needs). */
+    boolean needs() { return needs && (working || paused); }
+
     {
         // throwaway blocks Baritone places where the schematic wants something else are scaffolding: let buildtools
         // record them, so collect_scaffold() can take them down after the build
@@ -66,14 +105,28 @@ final class SchemProcess {
 
     Plan plan() { return plan; }
 
-    /** Starts building; returns an error text, "" when there is nothing to do, or null when it started. */
+    /** Starts building (from the chat); returns an error text, "" when there is nothing to do, or null when it started. */
     String begin(List<SchemSource.Placement> pls, Mode mode) {
+        return begin(pls, mode, 0, "chat", false);
+    }
+
+    /**
+     * Starts building. line and args name the action in the job ledger (the script line and the placement/mode words);
+     * scripted: it runs inside a script, so a second schem_build on the same line is a new action (#2).
+     */
+    String begin(List<SchemSource.Placement> pls, Mode mode, int line, String args, boolean scripted) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.level == null) return "Not in a world.";
         if (working) return "A schematic is already being built. /schem stop ends it.";
         String[] err = new String[1];
         Plan p = Schem.plan(pls, err);
         if (p == null) return err[0];
+        chunked = false;
+        step = Step.RUN;
+        box = null;
+        needs = false;
+        List<Chunker.Box> cs = Chunker.split(p.box(), chunkSize());
+        if (cs.size() > 1) return beginChunked(p, mode, cs, line, args, scripted);
         p.markOpen(mc.level);
         Schem.Counts c = Schem.count(p, mode, mc.level);
         choosePhases(c, mode);
@@ -164,7 +217,7 @@ final class SchemProcess {
         BaritoneAPI.getSettings().layerOrder.value = ph == Phase.CLEAR;   // true = top-down
         BaritoneAPI.getSettings().goalBreakFromAbove.value = ph == Phase.CLEAR || oldAbove;
         int todo = 0;
-        Schem.Counts c = Schem.count(plan, mode, Minecraft.getInstance().level);
+        Schem.Counts c = Schem.count(plan, mode, Minecraft.getInstance().level, box);
         todo = c.todoByPhase.getOrDefault(ph, 0);
         lastTodo = todo;
         lastPlaced = 0;
@@ -173,15 +226,15 @@ final class SchemProcess {
         Util.msg("Phase " + (pi + 1) + "/" + phases.size() + ": " + ph.label + ", " + todo + " blocks" + (ph == Phase.CLEAR ? " (top-down, our own digging)" : " (bottom-up)") + ".");
         if (ph == Phase.ORIENTED || ph == Phase.CLEAR) {
             Util.baritone().getPathingBehavior().cancelEverything();
-            placer.begin(plan, mode, ph);
+            placer.begin(plan, mode, ph, box);
             return;
         }
         neededItems.clear();
         neededItems.addAll(c.items.keySet());
         refreshMissing();
         restarts = 0;
-        Util.baritone().getBuilderProcess().build("schem " + plan.name + " " + ph.name().toLowerCase(),
-                new Schem.Wrapper(plan, mode, ph, skipMissing ? () -> missingNow : null), plan.min);
+        Schem.Wrapper w = new Schem.Wrapper(plan, mode, ph, skipMissing ? () -> missingNow : null, box);
+        Util.baritone().getBuilderProcess().build("schem " + plan.name + " " + ph.name().toLowerCase(), w, w.origin());
     }
 
     // ------------------------------------------------------------------ skip blocks without items
@@ -206,7 +259,7 @@ final class SchemProcess {
     /** "stone x5, gravel x3" for the blocks of this phase left out for want of items. */
     private String skippedText(Phase ph) {
         if (!skipMissing) return "";
-        Schem.Counts c = Schem.count(plan, mode, Minecraft.getInstance().level);
+        Schem.Counts c = Schem.count(plan, mode, Minecraft.getInstance().level, box);
         StringBuilder sb = new StringBuilder();
         for (var e : c.items.entrySet()) {
             if (Schem.have(e.getKey()) > 0) continue;
@@ -220,6 +273,7 @@ final class SchemProcess {
         if (!working) return;
         Minecraft mc = Minecraft.getInstance();
         if (mc.level == null || mc.player == null) return;
+        if (chunked && step != Step.RUN) { chunkTick(mc); return; }
         if (++since < FIRST_CHECK) return;
         IBuilderProcess b = Util.baritone().getBuilderProcess();
         Phase ph = phases.get(pi);
@@ -256,7 +310,7 @@ final class SchemProcess {
         }
         // watchdog: the number of blocks still to do must keep falling, else the phase ends and is reported
         if (since % STALL_STEP == 0) {
-            int todo = Schem.count(plan, mode, mc.level).todoByPhase.getOrDefault(ph, 0);
+            int todo = Schem.count(plan, mode, mc.level, box).todoByPhase.getOrDefault(ph, 0);
             if (todo < lastTodo) noProgress = 0;
             else noProgress += STALL_STEP;
             lastTodo = todo;
@@ -268,7 +322,7 @@ final class SchemProcess {
     }
 
     private void endPhase(Phase ph, String why) {
-        Schem.Counts c = Schem.count(plan, mode, Minecraft.getInstance().level);
+        Schem.Counts c = Schem.count(plan, mode, Minecraft.getInstance().level, box);
         int left = c.todoByPhase.getOrDefault(ph, 0);
         if (left > 0 && why == null && skipMissing) {
             String sk = skippedText(ph);
@@ -298,11 +352,257 @@ final class SchemProcess {
                 phases.clear();
                 phases.addAll(before);
             }
-            finish(c);
+            if (chunked) chunkDone(c);
+            else finish(c);
         } else {
             since = 0;
             startPhase();
         }
+    }
+
+    // ------------------------------------------------------------------ the chunk loop
+
+    private String beginChunked(Plan p, Mode mode, List<Chunker.Box> cs, int line, String args, boolean scripted) {
+        Minecraft mc = Minecraft.getInstance();
+        round = 0;
+        plan = p;
+        planWorld = mc.level;
+        this.mode = mode;
+        for (String n : p.notes) Util.msg("Note: " + n);
+        if (!p.fluids.isEmpty()) Util.msg("Fluids are not built yet (" + p.fluids + "); they are left out.");
+        chunks = cs;
+        closed.clear();
+        marked.clear();
+        tries.clear();
+        deferred.clear();
+        nodes.clear();
+        pass = 0;
+        doneChunks = 0;
+        walkTries = 0;
+        action = Jobs.action("schem_build", line, args, scripted);
+        action.kids.clear();
+        sig = p.min.getX() + "," + p.min.getY() + "," + p.min.getZ() + " " + p.sx + "x" + p.sy + "x" + p.sz + " /" + chunkSize();
+        int done = 0;
+        for (Chunker.Box b : cs) {
+            Jobs.Node n = Jobs.chunk(action, b);
+            nodes.put(b, n);
+            Ledger.Entry e = Jobs.ledger().get(n.id, sig);
+            if (e != null) {
+                n.state = e.state;
+                n.tries = e.tries;
+                n.left = e.left;
+                n.reason = e.reason;
+                if (e.state == Ledger.State.DONE) done++;
+            }
+        }
+        Util.msg("Building " + p.name + " (" + mode.label() + ") in " + cs.size() + " chunks of up to " + chunkSize() + "x" + chunkSize() + " blocks"
+                + (done > 0 ? " (" + done + " done in an earlier run)" : "") + ".");
+        phases.clear();
+        pi = 0;
+        phaseResult.clear();
+        stuck.clear();
+        failure = null;
+        paused = false;
+        startedAt = System.currentTimeMillis();
+        apply();
+        working = true;
+        chunked = true;
+        if (!nextChunk()) {
+            Util.msg(p.name + " (" + mode.label() + "): nothing to do, every chunk is done.");
+            endChunks();
+            result = 0;
+            return "";
+        }
+        return null;
+    }
+
+    /** Picks the nearest open chunk and starts walking to it; false when no chunk is left (the deferred pass included). */
+    private boolean nextChunk() {
+        Minecraft mc = Minecraft.getInstance();
+        BlockPos from = mc.player.blockPosition();
+        while (true) {
+            Chunker.Box b = Chunker.next(chunks, from, c -> !closed.contains(c));
+            if (b == null) {
+                if (pass == 0 && !deferred.isEmpty()) {
+                    // neighbours are built now: a seam's attached or redstone blocks have their support
+                    pass = 1;
+                    Util.msg("Second pass over " + deferred.size() + " deferred chunk" + (deferred.size() == 1 ? "" : "s") + ".");
+                    for (Chunker.Box d : deferred) { closed.remove(d); tries.put(d, 1); }   // one try each
+                    deferred.clear();
+                    continue;
+                }
+                return false;
+            }
+            Jobs.Node n = nodes.get(b);
+            if (plan.cells(b) == 0) { closed.add(b); continue; }
+            Ledger.Entry e = Jobs.ledger().get(n.id, sig);
+            Schem.Counts c = Schem.count(plan, mode, mc.level, b);
+            boolean loaded = c.unloaded == 0;
+            if (e != null && e.state == Ledger.State.DONE) {
+                if (!loaded || c.todoTotal() == 0) { closed.add(b); n.state = Ledger.State.DONE; doneChunks++; continue; }   // done earlier; the world is not looked at where it is not loaded
+                Util.msg("Chunk " + b.text() + " was done, but " + c.todoTotal() + " blocks are missing now: building it again.");
+            } else if (loaded && c.todoTotal() == 0) {
+                Jobs.set(n, Ledger.State.DONE, tries.getOrDefault(b, 0), 0, null, sig);
+                closed.add(b);
+                doneChunks++;
+                continue;
+            }
+            box = b;
+            cur = n;
+            step = Step.WALK;
+            needs = false;
+            chunkTicks = 0;
+            walkTries = 0;
+            Util.msg("Chunk " + (doneChunks + 1) + "/" + chunks.size() + " (" + b.text() + ").");
+            startWalk(mc);
+            return true;
+        }
+    }
+
+    private boolean near(Minecraft mc) {
+        return box.distanceXZ(mc.player.getX(), mc.player.getZ()) <= NEAR;
+    }
+
+    private void startWalk(Minecraft mc) {
+        if (near(mc)) { step = Step.LOAD; return; }
+        step = Step.WALK;
+        Util.baritone().getCustomGoalProcess().setGoalAndPath(new baritone.api.pathing.goals.GoalXZ((int) box.cx(), (int) box.cz()));
+    }
+
+    private void chunkTick(Minecraft mc) {
+        chunkTicks++;
+        switch (step) {
+            case WALK -> {
+                if (near(mc)) { Util.baritone().getPathingBehavior().cancelEverything(); step = Step.LOAD; return; }
+                if (chunkTicks % 20 != 0) return;
+                if (chunkTicks > WALK_TICKS) { chunkFailed("could not get there in " + WALK_TICKS / 20 + " s"); return; }
+                if (!Util.baritone().getCustomGoalProcess().isActive()) {
+                    if (++walkTries > 3) { chunkFailed("no way there (Baritone stopped walking " + walkTries + " times)"); return; }
+                    startWalk(mc);
+                }
+            }
+            case LOAD -> {
+                if (chunkTicks < CHUNK_GAP || chunkTicks % 5 != 0) return;
+                if (Schem.count(plan, mode, mc.level, box).unloaded > 0) {
+                    if (chunkTicks > LOAD_TICKS) chunkFailed("the chunk did not load");
+                    return;
+                }
+                if (marked.add(box)) plan.markOpen(mc.level, box);   // on arrival: what is open now is what the build may replace
+                step = Step.NEEDS;
+                needs = true;
+                chunkTicks = 0;
+            }
+            case NEEDS -> {
+                // the script's "on chunk_needs" block gets its turn (it checks every 10 ticks; if it fires, suspendRun() and carryOn() take it from here)
+                if (chunkTicks < NEEDS_TICKS) return;
+                needs = false;
+                runChunk();
+            }
+            default -> { }
+        }
+    }
+
+    /** At the chunk, materials fetched (or none asked for): count, pick the phases, go. */
+    private void runChunk() {
+        Minecraft mc = Minecraft.getInstance();
+        step = Step.RUN;
+        Schem.Counts c = Schem.count(plan, mode, mc.level, box);
+        choosePhases(c, mode);
+        round = 0;
+        pi = 0;
+        phaseResult.clear();
+        stuck.clear();
+        Jobs.set(cur, Ledger.State.RUNNING, tries.getOrDefault(box, 0), c.todoTotal(), null, sig);
+        if (phases.isEmpty()) { chunkDone(c); return; }
+        Util.msg("Chunk " + box.text() + ": " + c.todoTotal() + " blocks to do in " + phases.size() + " phase" + (phases.size() == 1 ? "" : "s") + ".");
+        since = 0;
+        startPhase();
+    }
+
+    /** The phases of the chunk are through: DONE, one retry, or DEFERRED. */
+    private void chunkDone(Schem.Counts c) {
+        int left = c.todoTotal();
+        int t = tries.merge(box, 1, Integer::sum);
+        if (left == 0) {
+            Jobs.set(cur, Ledger.State.DONE, t, 0, null, sig);
+            closed.add(box);
+            doneChunks++;
+            Util.msg("Chunk " + box.text() + " is done.");
+        } else if (t < 2) {
+            Util.msg("Chunk " + box.text() + ": " + left + " blocks left, trying once more.");
+            runChunk();
+            return;
+        } else {
+            String why = (stuck.isEmpty() ? "blocks are still wrong" : String.join("; ", stuck)) + (c.examples.isEmpty() ? "" : "; e.g. " + c.examples.get(0));
+            deferChunk(left, why);
+        }
+        advance();
+    }
+
+    /** A chunk that cannot be reached or does not load: one retry (the walk again), then deferred. */
+    private void chunkFailed(String why) {
+        Util.baritone().getPathingBehavior().cancelEverything();
+        int t = tries.merge(box, 1, Integer::sum);
+        if (t < 2 && pass == 0) {
+            Util.msg("Chunk " + box.text() + ": " + why + ", trying once more.");
+            chunkTicks = 0;
+            walkTries = 0;
+            startWalk(Minecraft.getInstance());
+            return;
+        }
+        deferChunk(plan.cells(box), why);
+        advance();
+    }
+
+    private void deferChunk(int left, String why) {
+        Jobs.set(cur, Ledger.State.DEFERRED, tries.getOrDefault(box, 0), left, why, sig);
+        closed.add(box);
+        if (pass == 0) deferred.add(box);
+        Util.msg("Chunk " + box.text() + " deferred: " + left + " left (" + why + ").");
+    }
+
+    private void advance() {
+        Util.baritone().getPathingBehavior().cancelEverything();
+        if (!nextChunk()) finishChunks();
+    }
+
+    private void endChunks() {
+        working = false;
+        needs = false;
+        restore();
+        Jobs.settle(action);
+        chunked = false;
+        step = Step.RUN;
+    }
+
+    private void finishChunks() {
+        endChunks();
+        int left = 0, done = 0;
+        List<Jobs.Node> open = new ArrayList<>();
+        for (Jobs.Node n : action.kids) {
+            if (n.state == Ledger.State.DONE) done++;
+            else if (n.state == Ledger.State.DEFERRED || n.state == Ledger.State.FAILED) { left += n.left; open.add(n); }
+        }
+        result = left;
+        long secs = (System.currentTimeMillis() - startedAt) / 1000;
+        Util.msg("Finished " + plan.name + " (" + mode.label() + ") in " + secs + " s: " + done + " of " + chunks.size() + " chunks done, "
+                + (left == 0 ? "everything is as it should be." : left + " blocks still wrong in " + open.size() + " chunk" + (open.size() == 1 ? "" : "s") + "."));
+        for (Jobs.Node n : open) Util.msg("  chunk " + n.label + ": " + n.left + " left - " + n.reason);
+        if (left > 0) Util.msg("/schem check shows what is left; /queue jobs lists the chunks; /queue retry <job> opens them again.");
+    }
+
+    /**
+     * The items for the next n chunks (the one the bot is at included): from the world where it is loaded, from the plan
+     * alone where it is not. The getter chunk_needed(n); empty when no chunked build runs.
+     */
+    Map<net.minecraft.world.item.Item, Integer> chunkNeeded(int n) {
+        Minecraft mc = Minecraft.getInstance();
+        if (!chunked || plan == null || mc.player == null || mc.level == null) return Map.of();
+        java.util.function.Predicate<Chunker.Box> open = b -> !closed.contains(b) && plan.cells(b) > 0
+                && Jobs.ledger().state(nodes.get(b).id, sig) != Ledger.State.DONE;
+        Chunker.Box start = box != null && open.test(box) ? box : Chunker.next(chunks, mc.player.blockPosition(), open);
+        if (start == null) return Map.of();
+        return Schem.needed(plan, mode, Schem.World.of(mc.level), Chunker.upcoming(chunks, start, Math.max(1, n), open));
     }
 
     private void finish(Schem.Counts c) {
@@ -317,13 +617,19 @@ final class SchemProcess {
     }
 
     void cancel() {
+        boolean wasPaused = paused;
         paused = false;
-        if (!working) return;
+        needs = false;
+        if (!working && !wasPaused) return;
+        boolean was = working;
         working = false;
         placer.stop();
         Util.baritone().getPathingBehavior().cancelEverything();
         restore();
-        Util.msg("Schematic building stopped.");
+        if (chunked && cur != null && cur.state == Ledger.State.RUNNING) Jobs.set(cur, Ledger.State.PENDING, cur.tries, cur.left, "interrupted", sig);   // a rerun picks it up again
+        chunked = false;
+        step = Step.RUN;
+        if (was) Util.msg("Schematic building stopped.");
     }
 
     /** An "on" block takes over: stop, keep the plan. */
@@ -343,12 +649,27 @@ final class SchemProcess {
         apply();
         working = true;
         Util.msg("Carrying on with " + plan.name + ".");
+        if (chunked) {
+            switch (step) {
+                case WALK -> startWalk(Minecraft.getInstance());
+                case LOAD -> { }
+                case NEEDS -> { needs = false; runChunk(); }   // the script has fetched what it wanted
+                case RUN -> startPhase();
+            }
+            return null;
+        }
         startPhase();
         return null;
     }
 
     String status() {
         if (!working) return "No schematic is being built.";
-        return "Building " + plan.name + " (" + mode.label() + "), phase " + (pi + 1) + "/" + phases.size() + ": " + phases.get(pi).label + ".";
+        if (chunked && step != Step.RUN) return "Building " + plan.name + " (" + mode.label() + "), chunk " + (doneChunks + 1) + "/" + chunks.size() + ": " + step.name().toLowerCase() + ".";
+        return "Building " + plan.name + " (" + mode.label() + ")" + (chunked ? ", chunk " + (doneChunks + 1) + "/" + chunks.size() : "") + ", phase " + (pi + 1) + "/" + phases.size() + ": " + phases.get(pi).label + ".";
+    }
+
+    /** The current chunk as "i/n" for the display; null when the build is not chunked. */
+    String chunkText() {
+        return chunked && working ? (doneChunks + 1) + "/" + chunks.size() : null;
     }
 }
