@@ -1962,7 +1962,8 @@ def worker(claim, keep, attach, timeout, tag=""):
                 # more try on a fresh world; a pass is reported as "PASSED ON RETRY" with the first failure, never hidden
                 tries += 1
                 first = str(info).splitlines()[0][:200] if str(info) else ""
-                log(tag + "%s failed (%s); retry %d/%d" % (name, first, tries, RETRIES))
+                log(tag + "%s failed (%s); retry %d/%d. Full first failure: %s" % (name, first, tries, RETRIES, info))
+                globals()["RUN_ID"] += 1    # worlds are named after it: the retry gets a fresh one, not the half-used world of the failed try
                 if needs_main_world(fn) and getattr(t, "world", mc.WORLD) != mc.WORLD:
                     fresh_world(t, mc.WORLD)
                 ok, info2, dt2, hung = run_one(t, name, fn, max(timeout, TEST_TIMEOUTS.get(name, 0)))
