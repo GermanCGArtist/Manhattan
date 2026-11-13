@@ -483,17 +483,22 @@ final class FillProcess extends Feature {
 
         // Few buckets: the first two sources must have one cell between them, so that the gap fills and regenerates
         // (a source placed in the open does not refill a bucket by itself). Nearest-first alone can put them 4 apart.
-        List<BlockPos> paired = new ArrayList<>();
+        List<BlockPos> paired = new ArrayList<>();     // a cell 2 away from a source with air between
+        List<BlockPos> pairable = new ArrayList<>();   // no source yet: a cell 2 away from another cell we may place
+        Set<BlockPos> choiceSet = new HashSet<>(choices);
         for (BlockPos c : choices) {
             for (int[] d : new int[][] {{2, 0}, {-2, 0}, {0, 2}, {0, -2}}) {
                 BlockPos other = c.offset(d[0], 0, d[1]);
                 BlockPos gap = c.offset(d[0] / 2, 0, d[1] / 2);
-                if (targets.contains(gap) && Util.isSourceWater(level.getBlockState(other))
-                        && !Util.isSolid(level, gap) && !Util.isSourceWater(level.getBlockState(gap))) { paired.add(c); break; }
+                if (!targets.contains(gap) || Util.isSolid(level, gap) || Util.isSourceWater(level.getBlockState(gap))) continue;
+                if (Util.isSourceWater(level.getBlockState(other))) { paired.add(c); break; }
+                if (choiceSet.contains(other)) { pairable.add(c); break; }
             }
         }
-        if (!paired.isEmpty() && Util.countItem(p, Items.WATER_BUCKET) + Util.countItem(p, Items.BUCKET) > 0
-                && !hasRegeneratingSource(level, p)) choices = paired;
+        if (Util.countItem(p, Items.WATER_BUCKET) + Util.countItem(p, Items.BUCKET) > 0 && !hasRegeneratingSource(level, p)) {
+            if (!paired.isEmpty()) choices = paired;
+            else if (!pairable.isEmpty()) choices = pairable;
+        }
 
         BlockPos next = null;
         double best = Double.MAX_VALUE;

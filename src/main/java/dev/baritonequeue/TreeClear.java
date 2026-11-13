@@ -45,7 +45,7 @@ final class TreeClear {
     /** Hanging on or growing near a tree: mined along with the tree they are next to. */
     private static final Set<Block> ATTACHED = Set.of(Blocks.VINE, Blocks.BEE_NEST, Blocks.COCOA, Blocks.PALE_HANGING_MOSS,
             Blocks.WEEPING_VINES, Blocks.WEEPING_VINES_PLANT, Blocks.TWISTING_VINES, Blocks.TWISTING_VINES_PLANT);
-    private static final int TRIES = 2;
+    private static final int TRIES = 3;
     private static final int LEAF_WAIT_S = 60;
     private static final int SWEEP_CELL = 24;   // the end sweep stops once per 24x24 cell that had a tree
     private static final int DUMP_BELOW = 6;    // free slots: below this, a chest trip between trees
