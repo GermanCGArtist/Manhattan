@@ -1,0 +1,60 @@
+{
+  "name": "midtown-vs-baritone-nav-obstacle",
+  "instances": [
+    {
+      "id": "baritone",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "libs/baritone-api-fabric-1.18.0.jar" },
+        { "local_path": "build/libs/baritonequeue.jar" },
+        { "local_path": "build/libs/manhattan-testbridge.jar" }
+      ],
+      "account": { "offline": { "username": "BenchBaritone" } },
+      "ram_mb": 4096,
+      "cpu_cores": 2,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=baritone",
+        "-Dmanhattan.benchmark=nav_flat_obstacle"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=baritone scenario=nav_flat_obstacle pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=baritone scenario=nav_flat_obstacle pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "midtown",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/baritonequeue.jar" },
+        { "local_path": "build/libs/manhattan-testbridge.jar" }
+      ],
+      "account": { "offline": { "username": "BenchMidtown" } },
+      "ram_mb": 4096,
+      "cpu_cores": 2,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=nav_flat_obstacle"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=nav_flat_obstacle pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=nav_flat_obstacle pass=false|FATAL"
+        }
+      }
+    }
+  ],
+  "server": null,
+  "timeout_secs": 240
+}
