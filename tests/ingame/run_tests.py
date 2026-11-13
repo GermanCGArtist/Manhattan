@@ -1785,6 +1785,7 @@ def enter_world(b):
     b.wait(lambda: b("state")["screen"] == "", 60, step=1, what="the loading screen to close")
     time.sleep(3)
     t = Ctx(b)
+    t.world = mc.WORLD
     # world rules for repeatable tests; the answers go to the log for checking
     t.start_log()
     t.cmd("/gamerule advance_time false", "/gamerule advance_weather false", "/gamerule spawn_mobs false",
@@ -1796,7 +1797,7 @@ def enter_world(b):
 
 TEST_TIMEOUT = 600          # seconds; a test that takes longer fails and its game is restarted
 RAM_PER_CLIENT_GB = 3.5     # a game with its 3 GB heap (MANHATTAN_XMX) and its own memory
-TEST_TIMEOUTS = {"trees_forest_spruce": 900}   # Baritone stalls on the 2x2 spruce (2 min a try); --test-timeout can only raise it
+TEST_TIMEOUTS = {"trees_forest_spruce": 1200, "trees_forest_jungle": 1200}   # Baritone stalls on the 2x2 spruce (2 min a try); --test-timeout can only raise it
 MAX_WORKERS = 16            # bridge ports 25700+N for worker N: 25701..25716 (the other harness uses 25599 and 25601..25603)
 LONG_FIRST = ["trees_forest_spruce", "trees_small", "clear_resume", "schem_exact", "schem_fix_wrong", "schem_fix", "fill_water", "schem_add"]   # start the slow ones first
 
@@ -1889,6 +1890,7 @@ def fresh_world(t, name):
         t.b("leave")
         t.b.wait(lambda: t.b("state")["screen"].endswith("TitleScreen"), 120, step=1, what="the title screen")
     r = t.b("world " + name)
+    t.world = name
     t.b.wait(lambda: t.b("state")["inWorld"], 300, step=1, what="world %s to load" % name)
     t.b.wait(lambda: t.b("state")["screen"] == "", 60, step=1, what="the loading screen to close")
     time.sleep(3)
@@ -1904,6 +1906,16 @@ def port_busy(port):
     with socket.socket() as s:
         s.settimeout(1)
         return s.connect_ex(("127.0.0.1", port)) == 0
+
+
+def needs_main_world(fn):
+    """Tests that build a world of their own (new_world) are self-contained; the others run in the shared world."""
+    import inspect
+    try:
+        src = inspect.getsource(fn)
+        return "new_world(" not in src and "flood_world(" not in src and fn.__name__ != "<lambda>"
+    except (OSError, TypeError):
+        return False
 
 
 def start_game(b, attach):
@@ -1934,6 +1946,10 @@ def worker(claim, keep, attach, timeout, tag=""):
             if item is None:
                 break
             name, fn = item
+            if needs_main_world(fn) and getattr(t, "world", mc.WORLD) != mc.WORLD:
+                # the previous test left the game in a world of its own (with its own Litematica placements): these tests
+                # use the shared flat world, so the order the tests run in on a game must not matter
+                fresh_world(t, mc.WORLD)
             log(tag + "running", name, "...")
             ok, info, dt, hung = run_one(t, name, fn, max(timeout, TEST_TIMEOUTS.get(name, 0)))
             results.append((name, ok, info, dt))
