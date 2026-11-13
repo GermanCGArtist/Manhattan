@@ -48,6 +48,15 @@ final class ChunkLoop {
 
         /** No chunk is left (the deferred pass included). */
         void allDone();
+
+        /** A chunk the loop closed as DONE: has it lost blocks since (a walk, a mob, ...)? Only where it is loaded. */
+        default boolean damaged(Chunker.Box b) { return false; }
+
+        /** Where to walk to for the chunk (null = its centre). The host may pick a spot beside its structure. */
+        default BlockPos walkTarget(Chunker.Box b) { return null; }
+
+        /** A walk to a chunk starts (attempt 0, 1, ...) or has ended (attempt -1). */
+        default void walking(int attempt) { }
     }
 
     static final int CHUNK_GAP = 12;          // ticks at a new chunk before "chunk_needs" goes up: the flag was down for a handler check
@@ -68,6 +77,7 @@ final class ChunkLoop {
     private Jobs.Node action, cur;
     private String sig;
     private int pass, chunkTicks, walkTries, doneChunks;
+    private boolean rechecked;   // the safety net over the DONE chunks has run
 
     ChunkLoop(Host host) {
         this.host = host;
@@ -130,6 +140,7 @@ final class ChunkLoop {
         pass = 0;
         doneChunks = 0;
         walkTries = 0;
+        rechecked = false;
         this.action = action;
         this.sig = sig;
         action.kids.clear();
@@ -181,6 +192,23 @@ final class ChunkLoop {
                     deferred.clear();
                     continue;
                 }
+                if (!rechecked) {
+                    // safety net: a chunk that was DONE may have lost blocks since (nothing else looks at it again)
+                    rechecked = true;
+                    int reopened = 0;
+                    for (Chunker.Box d : chunks) {
+                        Jobs.Node dn = nodes.get(d);
+                        if (!closed.contains(d) || dn.state != Ledger.State.DONE || host.empty(d) || !host.damaged(d)) continue;
+                        closed.remove(d);
+                        tries.put(d, 1);   // one more try
+                        doneChunks--;
+                        reopened++;
+                    }
+                    if (reopened > 0) {
+                        Util.msg("Checking the finished chunks again: " + reopened + " lost blocks, building " + (reopened == 1 ? "it" : "them") + " again.");
+                        continue;
+                    }
+                }
                 return false;
             }
             Jobs.Node n = nodes.get(b);
@@ -210,9 +238,12 @@ final class ChunkLoop {
     }
 
     private void startWalk(Minecraft mc) {
-        if (near(mc)) { step = Step.LOAD; return; }
+        if (near(mc)) { host.walking(-1); step = Step.LOAD; return; }
         step = Step.WALK;
-        Util.baritone().getCustomGoalProcess().setGoalAndPath(new baritone.api.pathing.goals.GoalXZ((int) box.cx(), (int) box.cz()));
+        host.walking(walkTries);
+        BlockPos t = host.walkTarget(box);
+        int gx = t != null ? t.getX() : (int) box.cx(), gz = t != null ? t.getZ() : (int) box.cz();
+        Util.baritone().getCustomGoalProcess().setGoalAndPath(new baritone.api.pathing.goals.GoalXZ(gx, gz));
     }
 
     /** One game tick while the loop itself is busy (step is not RUN). */
@@ -220,7 +251,7 @@ final class ChunkLoop {
         chunkTicks++;
         switch (step) {
             case WALK -> {
-                if (near(mc)) { Util.baritone().getPathingBehavior().cancelEverything(); step = Step.LOAD; return; }
+                if (near(mc)) { Util.baritone().getPathingBehavior().cancelEverything(); host.walking(-1); step = Step.LOAD; return; }
                 if (chunkTicks % 20 != 0) return;
                 if (chunkTicks > WALK_TICKS) { failed("could not get there in " + WALK_TICKS / 20 + " s"); return; }
                 if (!Util.baritone().getCustomGoalProcess().isActive()) {
@@ -312,6 +343,7 @@ final class ChunkLoop {
 
     private void advance() {
         Util.baritone().getPathingBehavior().cancelEverything();
+        host.walking(-1);
         if (!nextChunk()) host.allDone();
     }
 

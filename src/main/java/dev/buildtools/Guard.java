@@ -32,6 +32,7 @@ final class Guard {
     private static final long GRACE_MS = 3000;     // blocked this long in a row -> stop the task
     private static final long RESET_MS = 2000;     // quiet this long -> start counting again
 
+    static int keptCount;
     private static long firstBlocked = -1, lastBlocked = -1;
     private static boolean announce, stop;
     private static String what = "", zoneName = "", blockName = "";
@@ -61,6 +62,11 @@ final class Guard {
     }
 
     private static InteractionResult check(BlockPos pos, String action, Input input, boolean breaking) {
+        var keep = Api.keepBlock;
+        if (breaking && keep != null && Util.baritone().getInputOverrideHandler().isInputForcedDown(input) && keep.test(pos)) {
+            if (keptCount++ == 0) Util.msg("Kept a block the schematic wants from Baritone at " + pos.toShortString() + ".");
+            return InteractionResult.FAIL;
+        }
         if (!cfg.protect || cfg.zones.isEmpty()) return InteractionResult.PASS;
         if (!Util.baritone().getInputOverrideHandler().isInputForcedDown(input)) return InteractionResult.PASS;   // not Baritone
         Config.Zone zone = zoneAt(pos);

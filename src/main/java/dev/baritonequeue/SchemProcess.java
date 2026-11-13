@@ -55,7 +55,7 @@ final class SchemProcess {
     private java.util.Map<net.minecraft.world.level.block.Block, java.util.List<net.minecraft.world.level.block.Block>> oldSubs;
     private int oldStart;
     private Object planWorld;   // the level the plan was made in
-    private Boolean breakBefore;
+    private Boolean breakBefore, walkBreak;   // Baritone's allowBreak before the build / before a walk to a chunk
 
     // ------------------------------------------------------------------ the chunk loop (plans bigger than one chunk)
 
@@ -87,6 +87,20 @@ final class SchemProcess {
         public int cells(Chunker.Box b) { return plan.cells(b); }
 
         public void allDone() { finishChunks(); }
+
+        public boolean damaged(Chunker.Box b) {
+            Schem.Counts c = Schem.count(plan, mode, Minecraft.getInstance().level, b);
+            return c.unloaded == 0 && c.todoTotal() > 0;
+        }
+
+        public net.minecraft.core.BlockPos walkTarget(Chunker.Box b) { return plan.standBeside(b); }
+
+        public void walking(int attempt) {
+            // the first walk to a chunk never breaks anything: the way leads past what is built already. A second try may.
+            if (!changed) return;
+            if (attempt == 0 && walkBreak == null) walkBreak = dev.buildtools.Api.setOwnBreak(false);
+            else if (attempt != 0 && walkBreak != null) { dev.buildtools.Api.setOwnBreak(walkBreak); walkBreak = null; }
+        }
     });
 
     static int chunkSize() { return cfg.chunkSize >= 8 ? cfg.chunkSize : Chunker.DEFAULT_SIZE; }
@@ -105,6 +119,25 @@ final class SchemProcess {
             var want = p.at(pos.getX() - p.min.getX(), pos.getY() - p.min.getY(), pos.getZ() - p.min.getZ());
             return want == null || want.getBlock() != block;
         };
+    }
+
+    {
+        // Baritone must not break a block the plan wants and that is right already, in any chunk (a walk past a finished
+        // chunk, a path through a pillar). The builder only breaks wrong blocks, so it is not in the way.
+        dev.buildtools.Api.keepBlock = pos -> {
+            Plan p = plan;
+            Minecraft mc = Minecraft.getInstance();
+            if (!(working || paused) || p == null || mc.level == null || planWorld != mc.level) return false;
+            return keeps(p, pos, mc.level.getBlockState(pos));
+        };
+    }
+
+    /** The block at pos is what the plan wants there (and the cell is part of the build). */
+    static boolean keeps(Plan p, net.minecraft.core.BlockPos pos, net.minecraft.world.level.block.state.BlockState cur) {
+        int x = pos.getX() - p.min.getX(), y = pos.getY() - p.min.getY(), z = pos.getZ() - p.min.getZ();
+        var want = p.at(x, y, z);
+        if (want == null || want.isAir() || (p.excluded != null && p.excluded.get(p.idx(x, y, z)))) return false;
+        return Schem.norm(cur).equals(want);
     }
 
     boolean working() { return working; }
@@ -215,6 +248,8 @@ final class SchemProcess {
         s.buildSubstitutes.value = oldSubs;
         s.buildIgnoreProperties.value = oldIgnore;
         s.allowInventory.value = oldInventory;
+        if (walkBreak != null) dev.buildtools.Api.setOwnBreak(walkBreak);
+        walkBreak = null;
         if (breakBefore != null) dev.buildtools.Api.setOwnBreak(breakBefore);
         breakBefore = null;
         changed = false;

@@ -202,6 +202,34 @@ final class Schem {
 
         int idx(int x, int y, int z) { return (y * sz + z) * sx + x; }
 
+        /** Does the plan build or dig anything in this world column? */
+        boolean columnUsed(int wx, int wz) {
+            int x = wx - min.getX(), z = wz - min.getZ();
+            if (x < 0 || z < 0 || x >= sx || z >= sz) return false;
+            for (int y = 0; y < sy; y++) {
+                int i = idx(x, y, z);
+                if (st[i] != null && !(excluded != null && excluded.get(i))) return true;
+            }
+            return false;
+        }
+
+        /**
+         * A spot to walk to for the chunk that is not on the structure (a thin wall or bar would be walked along, and Baritone
+         * breaks what is in its way): the chunk's centre when that column is free, else the nearest free column around it.
+         * null = the centre is free, or no free column nearby (walk to the centre).
+         */
+        BlockPos standBeside(Chunker.Box b) {
+            int cx = (int) b.cx(), cz = (int) b.cz();
+            if (!columnUsed(cx, cz)) return null;
+            for (int r = 1; r <= 6; r++) {
+                for (int dx = -r; dx <= r; dx++) for (int dz = -r; dz <= r; dz++) {
+                    if (Math.max(Math.abs(dx), Math.abs(dz)) != r) continue;
+                    if (!columnUsed(cx + dx, cz + dz)) return new BlockPos(cx + dx, b.y0(), cz + dz);
+                }
+            }
+            return null;
+        }
+
         BlockState at(int x, int y, int z) {
             if (x < 0 || y < 0 || z < 0 || x >= sx || y >= sy || z >= sz) return null;
             return st[idx(x, y, z)];

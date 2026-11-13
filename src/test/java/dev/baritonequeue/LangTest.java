@@ -390,6 +390,18 @@ public class LangTest {
         same("wantedAt: the cached plan", Schem.wantedAt(p0, stone) + " " + Schem.wantedAt(p0.above(), stone), "true false");
         Schem.useWanted(null);
         same("wantedAt: cleared", Schem.wantedAt(p0, stone), false);
+        same("keeps: the right block is kept", SchemProcess.keeps(plan, p0, stone), true);
+        same("keeps: a wrong block is not (the builder replaces it)", SchemProcess.keeps(plan, p0, dirt), false);
+        same("keeps: schematic air keeps nothing", SchemProcess.keeps(plan, p0.east(), stone), false);
+        same("keeps: outside the plan", SchemProcess.keeps(plan, p0.east(4), stone) + " " + SchemProcess.keeps(plan, p0.north(), stone), "false false");
+        plan.excluded.set(plan.idx(0, 0, 0));
+        same("keeps: an excluded (safe area) cell is not ours", SchemProcess.keeps(plan, p0, stone), false);
+        plan.excluded.clear(plan.idx(0, 0, 0));
+        // walking: a thin plan is not walked along, the stand spot is beside it
+        var box = new Chunker.Box(10, 60, 10, 13, 61, 10);
+        var beside = plan.standBeside(box);
+        same("standBeside: a spot off the structure", beside != null && !plan.columnUsed(beside.getX(), beside.getZ()), true);
+        same("standBeside: a free centre needs none", plan.standBeside(new Chunker.Box(40, 60, 40, 43, 61, 43)), null);
     }
 
     public static void main(String[] a) {

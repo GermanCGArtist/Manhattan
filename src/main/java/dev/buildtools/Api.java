@@ -100,6 +100,12 @@ public final class Api {
      */
     public static volatile java.util.function.BiPredicate<net.minecraft.core.BlockPos, net.minecraft.world.level.block.Block> scaffoldOutsideSchematic;
 
+    /**
+     * Set by the schematic builder while it runs: true for a block that is right already (the plan wants it), so
+     * Baritone's own breaking of it is vetoed at the last moment, in every chunk. null = nothing is kept.
+     */
+    public static volatile java.util.function.Predicate<net.minecraft.core.BlockPos> keepBlock;
+
     /** Marks a block as scaffolding, so collect_scaffold() takes it down (clear_trees finds pillars the recorder missed). */
     public static void addScaffold(net.minecraft.core.BlockPos pos, net.minecraft.world.level.block.Block block) {
         Scaffold.spots().put(pos.immutable(), block);
