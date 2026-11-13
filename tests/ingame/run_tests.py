@@ -1891,6 +1891,8 @@ def fresh_world(t, name):
     if t.b("state")["inWorld"]:
         t.b("leave")
         t.b.wait(lambda: t.b("state")["screen"].endswith("TitleScreen"), 120, step=1, what="the title screen")
+    if name == mc.WORLD:
+        prepare_schem()   # Litematica saves its placements into the world's file when the world is left: write ours again
     r = t.b("world " + name)
     t.world = name
     t.b.wait(lambda: t.b("state")["inWorld"], 300, step=1, what="world %s to load" % name)
