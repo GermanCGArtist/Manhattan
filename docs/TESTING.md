@@ -100,7 +100,7 @@ there; the Litematica printer is never installed.
 | `canal_schem_two`, `canal_schem_needed`, `canal_tools_schem` | two placements with one item missing (skipped and reported), `schem_needed` and `take_upto` from chest/barrel/shulker box, the digger takes pickaxe and shovel |
 | `canal_survival_dump`, `canal_survival_restock` | a full inventory triggers `dump(storage)` and the task goes on; `restock()` fetches buckets and tools |
 | `trees_small` | an oak and a birch, no chest: `clear_trees()` leaves no log and no dirt in the area, reports the logs, all 64 dirt come back |
-| `trees_forest` | oak, birch, fancy oak, 2x2 mega spruce, dark oak, jungle, mangrove, two huge mushrooms and a bee nest; `clear_trees(chest)`: nothing of them left, no scaffolding, the logs in the chest (needs `--test-timeout 1500`: about 11 min) |
+| `trees_forest` | oak, birch, fancy oak, 2x2 mega spruce, dark oak, jungle, mangrove, two huge mushrooms and a bee nest; `clear_trees(chest)`: nothing of them left, no scaffolding, the logs in the chest (split into four tests, `trees_forest_spruce`, `_jungle`, `_dark`, `_mixed`, each 3-4 min) |
 | `canal_schem_unsupported` | a wall 3x3x24 and two bricks in a hole in a stone box (unreachable): the wall must be built completely (the unreachable bottom-layer cells are given up after 60 s so the layers above get built), the two are retried once and reported by `schem_left()` as "2 not reached" |
 | `canal_smoke` | the whole `scripts/canal.txt` (from "survival" on) on a small copy of the canal: dig, plug the water, dig the water trench, build two placements from a shulker box, fill with water |
 
@@ -119,6 +119,12 @@ keeps exactly this in its `mods` folder, copying only when a file changed:
 
 Every game also starts with the mod's own settings reset (`config/baritonequeue.json`, `buildtools.json`, `loadchest.json`,
 `survivalkit.json`, `manhattan-chests/`: want-list, safe areas, chest index), so one run's `want(...)` cannot change the next run.
+The queue is scheduled longest first from `tmp/ingame/durations.json` (the last duration of every test, updated after each run;
+unknown tests count as long). Tests that need the shared flat world switch back to it if the game is in another test's world.
+A failed test is run once more on a fresh world (`--retries N`, 0 = never); a pass is printed as "PASSED ON RETRY" with the first failure.
+`--tick N` sets `/tick rate` of the test worlds (default 20 = vanilla; 40 gave no speed-up: the time goes into Baritone's
+real-time path calculation, not game ticks, and the tree tests got less reliable). The forest test is four tests
+(`trees_forest_spruce|jungle|dark|mixed`) so that they run on four games at once.
 Test commands wait for the server to have run them (`Ctx.sync`, a `/time query` answer), not for a fixed time.
 
 Older `baritonequeue-*` / `manhattan-testbridge-*` / `fabric-api-*` jars there are deleted; the old `survivalkit`,

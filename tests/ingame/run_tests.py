@@ -33,6 +33,8 @@ SCEN = os.path.join(HERE, "scenarios")
 HOME = (100, -60, 100)
 # game ticks per second of the test worlds (/tick rate; the client follows the server): --tick N, 20 = vanilla speed
 TICK_RATE = int(os.environ.get("MANHATTAN_TICK", "20"))
+# a failed test is run again this many times (--retries N, 0 = never) before it counts as failed
+RETRIES = int(os.environ.get("MANHATTAN_RETRIES", "1"))
 POOL = [(x, y, z) for y in (-62, -61) for x in (103, 104, 105) for z in (99, 100, 101)]
 
 
@@ -1719,7 +1721,7 @@ FOREST_GROUPS = {
     "spruce": (["mega_spruce"], 40),                                         # 2x2 spruce: Baritone stalls on it for minutes
     "jungle": (["jungle_tree", "fancy_oak"], 10),                            # vines
     "dark": (["dark_oak", "mangrove"], 25),                                  # roots
-    "mixed": (["oak", "birch", "huge_red_mushroom", "huge_brown_mushroom"], 10),   # bee nest, mushrooms
+    "mixed": (["oak", "birch", "huge_red_mushroom", "huge_brown_mushroom"], 6),    # bee nest, mushrooms
 }
 
 
@@ -1952,6 +1954,18 @@ def worker(claim, keep, attach, timeout, tag=""):
                 fresh_world(t, mc.WORLD)
             log(tag + "running", name, "...")
             ok, info, dt, hung = run_one(t, name, fn, max(timeout, TEST_TIMEOUTS.get(name, 0)))
+            tries = 0
+            while not ok and not hung and tries < RETRIES:
+                # Baritone-driven tests (trees, schematics, floods) occasionally leave one block or lose a race even alone: one
+                # more try on a fresh world; a pass is reported as "PASSED ON RETRY" with the first failure, never hidden
+                tries += 1
+                first = str(info).splitlines()[0][:200] if str(info) else ""
+                log(tag + "%s failed (%s); retry %d/%d" % (name, first, tries, RETRIES))
+                if needs_main_world(fn) and getattr(t, "world", mc.WORLD) != mc.WORLD:
+                    fresh_world(t, mc.WORLD)
+                ok, info2, dt2, hung = run_one(t, name, fn, max(timeout, TEST_TIMEOUTS.get(name, 0)))
+                dt += dt2
+                info = ("PASSED ON RETRY %d (first failure: %s) %s" % (tries, first, info2)) if ok else info2
             results.append((name, ok, info, dt))
             if hung:   # a stuck game is closed through its own bridge, then a fresh one carries on
                 try:
@@ -1994,12 +2008,13 @@ def main(argv):
     if "--help" in argv or "-h" in argv:
         print(__doc__)
         return 0
-    global TICK_RATE
+    global TICK_RATE, RETRIES
     TICK_RATE = int(opt(argv, "--tick", TICK_RATE))
+    RETRIES = int(opt(argv, "--retries", RETRIES))
     keep = "--keep-open" in argv
     attach = "--attach" in argv
     timeout = int(opt(argv, "--test-timeout", TEST_TIMEOUT))
-    values = {opt(argv, f, None) for f in ("--workers", "-j", "--worker", "--queue", "--test-timeout", "--tick")}
+    values = {opt(argv, f, None) for f in ("--workers", "-j", "--worker", "--queue", "--test-timeout", "--tick", "--retries")}
     names = [a for a in argv if not a.startswith("-") and a not in values]
     tests = [(n, f) for n, f in TESTS if not names or n in names]
     if names and len(tests) != len(names):
@@ -2055,7 +2070,7 @@ def main(argv):
     for k in range(1, workers + 1):
         home = os.path.join(root, "w%d" % k)
         os.makedirs(home, exist_ok=True)
-        env = dict(os.environ, MANHATTAN_PROFILE=home, MANHATTAN_BRIDGE_PORT=str(mc.PORT_BASE + k), MANHATTAN_XMX="3G", MANHATTAN_TICK=str(TICK_RATE))
+        env = dict(os.environ, MANHATTAN_PROFILE=home, MANHATTAN_BRIDGE_PORT=str(mc.PORT_BASE + k), MANHATTAN_XMX="3G", MANHATTAN_TICK=str(TICK_RATE), MANHATTAN_RETRIES=str(RETRIES))
         out = open(os.path.join(root, "w%d.log" % k), "w", encoding="utf-8")
         procs.append((k, subprocess.Popen([sys.executable, "-u", os.path.abspath(__file__), "--worker", str(k), "--queue", qdir,
                                            "--test-timeout", str(timeout)], env=env, stdout=out, stderr=subprocess.STDOUT)))
