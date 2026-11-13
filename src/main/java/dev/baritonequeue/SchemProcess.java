@@ -133,7 +133,11 @@ final class SchemProcess {
             subs.put(from, java.util.List.of(to));
         }
         s.buildSubstitutes.value = subs;
-        s.buildInLayers.value = true;
+        // Layers make Baritone finish the bottom layer before it touches the next one. With a long build that never
+        // happens: one unreachable cell down there (under water, boxed in) and it searches paths to it for ever and
+        // nothing above gets built. Add mode never breaks anything, and a block can only be placed against another
+        // one, so it still goes up from below without them. Fix and exact mode keep them (break order matters there).
+        s.buildInLayers.value = mode != Mode.ADD;
         s.startAtLayer.value = 0;
         if (mode != Mode.ADD) breakBefore = dev.buildtools.Api.setOwnBreak(true);
         changed = true;

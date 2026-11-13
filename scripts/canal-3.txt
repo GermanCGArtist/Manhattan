@@ -105,6 +105,9 @@ push(chests, dump_chest)       // materials from earlier runs ended up in the du
 // takes what the build still needs, but always leaves 4 slots free (a full inventory must not stop the build)
 let unavailable = []
 func fetch()
+  // empty the inventory first (wanted tools, food and 256 dirt stay): leftovers and pickups filled it up, so nothing
+  // more could be taken; what is still needed comes back out of the dump chest, which is one of the material chests
+  dump(dump_chest)
   let need = schem_needed(schem, mode)
   let seen = null
   let room = 0
@@ -128,23 +131,44 @@ func fetch()
   end
 end
 
+// The canal is too long to be loaded at once: only the part around the bot gets built. So it is built in
+// sections: fetch materials, walk to the next section, build there until nothing more happens, on to the next.
+// Put the two ends of the canal (z) here; the x is the middle of the canal.
+let canal_x = 1748
+let canal_z_from = -1400
+let canal_z_to = -560
+let section = 96                // blocks between two stops (well inside the loaded range)
+
 let left = -1
 let now_left = 0
 let stuck = 0
 building = true
 set("allowBreak", false)        // add mode: Baritone may not dig through blocks that are already there
+set("allowPlace", true)         // but it may bridge and pillar with dirt to get around the water (taken down afterwards)
+let sz = canal_z_from
+let dir = 1
+if canal_z_to < canal_z_from then dir = -1 end
 loop
-  take_upto(scaffold_chest, scaffold, 128)
-  fetch()
-  now_left = schem_build(schem, mode, "skip")
-  if now_left == 0 then break end
-  if now_left == left then
-    stuck += 1
-    if stuck >= 2 then break end    // nothing more can be built with what the chests hold
-  else
-    stuck = 0
+  print("Canal section at z {sz}")
+  left = -1
+  stuck = 0
+  loop
+    fetch()
+    take_upto(scaffold_chest, scaffold, 128)
+    #goto {canal_x} {sz}
+    now_left = schem_build(schem, mode, "skip")
+    if now_left == 0 then break end
+    // the count wobbles by a few as chunks load and unload: only a real drop counts as progress
+    if left >= 0 and now_left > left - 20 then
+      break                         // nothing more here with what the chests hold: on to the next section
+    end
+    left = now_left
   end
-  left = now_left
+  collect_scaffold()
+  if now_left == 0 then break end
+  if (dir == 1 and sz >= canal_z_to) or (dir == -1 and sz <= canal_z_to) then break end
+  sz += dir * section
+  if (dir == 1 and sz > canal_z_to) or (dir == -1 and sz < canal_z_to) then sz = canal_z_to end
 end
 set("allowBreak", true)
 building = false
