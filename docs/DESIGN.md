@@ -76,6 +76,24 @@ acts on its own: the script starts them. The packages talk through small `Api` c
   move on every change): job id -> `{state, tries, left, reason, sig, vars, time}`. `sig` is the plan's corner, size and chunk
   size: an entry with another one is stale and ignored. `Jobs` is the in-memory tree the runner and UI read (job -> action ->
   chunk) and builds the ids; mining/water chunks and `job` blocks are meant to use the same nodes and ledger entries.
+- `ChunkLoop` is the loop itself (stage 2 moved it out of `SchemProcess`): pick, `WALK`, `LOAD`, `NEEDS`, `RUN`, DONE / retry once /
+  DEFERRED, the deferred pass, the report, all with the ledger. The host (`ChunkLoop.Host`) says what a chunk is: `empty`,
+  `check` (ledger entry and world -> SKIP / DONE / RUN), `loaded`, `arrive`, `run`, `resumeWork`, `cells`, `allDone`, and calls
+  `finished(left, why)` when its work on the chunk is through. `SchemProcess` is one host (phases per chunk, world recount of
+  loaded DONE chunks); `Actions.Chunked` is the other.
+- `Actions.Chunked` wraps `clear_area`, `fill_water` and `drain` (`GameBuiltins` picks it when `willChunk()`: the selection
+  has more than one non-empty chunk; else the old action runs untouched). Chunks = `Chunker.split` of the box around all
+  selection boxes, minus those that hold no selection. `run(box)` narrows the Baritone selection to the box (`Areas.apply`,
+  `Areas.narrowed` keeps `Areas.remember` from saving it as "last"), makes the unchanged `Feature` through a supplier, and
+  the selection is restored when the chunk ends, is cancelled or fails. Rule: a `DONE` entry means SKIP, no recount
+  (`verdict`); anything else runs. The chunk's result (blocks left; drain: none) feeds `finished`. An error of the process
+  (no blocks, no area) fails the whole action as it does unchunked (chunk entry `FAILED`). `fill_water`'s chest trips are
+  `Actions.FillWater`, the same rules as the script-level loop, as one action per chunk. `chunk_needs` is true for the
+  schematic loop or `Actions.Chunked.needs()`.
+- Protection: `Schem.refreshWanted()` (at `ClearProcess.begin`) makes one `Plan` of all enabled placements, cached by their
+  files, mtimes and transforms; `Schem.wantedAt(pos, state)` = the plan has the same non-air, non-fluid block there (the
+  check of the `scaffoldOutsideSchematic` hook). `ClearProcess.protectedOrForbidden` includes it, so `wanted()`, the stops and
+  the final "left" all skip such blocks, in open chunks too.
 
 ## Water fill (`dev.buildtools.TerminatorProcess`)
 - A wet cell is any cell with a water fluid that does not block movement (seagrass, kelp, bubble columns count).

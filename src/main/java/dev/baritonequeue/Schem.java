@@ -361,6 +361,53 @@ final class Schem {
         return cur.isAir() || cur.canBeReplaced() || cur.getBlock() instanceof LiquidBlock;
     }
 
+    // ------------------------------------------------------------------ protection: what an enabled schematic wants
+
+    private static Plan wantPlan;      // the plan of all enabled placements, kept until they change
+    private static String wantKey = "";
+
+    /**
+     * Makes the plan wantedAt() looks at: all enabled Litematica placements together. Cheap when nothing changed (same
+     * files, positions, rotations); called when a mining task starts, not per block. No placements or a plan that cannot be
+     * made: nothing is wanted, nothing is protected.
+     */
+    static void refreshWanted() {
+        try {
+            List<SchemSource.Placement> pls = new ArrayList<>();
+            for (SchemSource.Placement p : SchemSource.list()) if (p.enabled()) pls.add(p);
+            if (pls.isEmpty()) { wantPlan = null; wantKey = ""; return; }
+            StringBuilder key = new StringBuilder();
+            for (SchemSource.Placement p : pls) key.append(p).append('@').append(p.file().toFile().lastModified()).append(';');
+            if (key.toString().equals(wantKey)) return;
+            String[] err = new String[1];
+            wantPlan = plan(pls, err);
+            wantKey = key.toString();
+        } catch (Throwable t) {
+            wantPlan = null;
+            wantKey = "";
+        }
+    }
+
+    /** Tests: use this plan for wantedAt(). */
+    static void useWanted(Plan p) {
+        wantPlan = p;
+        wantKey = "test";
+    }
+
+    /**
+     * Does an enabled schematic want the block that is at pos (same block as the plan has there)? Mining spares such a block.
+     * Uses the plan made by refreshWanted(); same check as the scaffold hook ("the block is the one the plan wants").
+     */
+    static boolean wantedAt(BlockPos pos, BlockState current) {
+        return wantedAt(wantPlan, pos, current);
+    }
+
+    static boolean wantedAt(Plan p, BlockPos pos, BlockState current) {
+        if (p == null) return false;
+        BlockState want = p.at(pos.getX() - p.min.getX(), pos.getY() - p.min.getY(), pos.getZ() - p.min.getZ());
+        return want != null && !want.isAir() && !(want.getBlock() instanceof LiquidBlock) && want.getBlock() == current.getBlock();
+    }
+
     // ------------------------------------------------------------------ the wrapper Baritone builds
 
     static final class Wrapper implements ISchematic {

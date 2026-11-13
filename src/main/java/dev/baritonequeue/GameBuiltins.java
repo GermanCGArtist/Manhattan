@@ -20,6 +20,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Supplier;
 
 import static dev.baritonequeue.Builtins.def;
 import static dev.baritonequeue.Builtins.getter;
@@ -301,6 +302,19 @@ final class GameBuiltins {
             if (chest != null && it == null) throw error("fill_water with a chest needs the block too: fill_water(\"dirt\", chest)", l);
             int trip = a.size() > 2 ? Math.max(1, toInt(a.get(2), "per_trip", l)) : 512;
             String text = "fill_water" + (it == null ? "" : " " + ChestOp.name(it));
+            if (Actions.Chunked.willChunk()) {   // a selection of several chunks: one chunk at a time (ledger, walk, retry, defer)
+                String name = it == null ? "blocks" : ChestOp.name(it);
+                Object cr = in.await(() -> new Actions.Chunked("fill_water", l, it == null ? "" : name, true, "water cells", () -> new Actions.FillWater(
+                        chest == null ? null : () -> new Actions.Chest(new ChestOp((String) chest[1], ChestOp.Kind.GET, it, trip, true), (BlockPos) chest[0]),
+                        () -> { var pl = Minecraft.getInstance().player; return pl == null || count(pl, name) == 0; },
+                        () -> new Actions.Feature(
+                                () -> dev.buildtools.Api.fillWater(it),
+                                dev.buildtools.Api::fillingWater,
+                                dev.buildtools.Api::stopFillingWater,
+                                () -> (double) dev.buildtools.Api.lastFill()[1]).withEstimate(Estimate.water()),
+                        name)), text, l);
+                return cr instanceof Double d ? d : 0.0;
+            }
             int trips = 0, rounds = 0;
             while (true) {
                 if (chest != null && count(player(l), ChestOp.name(it)) == 0) {   // nothing to fill with: fetch first
@@ -354,26 +368,30 @@ final class GameBuiltins {
                     .resumable(QueueMod.schem::suspendRun, QueueMod.schem::carryOn), "schem_build", l);
             return r instanceof Double d ? d : 0.0;
         });
-        getter(g, "chunk_needs", "true while a chunked schem_build waits at a new chunk for you: write on chunk_needs ... end to fetch materials there (see chunk_needed)", (in, a, l) -> QueueMod.schem.needs());
+        getter(g, "chunk_needs", "true while a chunked schem_build waits at a new chunk for you: write on chunk_needs ... end to fetch materials there (see chunk_needed)", (in, a, l) -> QueueMod.schem.needs() || Actions.Chunked.needs());
         def(g, "chunk_needed", 0, 1, "chunk_needed([n])", "the items the next n chunks (default 1) of the running schem_build still need, as a map item -> count (not minus the inventory): from the world where it is loaded, from the schematic alone where it is not; empty when no chunked build runs", (in, a, l) -> {
             Map<Object, Object> out = Values.newMap();
             QueueMod.schem.chunkNeeded(a.isEmpty() ? 1 : toInt(a.get(0), "The chunks of chunk_needed()", l)).forEach((it, n) -> out.put(Schem.itemName(it), (double) n));
             return out;
         });
-        def(g, "clear_area", 0, 1, "clear_area([layers])", "mine out the selection from the top, 3 layers per pass (or 2: clear_area(2)), everything in reach at each stop, picking up drops on the way; returns the blocks left (finish those with #sel ca)", (in, a, l) ->
-                in.await(() -> new Actions.Feature(
-                        () -> QueueMod.clear.begin(a.isEmpty() ? 3 : toInt(a.get(0), "The layers of clear_area()", l)),
-                        QueueMod.clear::working,
-                        QueueMod.clear::cancel,
-                        () -> QueueMod.clear.failure() != null ? new Modules.Failure(QueueMod.clear.failure()) : (Object) QueueMod.clear.result())
-                        .resumable(QueueMod.clear::suspendRun, QueueMod.clear::carryOn)
-                        .withEstimate(Estimate.solid()), "clear_area", l));
+        def(g, "clear_area", 0, 1, "clear_area([layers])", "mine out the selection from the top, 3 layers per pass (or 2: clear_area(2)), everything in reach at each stop, picking up drops on the way; a selection of several chunks is done one chunk at a time and finished chunks are not entered again; blocks an enabled schematic wants are left standing; returns the blocks left (finish those with #sel ca)", (in, a, l) -> {
+            Supplier<Actions.Action> one = () -> new Actions.Feature(
+                    () -> QueueMod.clear.begin(a.isEmpty() ? 3 : toInt(a.get(0), "The layers of clear_area()", l)),
+                    QueueMod.clear::working,
+                    QueueMod.clear::cancel,
+                    () -> QueueMod.clear.failure() != null ? new Modules.Failure(QueueMod.clear.failure()) : (Object) QueueMod.clear.result())
+                    .resumable(QueueMod.clear::suspendRun, QueueMod.clear::carryOn)
+                    .withEstimate(Estimate.solid());
+            return in.await(() -> Actions.Chunked.willChunk() ? new Actions.Chunked("clear_area", l, a.isEmpty() ? "" : Values.str(a.get(0)), true, "blocks", one) : one.get(), "clear_area", l);
+        });
         def(g, "clear_trees", 0, 1, "clear_trees([chest])", "mine every tree in the selection, one by one, nearest first (logs, mangrove roots, huge mushrooms, vines, bee nests; leaves are left to decay), picking up the drops and taking the scaffolding down after each tree, then sweeping for saplings; with a chest, a full inventory and the end go into it; returns what was gained (item -> count)", (in, a, l) -> {
             Object[] c = a.isEmpty() || a.get(0) == null ? null : chest(a.get(0), "clear_trees()", l);
             return TreeClear.run(in, l, c == null ? null : (BlockPos) c[0], c == null ? null : (String) c[1]);
         });
-        def(g, "drain", 0, 0, "drain()", "remove the flowing water that blocks the builder (selection, or 8 blocks around you)", (in, a, l) ->
-                in.await(() -> new Actions.Feature(dev.buildtools.Api::drainNow, dev.buildtools.Api::draining, dev.buildtools.Api::stopDraining, () -> true), "drain", l));
+        def(g, "drain", 0, 0, "drain()", "remove the flowing water that blocks the builder (selection, or 8 blocks around you; a selection of several chunks is done one chunk at a time)", (in, a, l) -> {
+            Supplier<Actions.Action> one = () -> new Actions.Feature(dev.buildtools.Api::drainNow, dev.buildtools.Api::draining, dev.buildtools.Api::stopDraining, () -> true);
+            return in.await(() -> Actions.Chunked.willChunk() ? new Actions.Chunked("drain", l, "", false, "blocks", one) : one.get(), "drain", l);
+        });
         def(g, "flood", 0, 0, "flood()", "fill the selection WITH water, using buckets (seals the open sides first)", (in, a, l) ->
                 in.await(() -> new Actions.Feature(dev.buildtools.Api::floodNow, dev.buildtools.Api::flooding, dev.buildtools.Api::stopFlooding,
                         () -> {   // a stop with a reason (no water to refill from, cells out of reach ...) fails the script

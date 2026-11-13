@@ -218,6 +218,96 @@ public class LangTest {
         same("wrapper desired state", w.desiredState(5, 0, 1, air, null), stone);
     }
 
+    /** Chunked clear_area / fill_water / drain: the selection as chunks, the ledger rule. */
+    static void chunkedMining() {
+        // a selection of two boxes: 100 x 10 x 40 and, 300 blocks away, 20 x 5 x 20
+        List<int[]> sel = List.of(new int[]{0, 60, 0, 99, 69, 39}, new int[]{400, 60, 10, 419, 64, 29});
+        var cs = Actions.Chunked.chunksOf(sel, 32);
+        same("mining chunks: only those that hold a part of the selection", cs.size(), 4 * 2 + 2);   // 4 x 2 over the first box, 2 over the second (x 384 and 416 columns)
+        same("mining chunks: bounds", Actions.Chunked.bounds(sel), new Chunker.Box(0, 60, 0, 419, 69, 39));
+        same("mining chunks: none for no selection", Actions.Chunked.chunksOf(List.of(), 32).size(), 0);
+        same("small selection is one chunk", Actions.Chunked.chunksOf(List.of(new int[]{5, 1, 5, 20, 9, 30}), 32).size(), 1);
+        var nar = Actions.Chunked.narrow(sel, new Chunker.Box(96, 60, 32, 127, 69, 39));
+        same("narrow: cut to the chunk", nar.size() + " " + java.util.Arrays.toString(nar.get(0)), "1 [96, 60, 32, 99, 69, 39]");
+        var far = Actions.Chunked.narrow(sel, new Chunker.Box(384, 60, 0, 415, 69, 31));
+        same("narrow: the other box", java.util.Arrays.toString(far.get(0)), "[400, 60, 10, 415, 64, 29]");
+        same("narrow: nothing there", Actions.Chunked.narrow(sel, new Chunker.Box(200, 60, 0, 231, 69, 31)).size(), 0);
+        long cells = 0;
+        for (var c : cs) for (int[] b : Actions.Chunked.narrow(sel, c)) cells += (b[3] - b[0] + 1L) * (b[4] - b[1] + 1L) * (b[5] - b[2] + 1L);
+        same("narrowed chunks cover the selection once", cells, 100L * 10 * 40 + 20L * 5 * 20);
+        same("signature follows the selection", Actions.Chunked.signature(sel, 32).equals(Actions.Chunked.signature(sel, 32))
+                + " " + Actions.Chunked.signature(sel, 32).equals(Actions.Chunked.signature(sel.subList(0, 1), 32)), "true false");
+        // loaded: every chunk column the boxes touch
+        java.util.function.Predicate<net.minecraft.core.BlockPos> loadedX = p -> p.getX() < 50;
+        same("loaded boxes", Actions.Chunked.loadedBoxes(List.of(new int[]{0, 60, 0, 40, 69, 39}), loadedX) + " " + Actions.Chunked.loadedBoxes(List.of(new int[]{0, 60, 0, 60, 69, 39}), loadedX), "true false");
+        same("loaded boxes: the far edge counts", Actions.Chunked.loadedBoxes(List.of(new int[]{40, 60, 0, 50, 69, 5}), loadedX), false);
+
+        // the ledger rule: DONE is never entered again, no recount; anything else is worked on; a stale entry does not count
+        try {
+            java.nio.file.Path dir = java.nio.file.Files.createTempDirectory("manhattan-mining");
+            Ledger l = Ledger.load(Ledger.fileFor(dir, "w", "main"));
+            Jobs.useLedger(l);
+            Jobs.startRun();
+            Jobs.Node act = Jobs.action("clear_area", 7, "2", true);
+            String sig = Actions.Chunked.signature(sel, 32);
+            same("mining action id", act.id, "script/clear_area@7(2)#1");
+            Jobs.Node c0 = Jobs.chunk(act, cs.get(0)), c1 = Jobs.chunk(act, cs.get(1)), c2 = Jobs.chunk(act, cs.get(2));
+            same("mining chunk id", c0.id, "script/clear_area@7(2)#1/0,0");
+            l.set(c0.id, Ledger.State.DONE, 1, 0, null, sig);
+            l.set(c1.id, Ledger.State.DEFERRED, 2, 5, "5 blocks left", sig);
+            l.set(c2.id, Ledger.State.DONE, 1, 0, null, "another selection");
+            same("verdict DONE: skipped", Actions.Chunked.verdict(l.get(c0.id, sig)), ChunkLoop.Verdict.SKIP);
+            same("verdict DEFERRED: worked on", Actions.Chunked.verdict(l.get(c1.id, sig)), ChunkLoop.Verdict.RUN);
+            same("verdict no entry: worked on", Actions.Chunked.verdict(l.get("script/clear_area@7(2)#1/9,9", sig)), ChunkLoop.Verdict.RUN);
+            same("verdict stale entry: worked on", Actions.Chunked.verdict(l.get(c2.id, sig)), ChunkLoop.Verdict.RUN);
+            l.reset(null);
+            same("verdict after reset", Actions.Chunked.verdict(l.get(c0.id, sig)), ChunkLoop.Verdict.RUN);
+        } catch (Exception ex) {
+            fails++;
+            System.out.println("FAIL chunked mining ledger: " + ex);
+            ex.printStackTrace(System.out);
+        }
+    }
+
+    /** Protection: a block an enabled schematic wants is not mined. */
+    static void wantedAt() {
+        try {
+            net.minecraft.SharedConstants.tryDetectVersion();
+            net.minecraft.server.Bootstrap.bootStrap();
+        } catch (Throwable t) {
+            System.out.println("  (wantedAt test skipped: Minecraft cannot start offline: " + t + ")");
+            return;
+        }
+        var stone = net.minecraft.world.level.block.Blocks.STONE.defaultBlockState();
+        var dirt = net.minecraft.world.level.block.Blocks.DIRT.defaultBlockState();
+        var air = net.minecraft.world.level.block.Blocks.AIR.defaultBlockState();
+        var water = net.minecraft.world.level.block.Blocks.WATER.defaultBlockState();
+        Schem.Plan plan = new Schem.Plan();
+        plan.name = "test";
+        plan.min = new net.minecraft.core.BlockPos(10, 60, 10);
+        plan.sx = 4;
+        plan.sy = 2;
+        plan.sz = 1;
+        plan.st = new net.minecraft.world.level.block.state.BlockState[8];
+        plan.st[plan.idx(0, 0, 0)] = stone;
+        plan.st[plan.idx(1, 0, 0)] = air;      // the schematic wants air here
+        plan.st[plan.idx(2, 0, 0)] = water;    // fluids are not protected
+        plan.st[plan.idx(3, 0, 0)] = dirt;
+        plan.excluded = new java.util.BitSet(8);
+        net.minecraft.core.BlockPos p0 = new net.minecraft.core.BlockPos(10, 60, 10);
+        same("wantedAt: the wanted block is there", Schem.wantedAt(plan, p0, stone), true);
+        same("wantedAt: another block where stone is wanted is not protected", Schem.wantedAt(plan, p0, dirt), false);
+        same("wantedAt: schematic air protects nothing", Schem.wantedAt(plan, p0.east(), stone), false);
+        same("wantedAt: fluids are not protected", Schem.wantedAt(plan, p0.east(2), water), false);
+        same("wantedAt: second wanted block", Schem.wantedAt(plan, p0.east(3), dirt), true);
+        same("wantedAt: outside the plan", Schem.wantedAt(plan, p0.east(4), stone) + " " + Schem.wantedAt(plan, p0.above(10), stone) + " " + Schem.wantedAt(plan, p0.north(), stone), "false false false");
+        same("wantedAt: no plan", Schem.wantedAt(null, p0, stone), false);
+        Schem.useWanted(plan);
+        same("wantedAt: the cached plan", Schem.wantedAt(p0, stone) + " " + Schem.wantedAt(p0.above(), stone), "true false");
+        Schem.useWanted(null);
+        same("wantedAt: cleared", Schem.wantedAt(p0, stone), false);
+    }
+
     public static void main(String[] a) {
         check("arith", "out(1 + 2 * 3, (1 + 2) * 3, 7 / 2, 7 % 3, -2 * 3)", "7 9 3.5 1 -6");
         check("strings", "let n = 5\nout(\"n is {n}, twice {n * 2}\", 'x{y}', \"a\" + 1)", "n is 5, twice 10 x{y} a1");
@@ -337,6 +427,8 @@ public class LangTest {
         chunker();
         ledger();
         chunkNeeded();
+        chunkedMining();
+        wantedAt();
         System.out.println(passes + " passed, " + fails + " failed");
         System.exit(fails == 0 ? 0 : 1);
     }

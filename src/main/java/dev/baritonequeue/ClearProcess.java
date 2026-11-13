@@ -34,7 +34,8 @@ import java.util.Set;
  * in reach before moving on, one block per tick when the block breaks at once (Haste + Efficiency), otherwise as fast
  * as the game allows. Short steps on level ground it walks itself; longer or awkward moves go to Baritone (which may
  * dig while this runs). Drops near the lane are picked up on the way. Blocks next to water or lava are left alone, so
- * nothing floods; protected areas and Baritone's do-not-break list are respected. What is left at the end can be
+ * nothing floods; protected areas, Baritone's do-not-break list and blocks an enabled schematic wants (Schem.wantedAt)
+ * are respected, and none of those count as "left". What is left at the end can be
  * finished with #sel ca. At the end it says where the time went.
  *
  * An "on" block (eating, a fight, a trip to the bed or the dump chest) only pauses it: afterwards it walks back to the
@@ -104,6 +105,7 @@ final class ClearProcess implements IBaritoneProcess {
         boxes.clear();
         boxes.addAll(Areas.read());
         if (boxes.isEmpty()) return "Select the area first: area(\"name\") or select(corner1, corner2).";
+        Schem.refreshWanted();   // the plan of the enabled schematics: what it wants is not mined
         yTop = Integer.MIN_VALUE;
         yBottom = Integer.MAX_VALUE;
         for (int[] b : boxes) { yTop = Math.max(yTop, b[4]); yBottom = Math.min(yBottom, b[1]); }
@@ -221,6 +223,7 @@ final class ClearProcess implements IBaritoneProcess {
 
     private static boolean protectedOrForbidden(BlockState s, BlockPos p) {
         if (dev.buildtools.Api.protectedAt(p)) return true;
+        if (Schem.wantedAt(p, s)) return true;   // a block an enabled schematic wants stays, also inside an open chunk
         return BaritoneAPI.getSettings().blocksToDisallowBreaking.value.contains(s.getBlock());
     }
 
@@ -571,7 +574,7 @@ final class ClearProcess implements IBaritoneProcess {
         long secs = (System.currentTimeMillis() - started) / 1000;
         Util.msg("clear_area done: " + broken + " blocks broken in " + Estimate.duration(secs * 20) + ", " + left + " left"
                 + (left == 0 ? "." : ": " + wet + " next to water or lava (left alone so nothing floods)"
-                + (guarded > 0 ? ", " + guarded + " protected" : "") + ", " + open + " it could not get at."));
+                + (guarded > 0 ? ", " + guarded + " protected (safe area, or wanted by an enabled schematic)" : "") + ", " + open + " it could not get at."));
         Util.msg("Time: breaking " + pct(tBreak, total) + ", walking " + pct(tWalk, total) + ", Baritone paths " + pct(tTravel, total)
                 + ", picking up " + pct(tPick, total) + ", planning " + pct(tOther, total) + "."
                 + (resumes > 0 ? " Paused " + resumes + " times for other things (eating, fights, bed, chests): "

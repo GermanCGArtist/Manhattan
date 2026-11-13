@@ -33,7 +33,11 @@ final class Areas {
         return manager().getSelections().length > 0;
     }
 
-    private static void apply(List<int[]> boxes) {
+    /** true while a chunked task has narrowed the selection to one chunk: that is not an area to remember as "last". */
+    static volatile boolean narrowed;
+
+    /** Makes these boxes the selection (a chunked task narrows it and puts it back). */
+    static void apply(List<int[]> boxes) {
         ISelectionManager sm = manager();
         sm.removeAllSelections();
         for (int[] b : boxes) sm.addSelection(new BetterBlockPos(b[0], b[1], b[2]), new BetterBlockPos(b[3], b[4], b[5]));
@@ -118,6 +122,7 @@ final class Areas {
 
     /** Every second or so: keeps the latest selection as "last". */
     static void remember() {
+        if (narrowed) return;
         List<int[]> now = read();
         if (now.isEmpty() || same(now, cfg.lastArea)) return;
         cfg.lastArea = now;

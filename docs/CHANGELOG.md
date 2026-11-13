@@ -2,6 +2,16 @@
 
 Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
 
+## Unreleased – Job queue, stage 2: chunked mining and water (branch job-queue)
+- `clear_area`, `fill_water` and `drain` on a selection bigger than `queue.chunkSize` (32) work one chunk at a time: the selection
+  is narrowed to the chunk, the unchanged process runs, the selection is put back; walk, load, `on chunk_needs`, retry once,
+  defer, second pass and report are the same loop as `schem_build` (now `ChunkLoop`, shared). A selection of one chunk runs
+  as before. `flood` stays whole.
+- A finished (`DONE`) mining or water chunk is never entered again, the world is not recounted (`/queue reset` starts over).
+- `clear_area` leaves standing every block an enabled schematic wants (`Schem.wantedAt`), also inside an open chunk; those
+  blocks do not count as left.
+- Not tested in game yet.
+
 ## Unreleased – Job queue, stage 1: chunked schem_build (branch job-queue)
 - `schem_build` cuts a placement bigger than `queue.chunkSize` (32) into chunks and builds them one at a time, nearest
   first: walk there, wait for the chunk to load, build only that chunk (Baritone cannot wander off or hang on one far
