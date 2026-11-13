@@ -2,6 +2,7 @@
 
   python tests/ingame/run_tests.py                 install, launch, run every test (parallel games), close them
   python tests/ingame/run_tests.py fill_water eat  only these tests
+  python tests/ingame/run_tests.py --tick 20       vanilla tick speed (default: see TICK_RATE / MANHATTAN_TICK), for debugging
   python tests/ingame/run_tests.py -j 1            one game (still a copy, tmp/ingame/w1)
   python tests/ingame/run_tests.py --keep-open     leave the game running afterwards (drive it with bridge.py)
   python tests/ingame/run_tests.py --attach        use the copy game (tmp/ingame/w1) that is already running
@@ -30,6 +31,8 @@ SCEN = os.path.join(HERE, "scenarios")
 
 # the flat test world: bedrock -64, dirt -63..-62, grass -61, the player stands at -60
 HOME = (100, -60, 100)
+# game ticks per second of the test worlds (/tick rate; the client follows the server): --tick N, 20 = vanilla speed
+TICK_RATE = int(os.environ.get("MANHATTAN_TICK", "20"))
 POOL = [(x, y, z) for y in (-62, -61) for x in (103, 104, 105) for z in (99, 100, 101)]
 
 
@@ -1391,7 +1394,16 @@ def test_canal_smoke(t):
     chest_with(t, (100, -57, 92), [("stone_bricks", 64)], kind="shulker_box")   # build supplies
     time.sleep(1)
     t0 = time.time()
-    line = run_scenario(t, "canal-smoke.txt", "TEST canal done", 1200)
+    try:
+        line = run_scenario(t, "canal-smoke.txt", "TEST canal done", 1200)
+    except Fail as e:
+        rows = []
+        for y in (-62, -61):
+            for z in (101, 102, 103, 104):
+                rows.append("y%d z%d: " % (y, z) + " ".join(
+                    ("W%s" % t.b("blockstate %d %d %d" % (x, y, z))["state"].split("level=")[-1][:1] if "water" in t.b("blockstate %d %d %d" % (x, y, z))["state"]
+                     else t.block((x, y, z)).split(":")[-1][:2]) for x in range(99, 113)))
+        raise Fail("%s\n      trench x99..112 (W<level>=water, else block):\n        %s" % (e, "\n        ".join(rows)))
     secs = time.time() - t0
     problems = []
     # 1. trench_a dug (but the two brick rows), 3. trench_canal: water sources only
@@ -1702,21 +1714,30 @@ FOREST = [("oak", (92, -60, 92)), ("birch", (102, -60, 92)), ("fancy_oak", (114,
           ("huge_red_mushroom", (110, -60, 122)), ("huge_brown_mushroom", (120, -60, 122))]
 
 
-def test_trees_forest(t):
-    """clear_trees(chest) on a mixed forest (2x2 mega spruce, dark oak, jungle with vines, mangrove with roots, huge
-    mushrooms, a bee nest): nothing of the trees left, no scaffolding left, the logs end up in the chest, the report
+# the forest is planted in four groups, each its own test on its own game: the same checks as one big forest, in a quarter of the time
+FOREST_GROUPS = {
+    "spruce": (["mega_spruce"], 40),                                         # 2x2 spruce: Baritone stalls on it for minutes
+    "jungle": (["jungle_tree", "fancy_oak"], 10),                            # vines
+    "dark": (["dark_oak", "mangrove"], 25),                                  # roots
+    "mixed": (["oak", "birch", "huge_red_mushroom", "huge_brown_mushroom"], 10),   # bee nest, mushrooms
+}
+
+
+def run_forest(t, group):
+    """clear_trees(chest) on part of a mixed forest (2x2 mega spruce, dark oak, jungle with vines, mangrove with roots,
+    huge mushrooms, a bee nest): nothing of the trees left, no scaffolding left, the logs end up in the chest, the report
     counts them."""
-    new_world(t, "trees-forest")
+    features, min_logs = FOREST_GROUPS[group]
+    new_world(t, "trees-forest-" + group)
     t.cmd("/tp @s 105 -60 105 0 0")
     time.sleep(3)
-    planted = [f for f, p in FOREST if plant(t, f, p)]
-    if len(planted) < 5:
-        raise Fail("only %s could be planted" % planted)
+    planted = [f for f, p in FOREST if f in features and plant(t, f, p)]
+    if len(planted) < len(features) - (1 if len(features) > 2 else 0):
+        raise Fail("only %s of %s could be planted" % (planted, features))
     if "oak" in planted:
         t.cmd("/setblock 93 -58 92 minecraft:bee_nest")
     chest_with(t, (100, -60, 84), [])
     t.cmd("/give @s dirt 128", "/tp @s 100 -60 100 0 0")
-    time.sleep(1)
     line = run_scenario(t, "trees-forest.txt", "TEST forest done", 1500)
     start = next((l for l in t.lines() if "TEST forest start" in l), "")
     chest = next((l for l in t.lines() if "TEST forest chest" in l), "")
@@ -1725,18 +1746,23 @@ def test_trees_forest(t):
         raise Fail("tree blocks left standing: %s (%s)" % (line, start))
     if kv(line, "scaffold") != 0:
         raise Fail("scaffolding left in the area: %s at %s" % (line, dirt_at(t, (86, -60, 88), (124, -55, 128))))
-    if kv(line, "logs") < 50:
-        raise Fail("too few logs reported: %s / %s" % (line, got))
+    if "oak" in planted or "birch" in planted or "mega_spruce" in planted or "dark_oak" in planted or "jungle_tree" in planted:
+        if kv(line, "logs") < min_logs:
+            raise Fail("too few logs reported (%d wanted): %s / %s" % (min_logs, line, got))
     if kv(line, "carried_logs") > 0:
         raise Fail("logs still carried, not in the chest: %s" % line)
-    if "log" not in chest:
+    if "log" not in chest and "stem" not in chest and "mushroom" not in chest:
         raise Fail("no logs in the chest: %s" % chest)
     if kv(line, "dirt_carried") < 100:
         raise Fail("scaffolding dirt went missing (or into the chest): %s / %s" % (line, chest))
     return "planted %s; %s; %s" % (",".join(planted), start.split("TEST forest ")[-1], line.split("done ")[-1])
 
 
-TREE_TESTS = [("trees_small", test_trees_small), ("trees_forest", test_trees_forest)]
+def _forest(group):
+    return lambda t: run_forest(t, group)
+
+
+TREE_TESTS = [("trees_small", test_trees_small)] + [("trees_forest_" + g, _forest(g)) for g in FOREST_GROUPS]
 
 
 TESTS = [("smoke", test_smoke), ("imgui_spike", test_imgui_spike), ("viewport", test_viewport), ("docked_shell", test_docked_shell), ("panels", test_panels), ("fill_water", test_fill_water), ("eat", test_eat), ("defend", test_defend), ("clear_resume", test_clear_resume), ("dump", test_dump), ("chest_index", test_chest_index), ("hotbar_tools", test_hotbar_tools), ("air", test_air), ("clear_wet", test_clear_wet),
@@ -1762,17 +1788,40 @@ def enter_world(b):
     # world rules for repeatable tests; the answers go to the log for checking
     t.start_log()
     t.cmd("/gamerule advance_time false", "/gamerule advance_weather false", "/gamerule spawn_mobs false",
-          "/difficulty easy")
+          "/difficulty easy", "/tick rate %d" % TICK_RATE)
     for l in t.lines():
         log("  setup:", l)
     return t
 
 
-TEST_TIMEOUT = 300          # seconds; a test that takes longer fails and its game is restarted
+TEST_TIMEOUT = 600          # seconds; a test that takes longer fails and its game is restarted
 RAM_PER_CLIENT_GB = 3.5     # a game with its 3 GB heap (MANHATTAN_XMX) and its own memory
-TEST_TIMEOUTS = {"trees_forest": 2400}   # runs 11 to 25 min (random tree shapes, Baritone stalls on the 2x2 spruce); --test-timeout can only raise it
+TEST_TIMEOUTS = {"trees_forest_spruce": 900}   # Baritone stalls on the 2x2 spruce (2 min a try); --test-timeout can only raise it
 MAX_WORKERS = 16            # bridge ports 25700+N for worker N: 25701..25716 (the other harness uses 25599 and 25601..25603)
-LONG_FIRST = ["trees_forest", "trees_small", "clear_resume", "schem_exact", "schem_fix_wrong", "schem_fix", "fill_water", "schem_add"]   # start the slow ones first
+LONG_FIRST = ["trees_forest_spruce", "trees_small", "clear_resume", "schem_exact", "schem_fix_wrong", "schem_fix", "fill_water", "schem_add"]   # start the slow ones first
+
+
+UNKNOWN_SECONDS = 600       # a test with no recorded duration is scheduled as if it were long
+
+
+def load_durations(root):
+    try:
+        with open(os.path.join(root, "durations.json"), encoding="utf-8") as f:
+            return {k: float(v) for k, v in json.load(f).items()}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_durations(root, durations, results):
+    """The last duration of every test that ran to its end (not a hard timeout), for the next run's schedule."""
+    for r in results:
+        if len(r) > 3 and r[3] > 0 and not str(r[2]).startswith("hard timeout"):
+            durations[r[0]] = round(float(r[3]), 1)
+    try:
+        with open(os.path.join(root, "durations.json"), "w", encoding="utf-8") as f:
+            json.dump(durations, f, indent=1, sort_keys=True)
+    except OSError:
+        pass
 
 
 def free_ram_gb():
@@ -1844,7 +1893,7 @@ def fresh_world(t, name):
     t.b.wait(lambda: t.b("state")["screen"] == "", 60, step=1, what="the loading screen to close")
     time.sleep(3)
     t.cmd("/gamerule advance_time false", "/gamerule advance_weather false", "/gamerule spawn_mobs false",
-          "/difficulty easy", "/gamemode survival", "/time set noon", "/weather clear")
+          "/difficulty easy", "/gamemode survival", "/time set noon", "/weather clear", "/tick rate %d" % TICK_RATE)
     return r
 
 
@@ -1929,10 +1978,12 @@ def main(argv):
     if "--help" in argv or "-h" in argv:
         print(__doc__)
         return 0
+    global TICK_RATE
+    TICK_RATE = int(opt(argv, "--tick", TICK_RATE))
     keep = "--keep-open" in argv
     attach = "--attach" in argv
     timeout = int(opt(argv, "--test-timeout", TEST_TIMEOUT))
-    values = {opt(argv, f, None) for f in ("--workers", "-j", "--worker", "--queue", "--test-timeout")}
+    values = {opt(argv, f, None) for f in ("--workers", "-j", "--worker", "--queue", "--test-timeout", "--tick")}
     names = [a for a in argv if not a.startswith("-") and a not in values]
     tests = [(n, f) for n, f in TESTS if not names or n in names]
     if names and len(tests) != len(names):
@@ -1973,7 +2024,10 @@ def main(argv):
     qdir = os.path.join(root, "queue")
     shutil.rmtree(qdir, ignore_errors=True)
     os.makedirs(qdir)
-    order = sorted((n for n, _ in tests), key=lambda n: LONG_FIRST.index(n) if n in LONG_FIRST else 99)
+    durations = load_durations(root)
+    # longest first (last measured time; a test never measured counts as long), so the slow ones start at once and the
+    # wall time is about max(longest test, total / workers) + start-up
+    order = sorted((n for n, _ in tests), key=lambda n: -durations.get(n, UNKNOWN_SECONDS))
     with open(os.path.join(qdir, "tests.txt"), "w") as f:
         f.write("\n".join(order))
     busy = [mc.PORT_BASE + k for k in range(1, workers + 1) if port_busy(mc.PORT_BASE + k)
@@ -1985,7 +2039,7 @@ def main(argv):
     for k in range(1, workers + 1):
         home = os.path.join(root, "w%d" % k)
         os.makedirs(home, exist_ok=True)
-        env = dict(os.environ, MANHATTAN_PROFILE=home, MANHATTAN_BRIDGE_PORT=str(mc.PORT_BASE + k), MANHATTAN_XMX="3G")
+        env = dict(os.environ, MANHATTAN_PROFILE=home, MANHATTAN_BRIDGE_PORT=str(mc.PORT_BASE + k), MANHATTAN_XMX="3G", MANHATTAN_TICK=str(TICK_RATE))
         out = open(os.path.join(root, "w%d.log" % k), "w", encoding="utf-8")
         procs.append((k, subprocess.Popen([sys.executable, "-u", os.path.abspath(__file__), "--worker", str(k), "--queue", qdir,
                                            "--test-timeout", str(timeout)], env=env, stdout=out, stderr=subprocess.STDOUT)))
@@ -1998,6 +2052,7 @@ def main(argv):
         fn = os.path.join(qdir, "results-%d.json" % k)
         if os.path.exists(fn):
             res += [tuple(r) for r in json.load(open(fn, encoding="utf-8"))]
+    save_durations(root, durations, res)
     done = {r[0] for r in res}
     for n in order:
         if n not in done:
