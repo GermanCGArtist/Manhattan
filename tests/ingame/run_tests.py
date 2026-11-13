@@ -1719,7 +1719,7 @@ FOREST = [("oak", (92, -60, 92)), ("birch", (102, -60, 92)), ("fancy_oak", (114,
 # the forest is planted in four groups, each its own test on its own game: the same checks as one big forest, in a quarter of the time
 FOREST_GROUPS = {
     "spruce": (["mega_spruce"], 40),                                         # 2x2 spruce: Baritone stalls on it for minutes
-    "jungle": (["jungle_tree", "fancy_oak"], 10),                            # vines
+    "jungle": (["jungle_tree", "fancy_oak"], 6),                            # vines
     "dark": (["dark_oak", "mangrove"], 25),                                  # roots
     "mixed": (["oak", "birch", "huge_red_mushroom", "huge_brown_mushroom"], 6),    # bee nest, mushrooms
 }
@@ -1886,11 +1886,20 @@ def wait_server(t, timeout=60):
     t.b.wait(ok, timeout, step=0.5, what="the world's server")
 
 
+def leave_world(t):
+    """Back to the title screen. With many games at once the save on leaving can take longer than the bridge waits
+    for the answer: the answer is then an error, but the game still leaves, so wait for the title screen either way."""
+    try:
+        t.b("leave")
+    except BridgeError as e:
+        log("  leave answered late (%s); waiting for the title screen" % e)
+    t.b.wait(lambda: t.b("state")["screen"].endswith("TitleScreen"), 240, step=1, what="the title screen")
+
+
 def fresh_world(t, name):
     """Leaves the current world and opens (creating it flat, creative, cheats on) a world of its own: name."""
     if t.b("state")["inWorld"]:
-        t.b("leave")
-        t.b.wait(lambda: t.b("state")["screen"].endswith("TitleScreen"), 120, step=1, what="the title screen")
+        leave_world(t)
     if name == mc.WORLD:
         prepare_schem()   # Litematica saves its placements into the world's file when the world is left: write ours again
     r = t.b("world " + name)
@@ -1950,12 +1959,15 @@ def worker(claim, keep, attach, timeout, tag=""):
             if item is None:
                 break
             name, fn = item
-            if needs_main_world(fn) and getattr(t, "world", mc.WORLD) != mc.WORLD:
-                # the previous test left the game in a world of its own (with its own Litematica placements): these tests
-                # use the shared flat world, so the order the tests run in on a game must not matter
-                fresh_world(t, mc.WORLD)
             log(tag + "running", name, "...")
-            ok, info, dt, hung = run_one(t, name, fn, max(timeout, TEST_TIMEOUTS.get(name, 0)))
+            try:
+                if needs_main_world(fn) and getattr(t, "world", mc.WORLD) != mc.WORLD:
+                    # the previous test left the game in a world of its own (with its own Litematica placements): these tests
+                    # use the shared flat world, so the order the tests run in on a game must not matter
+                    fresh_world(t, mc.WORLD)
+                ok, info, dt, hung = run_one(t, name, fn, max(timeout, TEST_TIMEOUTS.get(name, 0)))
+            except (BridgeError, OSError) as e:
+                ok, info, dt, hung = False, "could not set the test up: %s" % e, 0.0, True   # treated like a stuck game: restarted
             tries = 0
             while not ok and not hung and tries < RETRIES:
                 # Baritone-driven tests (trees, schematics, floods) occasionally leave one block or lose a race even alone: one
@@ -1964,9 +1976,12 @@ def worker(claim, keep, attach, timeout, tag=""):
                 first = str(info).splitlines()[0][:200] if str(info) else ""
                 log(tag + "%s failed (%s); retry %d/%d. Full first failure: %s" % (name, first, tries, RETRIES, info))
                 globals()["RUN_ID"] += 1    # worlds are named after it: the retry gets a fresh one, not the half-used world of the failed try
-                if needs_main_world(fn) and getattr(t, "world", mc.WORLD) != mc.WORLD:
-                    fresh_world(t, mc.WORLD)
-                ok, info2, dt2, hung = run_one(t, name, fn, max(timeout, TEST_TIMEOUTS.get(name, 0)))
+                try:
+                    if needs_main_world(fn) and getattr(t, "world", mc.WORLD) != mc.WORLD:
+                        fresh_world(t, mc.WORLD)
+                    ok, info2, dt2, hung = run_one(t, name, fn, max(timeout, TEST_TIMEOUTS.get(name, 0)))
+                except (BridgeError, OSError) as e:
+                    ok, info2, dt2, hung = False, "could not set the retry up: %s" % e, 0.0, True
                 dt += dt2
                 info = ("PASSED ON RETRY %d (first failure: %s) %s" % (tries, first, info2)) if ok else info2
             results.append((name, ok, info, dt))
