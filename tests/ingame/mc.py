@@ -175,7 +175,7 @@ def _sha1(p):
 def _write_options():
     opts = dict(OPTIONS)
     if WORKER:   # several clients at once: keep the GPU and CPU load low
-        opts.update({"renderDistance": "4", "simulationDistance": "5", "maxFps": "12", "graphicsMode": "0"})
+        opts.update({"renderDistance": "4", "simulationDistance": "5", "maxFps": "20", "graphicsMode": "0"})
     path = os.path.join(PROFILE, "options.txt")
     lines = []
     if os.path.exists(path):

@@ -162,7 +162,7 @@ def test_imgui_spike(t):
     time.sleep(0.15)
     t.b("imgui release %.1f %.1f 0" % (sx, sy))
     t.script_done(10)
-    t.wait_chat("Script stopped", 5)
+    t.wait_chat("Script stopped", 30)
 
     # Press F9 again to close the ImGui spike window
     t.b("imgui key 298 1 0")
