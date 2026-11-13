@@ -13,7 +13,7 @@ import java.util.Map;
 final class Presets {
     private Presets() {}
 
-    static final int VERSION = 8;
+    static final int VERSION = 9;
 
     /** The current default presets (2.5.0). */
     static Map<String, List<String>> defaults() {
@@ -90,19 +90,21 @@ final class Presets {
         p.put("Build a Litematica schematic (materials from chests)", new ArrayList<>(List.of(
                 "// Place the schematic in Litematica first; /schem list shows the placement numbers.",
                 "// mode: \"add\" fills only empty spots, \"fix\" also replaces wrong blocks, \"exact\" also digs out (into a hill).",
+                "// A big schematic is built chunk by chunk (nearest first). What is finished is saved: stop and Run again, and",
+                "// the job \"build\" carries on with the chunks that are left. Queue panel: Retry / Skip / Reset.",
                 "let placement = 1",
                 "let mode = \"add\"",
                 "let scaffold_chest = pos(0, 64, 0)   // Pick block: the chest with the scaffold blocks",
                 "let scaffold = \"dirt\"",
                 "let chests = [pos(2, 64, 0), pos(4, 64, 0)]   // chests, barrels or shulker boxes with the materials",
+                "let missing = []",
                 "",
                 "#acceptableThrowawayItems {scaffold}",
-                "take_upto(scaffold_chest, scaffold, 128)",
-                "let missing = []",
-                "let left = -1",
-                "let now_left = 0",
-                "loop",
-                "  let need = schem_needed(placement, mode)",
+                "",
+                "// The engine stops at every chunk and gives this block a turn: fetch what this chunk and the next need.",
+                "on chunk_needs",
+                "  let need = chunk_needed(2)",
+                "  take_upto(scaffold_chest, scaffold, 128)",
                 "  for item in keys(need)",
                 "    if contains(missing, item) then continue end",
                 "    for c in chests",
@@ -114,13 +116,40 @@ final class Presets {
                 "    end",
                 "    if count(item) == 0 and not full then push(missing, item) end",
                 "  end",
-                "  now_left = schem_build(placement, mode, \"skip\")   // \"strict\": stop as soon as an item is missing",
-                "  if now_left == 0 or now_left == left then break end   // done, or nothing more can be built",
-                "  left = now_left",
                 "end",
-                "collect_scaffold()   // the blocks Baritone placed to reach things",
+                "",
+                "job \"build\"",
+                "  schem_build(placement, mode, \"skip\")   // \"strict\": stop as soon as an item is missing",
+                "  collect_scaffold()   // the blocks Baritone placed to reach things",
+                "end",
                 "schem_check(placement, mode)",
                 "if len(missing) > 0 then print(\"Not in the chests: {join(missing, ', ')}\") end")));
+        p.put("Saved steps: job blocks (a stopped script carries on)", new ArrayList<>(List.of(
+                "// Every job \"name\" ... end is saved when it finishes. Press Run again after a stop, a death or an error:",
+                "// finished jobs are skipped, the script carries on at the first one that is not done.",
+                "// Lines outside a job (let, option, want, on ...) run every time. A variable a job gave a value to (numbers,",
+                "// texts, positions, lists, maps) is put back when the job is skipped.",
+                "// To do a finished job again: Queue panel > Reset, or /queue reset \"dig\".",
+                "let storage = pos(0, 64, 0)",
+                "let spot = null",
+                "on full do dump(storage) end",
+                "",
+                "job \"find the spot\"",
+                "  spot = pos(100, 64, 100)",
+                "end",
+                "",
+                "job \"dig\"",
+                "  area(\"trench\")",
+                "  if clear_area(2) > 0",
+                "    #sel ca",
+                "  end",
+                "  collect_scaffold()",
+                "end",
+                "",
+                "job \"return\"",
+                "  dump(storage)",
+                "  print(\"All done, the spot was {spot}\")",
+                "end")));
         p.put("Dig an area (top down, 2 layers per pass)", new ArrayList<>(List.of(
                 "// Select the area first (area(\"name\") or #sel pos1 / pos2). clear_area(3) takes 3 layers per pass.",
                 "if clear_area(2) > 0",
@@ -365,14 +394,51 @@ final class Presets {
             "#sel replace oak_leaves birch_leaves spruce_leaves jungle_leaves acacia_leaves dark_oak_leaves mangrove_leaves cherry_leaves pale_oak_leaves azalea_leaves flowering_azalea_leaves air",
             "collect_scaffold()   // take down what Baritone placed to reach the tops"));
 
+    /** The schematic preset of presetsVersion 8 (before job blocks and on chunk_needs): an unedited copy is replaced on upgrade. */
+    private static final Map<String, List<String>> V8 = Map.of("Build a Litematica schematic (materials from chests)", List.of(
+                "// Place the schematic in Litematica first; /schem list shows the placement numbers.",
+                "// mode: \"add\" fills only empty spots, \"fix\" also replaces wrong blocks, \"exact\" also digs out (into a hill).",
+                "let placement = 1",
+                "let mode = \"add\"",
+                "let scaffold_chest = pos(0, 64, 0)   // Pick block: the chest with the scaffold blocks",
+                "let scaffold = \"dirt\"",
+                "let chests = [pos(2, 64, 0), pos(4, 64, 0)]   // chests, barrels or shulker boxes with the materials",
+                "",
+                "#acceptableThrowawayItems {scaffold}",
+                "take_upto(scaffold_chest, scaffold, 128)",
+                "let missing = []",
+                "let left = -1",
+                "let now_left = 0",
+                "loop",
+                "  let need = schem_needed(placement, mode)",
+                "  for item in keys(need)",
+                "    if contains(missing, item) then continue end",
+                "    for c in chests",
+                "      if count(item) >= need[item] or full then break end",
+                "      try",
+                "        take_upto(c, item, need[item])",
+                "      catch err",
+                "      end",
+                "    end",
+                "    if count(item) == 0 and not full then push(missing, item) end",
+                "  end",
+                "  now_left = schem_build(placement, mode, \"skip\")   // \"strict\": stop as soon as an item is missing",
+                "  if now_left == 0 or now_left == left then break end   // done, or nothing more can be built",
+                "  left = now_left",
+                "end",
+                "collect_scaffold()   // the blocks Baritone placed to reach things",
+                "schem_check(placement, mode)",
+                "if len(missing) > 0 then print(\"Not in the chests: {join(missing, ', ')}\") end"));
+
     static Map<String, List<String>> upgrade(Map<String, List<String>> user) {
         Map<String, List<String>> old = v6();
         Map<String, List<String>> out = new LinkedHashMap<>();
         defaults().forEach(out::put);
         user.forEach((name, lines) -> {
-            List<String> was = old.get(name), was7 = V7.get(name);
+            List<String> was = old.get(name), was7 = V7.get(name), was8 = V8.get(name);
             if (was != null && was.equals(lines)) return;              // an untouched old default: replaced or gone
             if (was7 != null && was7.equals(lines)) return;            // the same, from 2.5.0 - 2.6.0 (presetsVersion 7)
+            if (was8 != null && was8.equals(lines)) return;            // the same, before job blocks (presetsVersion 8)
             if (out.containsKey(name) && !out.get(name).equals(lines)) {
                 out.put(name + " (yours)", lines);                     // edited by the user: kept beside the new one
             } else {

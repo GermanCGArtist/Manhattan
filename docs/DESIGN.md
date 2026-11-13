@@ -77,6 +77,22 @@ acts on its own: the script starts them. The packages talk through small `Api` c
   size: an entry with another one is stale and ignored. `Jobs` is the in-memory tree the runner and UI read (job -> action ->
   chunk) and builds the ids; mining/water chunks and `job` blocks are meant to use the same nodes and ledger entries.
 
+## Script jobs and the Queue panel (`Ast.Job`, `Jobs`, `DockedPanels.renderQueuePanel`)
+- `job "name" ... end`: `Lexer` keyword, `Parser` (`jobDepth` forbids nesting), `Ast.Job`. `exec` evaluates the name and asks the ledger:
+  `DONE` -> `Jobs.savedVars` are `env.assign`ed and the body is not run. Otherwise `Jobs.begin` (`RUNNING`, sets `Jobs.currentJob`
+  so `Jobs.action` builds ids `<job>/<fn>@<line>(args)#n/...`), the body runs in the surrounding `Env` (like an `if` body), a
+  `Values.ScriptError` becomes `FAILED` (message with line) and is rethrown (the Runner stops the script as before), a normal end becomes
+  `DONE` (or `DEFERRED` when a chunk below it is) through `Jobs.finish`. Anything else (stop, `return`, `Killed`) leaves it `RUNNING`.
+- Saved variables: the names the body assigns (static walk, `Ast.Job.collectAssigned`) plus every variable whose packed value differs
+  before and after (`Jobs.outerValues` packs copies of all non-builtin variables, so in-place changes and changes made by functions are seen).
+  `Jobs.pack` / `unpack`: numbers, text, bool, null, lists, maps with text keys, positions (`{"$pos": [x, y, z]}`); anything else is `NOT_PLAIN` and left out.
+  Gson reads numbers back as doubles, which is what the language uses anyway.
+- A job's ledger entry is the bare name (no `/`); chunk entries are `<job>/<action>#n/<x0>,<z0>`. `Jobs.rows()` rebuilds jobs -> actions -> chunks from the ids, so
+  the panel works from the ledger alone (also with no script running). `Jobs.skip` writes `DONE` + reason `skipped`; `SchemProcess` does not recount a skipped chunk.
+- The ledger file name comes from `Jobs.script`: `Runner.start(lines, name)` gets the editor tab name (`Jobs.editorScript()`, `main` when unknown); `Jobs.fileSafe` keeps `[A-Za-z0-9_.-]`.
+- `Jobs.chunkText()` ("chunk 7/26" = done + 1 of all, for the action that has a `RUNNING` chunk) goes in front of the step text in `ProgressModel`.
+- Known limit: `Jobs.currentJob` is global, so an action started by an `on` block while a job runs gets ids under that job.
+
 ## Water fill (`dev.buildtools.TerminatorProcess`)
 - A wet cell is any cell with a water fluid that does not block movement (seagrass, kelp, bubble columns count).
 - A cell is filled only when its column below is dry inside the selection: strictly bottom-up.

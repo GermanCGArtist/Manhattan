@@ -73,6 +73,7 @@ final class WorldCheck {
         else if (s instanceof Ast.Loop l) { if (l.times != null) expr(l.times); stmts(l.body); }
         else if (s instanceof Ast.For f) { expr(f.over); stmts(f.body); }
         else if (s instanceof Ast.On o) { expr(o.cond); stmts(o.body); }
+        else if (s instanceof Ast.Job j) stmts(j.body);
         else if (s instanceof Ast.Try t) { stmts(t.body); stmts(t.handler); }
         else if (s instanceof Ast.WaitUntil w) expr(w.cond);
         else if (s instanceof Ast.Return r) { if (r.value != null) expr(r.value); }

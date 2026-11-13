@@ -78,6 +78,27 @@ An `on` block is switched on when the script reaches it, and stays on until the 
 
 Note: the script ends after its last line, and the `on` blocks end with it. To keep them watching, end with something that waits, for example `wait until false`.
 
+### job: saved parts of a script
+
+```
+job "dig"
+  area("trench")
+  if clear_area(2) > 0
+    #sel ca
+  end
+  collect_scaffold()
+end
+```
+
+A `job "name" ... end` block is saved when it ends. Press Run again after a stop, a death or an error and a finished job is **skipped**; the script carries on at the first job that is not done. Lines outside jobs (`let`, `option`, `want`, `on`, plain actions) always run again.
+
+- **States** (saved in the ledger, `config/manhattan-jobs/<world>_<script>.json`; see the Queue panel and `/queue jobs`): `RUNNING` while it runs (and after a stop or crash: the next run does it again), `DONE`, `FAILED` (the body ended with a script error; the message and line are kept, the script stops as always, and the next Run goes into that job again), `DEFERRED` (the body ended, but a chunk of a `schem_build` or `clear_area` inside it is still deferred or failed: the next Run goes in again, and the finished chunks are skipped by their own entries).
+- **Variables.** What a job gave values to is saved when it is `DONE`: every variable it assigns with `let`, `=`, `+=` or `list[i] = ...` (also inside `if` / `for` / `while` / `try` in the job), plus any plain variable whose value changed while the job ran (so a `push(list, x)` or a function that sets a global is saved too). Only plain values are saved: numbers, text, true/false, null, positions, and lists and maps (text keys) of those; a function or anything else is left out. When the job is skipped, these variables are set again from the ledger, as if the job had just run. A `let spot = null` outside the job still runs first, then the job's value replaces it.
+- **Names.** The name is a text (`"dig"`, or `"dig {i}"` in a loop); it is the ledger id of the job and the first part of the ids of its actions. Two jobs with the same name share one entry: once the first is done the second is skipped (`Test` warns). A `/` in a name becomes `-`; `script` is reserved for the lines outside jobs. Jobs cannot be nested.
+- **A skipped job does not run its body at all**, so an `on` block or a `func` written inside it is not set up then. `Test` warns about both; put them outside the job.
+- Editing the body of a finished job does not run it again: use the Queue panel's Reset or `/queue reset dig`.
+- The ledger file is **per script**: the name of the editor tab that was Run (`main` for the first tab, `build` for `build.txt`), or `main` when you start with `/queue run`.
+
 ## Picking positions (chests, beds, corners)
 
 * **Tab, like /setblock:** the editor remembers the block under your crosshair when you opened it (up to 96 blocks away). After `(`, `,` or `=`, the list offers `pos(x, y, z)` of that block. Tab or Enter takes it. Inside `pos(` it offers just the numbers, and in a `#` line it offers `x y z`.
@@ -199,7 +220,7 @@ Every chunk's result is saved (see "The job ledger" below), so after a stop or a
 * Blocks inside safe areas (`protect`) are never built or dug.
 * Placements come from the running Litematica (found by reflection; the mod also works without it) or, failing that, from Litematica's own file in `config/litematica/`. Position, rotation, mirror, enabled state and sub-regions are used; where placements overlap, the later one in the list wins (air never overwrites a block).
 
-**The job ledger.** Every chunk of a chunked build is a job with a state (`PENDING`, `RUNNING`, `DONE`, `DEFERRED`, `FAILED`), saved on every change to `config/manhattan-jobs/<world>_main.json` (there is one ledger per world; scripts have no names yet). A job id is `script/schem_build@212(all,add)#1/1748,-1400`: the script line and its arguments, `#n` for the n-th time that call ran in this run (a loop), then the chunk's corner. A run that finds state prints `Resuming: 3 of 7 chunks done.` A chunk that is `DONE` and not loaded is skipped without looking at the world; one that is loaded is counted again and built again if blocks are missing (so a block you removed comes back). Chat: `/queue jobs` lists the ledger, `/queue reset [job]` forgets it (all, or one id and everything below it), `/queue retry <job>` opens deferred or failed entries again. The ledger also forgets a chunk when the placement was moved or `queue.chunkSize` changed.
+**The job ledger.** Every chunk of a chunked build is a job with a state (`PENDING`, `RUNNING`, `DONE`, `DEFERRED`, `FAILED`), saved on every change to `config/manhattan-jobs/<world>_<script>.json` (one ledger per world and script: the editor tab that was Run, `main` for the first; see `job` above). A job id is `script/schem_build@212(all,add)#1/1748,-1400`: the script line and its arguments, `#n` for the n-th time that call ran in this run (a loop), then the chunk's corner. A run that finds state prints `Resuming: 3 of 7 chunks done.` A chunk that is `DONE` and not loaded is skipped without looking at the world; one that is loaded is counted again and built again if blocks are missing (so a block you removed comes back). Chat: `/queue jobs` lists the ledger, `/queue reset [job]` forgets it (all, or one id and everything below it), `/queue retry <job>` opens deferred or failed entries again. The ledger also forgets a chunk when the placement was moved or `queue.chunkSize` changed.
 
 How `fill_water` works (2.1.0): a **wet cell** is anything holding water that is not solid, so plain water, seagrass, kelp and bubble columns all count. A cell is only filled when **no wet cell is left below it in its column**. Kelp is broken first.
 
@@ -310,3 +331,11 @@ The first start of 2.0.0 converts the saved script and your own presets automati
 | `/buildtools terminator dirt` | `fill_water("dirt")` |
 | `if has dirt 64` / `if health below 5` | `if has("dirt", 64)` / `if health < 5` |
 | `addons off escape` | `disable("escape")` |
+
+## The Queue panel (docked UI)
+
+The `Queue` tab (bottom left, beside Capture) shows the ledger of the script that ran last as a tree: job, its actions (for example `schem_build@12(all,add)#1`), their chunks, each with its state, blocks left and reason. `+` / `-` open and close a row. While a chunked task runs, the panel and the dashboard show `chunk 7/26`. The buttons work on a row and everything below it, and are off while the script runs (the next Run takes up the change):
+
+- **Retry**: deferred, failed or interrupted entries become pending again with no tries.
+- **Skip**: the row and everything not done below it count as `DONE` with the reason `skipped`. A skipped chunk is never entered again (not even counted, so a hole you left on purpose is not built), a skipped job is not run, and its variables come back only if an earlier run saved them (else they stay undefined, and later lines that use them fail).
+- **Reset**: forgets the entries (same as `/queue reset <id>`); the next Run does them from scratch. `Reset all` asks twice.

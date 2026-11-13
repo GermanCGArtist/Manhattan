@@ -473,7 +473,7 @@ public final class DockedPanels {
         // Toolbar: Run, Test, Pick block, Comment, Tab complete, + New tab
         if (ImGui.button("Run##EditorRun")) {
             syncToConfig(currentScriptText());
-            String err = QueueMod.runner.start(cfg.script);
+            String err = QueueMod.runner.start(cfg.script, Jobs.editorScript());
             if (err != null) {
                 editorStatus = err;
                 Util.msg(err);
@@ -1104,5 +1104,102 @@ public final class DockedPanels {
         ImGui.textDisabled("Assistant (Stage 6)");
         ImGui.separator();
         ImGui.textWrapped("The LLM Assistant tab is a stub in Stage 3. Use the Capture panel's 'Copy context' button to export world and script context for an external LLM.");
+    }
+
+    // ------------------------------------------------------------------ Queue panel (job ledger)
+
+    private static final Map<String, Boolean> queueOpen = new java.util.HashMap<>();
+    private static boolean queueConfirmReset;
+
+    /**
+     * Queue panel: the saved ledger of the script that ran last, as a tree jobs -> actions -> chunks with state, blocks
+     * left and reason. Retry puts deferred / failed / interrupted entries below the row back to pending, Skip marks
+     * the row and everything open below it as done ("skipped": never entered again, a skipped job is not run and
+     * its variables only come back if an earlier run saved them), Reset forgets the entries below the row. The
+     * buttons are off while a script runs; the next Run takes up the changes.
+     */
+    public static void renderQueuePanel() {
+        boolean running = QueueMod.runner != null && QueueMod.runner.running();
+        List<Jobs.Row> rows;
+        try {
+            rows = Jobs.rows();
+        } catch (Throwable t) {
+            ImGui.textDisabled("The queue cannot be read (" + t + ").");
+            return;
+        }
+        ImGui.textDisabled("Script: " + Jobs.script + (running ? "  (running: change it after it stops)" : ""));
+        String chunk = running ? Jobs.chunkText() : null;
+        if (chunk != null) {
+            ImGui.sameLine(0f, 10f);
+            ImGui.textColored(0.290f, 0.620f, 0.878f, 1.0f, chunk);
+        }
+        ImGui.beginDisabled(running || rows.isEmpty());
+        if (!queueConfirmReset) {
+            if (ImGui.smallButton("Reset all##QueueResetAll")) queueConfirmReset = true;
+        } else {
+            if (ImGui.smallButton("Really forget everything?##QueueResetAllYes")) {
+                Util.msg(Jobs.reset(null));
+                queueConfirmReset = false;
+            }
+            ImGui.sameLine(0f, 4f);
+            if (ImGui.smallButton("Cancel##QueueResetAllNo")) queueConfirmReset = false;
+        }
+        ImGui.endDisabled();
+        ImGui.separator();
+        if (rows.isEmpty()) {
+            ImGui.textDisabled("Nothing saved yet. Big builds and clears are cut into chunks, and job \"name\" ... end blocks are saved here.");
+            return;
+        }
+        boolean hidden = false;
+        int hiddenDepth = 0;
+        for (int i = 0; i < rows.size(); i++) {
+            Jobs.Row r = rows.get(i);
+            if (hidden && r.depth() > hiddenDepth) continue;
+            hidden = false;
+            boolean hasKids = r.depth() < 2 && i + 1 < rows.size() && rows.get(i + 1).depth() > r.depth();
+            boolean open = queueOpen.getOrDefault(r.id(), r.open() > 0);
+            if (hasKids && !open) { hidden = true; hiddenDepth = r.depth(); }
+            ImGui.pushID("q" + i);
+            if (r.depth() > 0) ImGui.indent(14f * r.depth());
+            if (hasKids) {
+                if (ImGui.smallButton(open ? "-" : "+")) queueOpen.put(r.id(), !open);
+                ImGui.sameLine(0f, 4f);
+            }
+            float[] c = stateColor(r.state());
+            ImGui.textColored(c[0], c[1], c[2], 1f, r.state().name().toLowerCase());
+            ImGui.sameLine(0f, 6f);
+            String extra = (r.left() > 0 ? "  " + r.left() + " left" : "")
+                    + (r.depth() < 2 && r.open() > 0 ? "  " + r.open() + " chunk" + (r.open() == 1 ? "" : "s") + " open" : "")
+                    + (r.reason() != null ? "  (" + r.reason() + ")" : "");
+            ImGui.text((r.depth() == 0 ? "job " : r.depth() == 2 ? "chunk " : "") + r.label() + extra);
+            ImGui.beginDisabled(running);
+            boolean canRetry = r.state() == Ledger.State.DEFERRED || r.state() == Ledger.State.FAILED || r.state() == Ledger.State.RUNNING || r.open() > 0 && r.depth() < 2;
+            if (canRetry) {
+                ImGui.sameLine(0f, 8f);
+                if (ImGui.smallButton("Retry")) Util.msg(Jobs.retry(r.id()));
+            }
+            if (r.state() != Ledger.State.DONE) {
+                ImGui.sameLine(0f, 4f);
+                if (ImGui.smallButton("Skip")) {
+                    int k = Jobs.skip(r.id());
+                    Util.msg("Skipped " + k + " entr" + (k == 1 ? "y" : "ies") + " of " + r.label() + ".");
+                }
+            }
+            ImGui.sameLine(0f, 4f);
+            if (ImGui.smallButton("Reset")) Util.msg(Jobs.reset(r.id()));
+            ImGui.endDisabled();
+            if (r.depth() > 0) ImGui.unindent(14f * r.depth());
+            ImGui.popID();
+        }
+    }
+
+    private static float[] stateColor(Ledger.State s) {
+        return switch (s) {
+            case DONE -> new float[]{0.247f, 0.698f, 0.498f};
+            case RUNNING -> new float[]{0.290f, 0.620f, 0.878f};
+            case DEFERRED -> new float[]{1.0f, 0.627f, 0.251f};
+            case FAILED -> new float[]{0.957f, 0.278f, 0.278f};
+            default -> new float[]{0.62f, 0.64f, 0.68f};
+        };
     }
 }

@@ -217,6 +217,69 @@ final class Ast {
         void exec(Interp in, Env env) { in.runner().addHandler(this, env); }
     }
 
+    /**
+     * job "name" ... end: a part of the script whose result is saved (see Jobs). A job that finished in an earlier run
+     * is skipped and the variables it gave values to are put back from the ledger; otherwise it runs, and is marked
+     * DONE at the end, FAILED when it ends with a script error. The body shares the variables of the surrounding
+     * block (like the body of an if).
+     */
+    static final class Job extends Stmt {
+        final Expr name;
+        final List<Stmt> body;
+        final java.util.Set<String> assigned = new java.util.LinkedHashSet<>();
+        Job(int line, Expr name, List<Stmt> body) {
+            super(line); this.name = name; this.body = body;
+            collectAssigned(body, assigned);
+        }
+
+        /** Names the body gives values to (let, =, +=, list[i] = ...), also in nested blocks; not inside func or on blocks. */
+        static void collectAssigned(List<Stmt> stmts, java.util.Set<String> out) {
+            for (Stmt s : stmts) {
+                if (s instanceof Let l) out.add(l.name);
+                else if (s instanceof Assign a) {
+                    Expr t = a.target;
+                    while (t instanceof Index ix) t = ix.obj;
+                    if (t instanceof Var v) out.add(v.name);
+                }
+                else if (s instanceof If i) { i.blocks.forEach(b -> collectAssigned(b, out)); if (i.otherwise != null) collectAssigned(i.otherwise, out); }
+                else if (s instanceof While w) collectAssigned(w.body, out);
+                else if (s instanceof Loop l) collectAssigned(l.body, out);
+                else if (s instanceof For f) collectAssigned(f.body, out);
+                else if (s instanceof Try t) { collectAssigned(t.body, out); collectAssigned(t.handler, out); }
+            }
+        }
+
+        void exec(Interp in, Env env) {
+            String n = Jobs.jobName(Values.str(name.eval(in, env)), line);
+            if (Jobs.isDone(n)) {
+                Map<String, Object> saved = Jobs.savedVars(n);
+                if (saved != null) saved.forEach(env::assign);
+                Jobs.say("Job '" + n + "' is done from an earlier run: skipped" + (saved == null || saved.isEmpty() ? "" : " (" + saved.size() + " variable" + (saved.size() == 1 ? "" : "s") + " restored)") + ".");
+                return;
+            }
+            Map<String, Object> before = Jobs.outerValues(env);
+            Jobs.begin(n);
+            try {
+                run(body, in, env);
+            } catch (Values.ScriptError e) {
+                Jobs.fail(n, "line " + e.line + ": " + e.getMessage());
+                throw e;
+            } finally {
+                Jobs.currentJob = null;   // anything else (stop, return, break) leaves the job RUNNING: the next run does it again
+            }
+            java.util.Set<String> names = new java.util.LinkedHashSet<>(assigned);
+            Map<String, Object> after = Jobs.outerValues(env);
+            for (var e : after.entrySet()) if (!java.util.Objects.equals(before.get(e.getKey()), e.getValue())) names.add(e.getKey());   // also what a function or a push() changed
+            Map<String, Object> vars = new java.util.LinkedHashMap<>();
+            for (String v : names) {
+                if (!env.has(v)) continue;
+                Object packed = Jobs.pack(env.get(v, line), 0);
+                if (packed != Jobs.NOT_PLAIN) vars.put(v, packed);
+            }
+            Jobs.finish(n, vars);
+        }
+    }
+
     static final class Try extends Stmt {
         final List<Stmt> body, handler;
         final String var;

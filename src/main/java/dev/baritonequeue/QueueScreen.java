@@ -133,7 +133,7 @@ final class QueueScreen extends Screen {
         addRenderableWidget(Button.builder(Component.literal("Run"), b -> {
             store(box.getValue());
             Config.save();
-            String err = QueueMod.runner.start(cfg.script);
+            String err = QueueMod.runner.start(cfg.script, Jobs.editorScript());
             if (err != null) { say(err); Util.msg(err); }
         }).bounds(left, by, bw, 20).build());
         addRenderableWidget(Button.builder(Component.literal("Test"), b -> test())

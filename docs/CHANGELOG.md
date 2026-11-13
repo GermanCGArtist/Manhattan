@@ -2,6 +2,17 @@
 
 Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
 
+## Unreleased – Job queue, stage 3: `job` blocks and the Queue panel (branch job-queue-s3)
+- New syntax `job "name" ... end`: a finished job is skipped on the next Run and the variables it gave values to (plain values:
+  numbers, text, positions, lists, maps) are restored from the ledger; a script error marks it `FAILED` with the message and the
+  next Run continues there; lines outside jobs always run again. `Test` warns about duplicate job names, and about `on` / `func`
+  inside a job (they are not set up when the job is skipped).
+- The ledger file is now per script (the editor tab that was Run: `config/manhattan-jobs/<world>_<tab>.json`, `main` for the first tab).
+- Docked UI: a `Queue` panel (jobs -> actions -> chunks, state, blocks left, reason; Retry / Skip / Reset) and "chunk 7/26" in the
+  progress line. Skip marks a row `DONE` with the reason `skipped`; it is never entered again.
+- Presets: "Build a Litematica schematic" now uses `on chunk_needs` and a `job`; new preset "Saved steps: job blocks". Presets version 9.
+- Not tested in game yet.
+
 ## Unreleased – Job queue, stage 1: chunked schem_build (branch job-queue)
 - `schem_build` cuts a placement bigger than `queue.chunkSize` (32) into chunks and builds them one at a time, nearest
   first: walk there, wait for the chunk to load, build only that chunk (Baritone cannot wander off or hang on one far

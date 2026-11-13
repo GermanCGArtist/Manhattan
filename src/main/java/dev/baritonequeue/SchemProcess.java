@@ -439,7 +439,7 @@ final class SchemProcess {
             Schem.Counts c = Schem.count(plan, mode, mc.level, b);
             boolean loaded = c.unloaded == 0;
             if (e != null && e.state == Ledger.State.DONE) {
-                if (!loaded || c.todoTotal() == 0) { closed.add(b); n.state = Ledger.State.DONE; doneChunks++; continue; }   // done earlier; the world is not looked at where it is not loaded
+                if (!loaded || c.todoTotal() == 0 || Jobs.SKIPPED.equals(e.reason)) { closed.add(b); n.state = Ledger.State.DONE; doneChunks++; continue; }   // done earlier; the world is not looked at where it is not loaded
                 Util.msg("Chunk " + b.text() + " was done, but " + c.todoTotal() + " blocks are missing now: building it again.");
             } else if (loaded && c.todoTotal() == 0) {
                 Jobs.set(n, Ledger.State.DONE, tries.getOrDefault(b, 0), 0, null, sig);
