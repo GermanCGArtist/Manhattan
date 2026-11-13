@@ -481,6 +481,20 @@ final class FillProcess extends Feature {
         PathingCommand r = refill(level, p, remaining);
         if (r != null) return r;
 
+        // Few buckets: the first two sources must have one cell between them, so that the gap fills and regenerates
+        // (a source placed in the open does not refill a bucket by itself). Nearest-first alone can put them 4 apart.
+        List<BlockPos> paired = new ArrayList<>();
+        for (BlockPos c : choices) {
+            for (int[] d : new int[][] {{2, 0}, {-2, 0}, {0, 2}, {0, -2}}) {
+                BlockPos other = c.offset(d[0], 0, d[1]);
+                BlockPos gap = c.offset(d[0] / 2, 0, d[1] / 2);
+                if (targets.contains(gap) && Util.isSourceWater(level.getBlockState(other))
+                        && !Util.isSolid(level, gap) && !Util.isSourceWater(level.getBlockState(gap))) { paired.add(c); break; }
+            }
+        }
+        if (!paired.isEmpty() && Util.countItem(p, Items.WATER_BUCKET) + Util.countItem(p, Items.BUCKET) > 0
+                && !hasRegeneratingSource(level, p)) choices = paired;
+
         BlockPos next = null;
         double best = Double.MAX_VALUE;
         for (BlockPos c : choices) {
@@ -579,6 +593,20 @@ final class FillProcess extends Feature {
             }
         }
         return pause();
+    }
+
+    /** Whether a source that refills by itself (infinite water) is within reach of the scoop search. */
+    private boolean hasRegeneratingSource(Level level, LocalPlayer p) {
+        BlockPos o = p.blockPosition();
+        for (int dx = -16; dx <= 16; dx++) {
+            for (int dy = -8; dy <= 8; dy++) {
+                for (int dz = -16; dz <= 16; dz++) {
+                    BlockPos pos = o.offset(dx, dy, dz);
+                    if (Util.isSourceWater(level.getBlockState(pos)) && Util.regenerates(level, pos)) return true;
+                }
+            }
+        }
+        return false;
     }
 
     /** A source to scoop: one that refills by itself (infinite water) or any pond source outside the area. */

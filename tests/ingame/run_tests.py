@@ -43,9 +43,23 @@ class Ctx:
         self.mark = 0
 
     def cmd(self, *commands):
+        """Sends chat commands and returns once the server has run all of them (not after a fixed wait: under load,
+        with many games at once, the server thread lags behind and a test would start on a half-built setup)."""
         for c in commands:
             self.b.cmd(c)
-        time.sleep(0.3)
+        self.sync()
+
+    def sync(self, timeout=60):
+        """The server runs a player's commands in order: when the answer to a later `/time query` is in the chat,
+        every earlier command has been run. (Client-side commands answer at once, which is harmless.)"""
+        mark = self.b("chatlog 0")["next"]
+        self.b.cmd("/time query gametime")
+        try:
+            self.b.wait(lambda: any("The game time is" in l for l in self.b("chatlog %d" % mark)["lines"]), timeout, step=0.05,
+                        what="the server to answer")
+        except BridgeError:
+            log("  warning: the server did not answer a sync command within %d s" % timeout)
+        time.sleep(0.15)   # the inventory/block updates go out in the same tick as the answer
 
     def start_log(self):
         self.mark = self.b("chatlog 0")["next"]
