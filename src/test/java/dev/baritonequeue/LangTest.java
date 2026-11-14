@@ -420,5 +420,88 @@ public class LangTest {
         assertTrue("remove heavymatica area succeeds", ManhattanAreas.remove("heavy_to_remove"));
         same("heavy_to_remove no longer exists", Areas.getBoxes("heavy_to_remove"), null);
         assertTrue("listener fired on delete with null owner", listenerEvents.contains("heavy_to_remove:null"));
+
+        // 7. Coordinate normalization and name trimming in ManhattanAreas.put() / get() / names() / select() / selection()
+        same("put inverted coords with padded name",
+                ManhattanAreas.put("  norm_area  ", List.of(new int[]{10, 80, 20, -5, 64, 5}), ManhattanAreas.Role.DIG, false),
+                ManhattanAreas.Result.OK);
+        var normInfo = ManhattanAreas.get(" norm_area ");
+        assertTrue("get trimmed name present", normInfo.isPresent());
+        same("normalized area name", normInfo.get().name(), "norm_area");
+        same("normalized x1", normInfo.get().boxes().get(0)[0], -5);
+        same("normalized y1", normInfo.get().boxes().get(0)[1], 64);
+        same("normalized z1", normInfo.get().boxes().get(0)[2], 5);
+        same("normalized x2", normInfo.get().boxes().get(0)[3], 10);
+        same("normalized y2", normInfo.get().boxes().get(0)[4], 80);
+        same("normalized z2", normInfo.get().boxes().get(0)[5], 20);
+        assertTrue("get missing empty", ManhattanAreas.get("does_not_exist").isEmpty());
+        assertTrue("names contains norm_area", ManhattanAreas.names().contains("norm_area"));
+
+        assertTrue("select trimmed name succeeds", ManhattanAreas.select("  norm_area  "));
+        assertFalse("select missing fails", ManhattanAreas.select("does_not_exist"));
+        assertFalse("select blank fails", ManhattanAreas.select("   "));
+        List<int[]> selCopy = ManhattanAreas.selection();
+        same("selection has 1 box", selCopy.size(), 1);
+        selCopy.get(0)[0] = 99999;
+        same("selection copy isolated", ManhattanAreas.selection().get(0)[0], -5);
+
+        // 8. protectedAreas() and Areas.delete() unprotecting PROTECT areas
+        same("put protect area",
+                ManhattanAreas.put("prot_zone", List.of(new int[]{0, 64, 0, 4, 70, 4}), ManhattanAreas.Role.PROTECT, false),
+                ManhattanAreas.Result.OK);
+        assertTrue("protectedAreas contains prot_zone",
+                ManhattanAreas.protectedAreas().stream().anyMatch(a -> "prot_zone".equals(a.name())));
+        assertTrue("Areas.delete removes prot_zone", Areas.delete("prot_zone"));
+        assertFalse("protectedAreas no longer contains prot_zone",
+                ManhattanAreas.protectedAreas().stream().anyMatch(a -> "prot_zone".equals(a.name())));
+        assertTrue("buildtools zones no longer contains prot_zone",
+                dev.buildtools.Api.zones().stream().noneMatch(z -> z.contains("prot_zone")));
+
+        // 9. Areas.move() preserves owner/role and fires listener
+        ManhattanAreas.put("move_me", List.of(new int[]{0, 64, 0, 2, 66, 2}), ManhattanAreas.Role.FLOOD, false);
+        listenerEvents.clear();
+        same("Areas.move succeeds", Areas.move("move_me", 10, 0, -5), null);
+        same("move preserves owner", Areas.ownerOf("move_me"), "heavymatica");
+        same("move preserves role", Areas.roleOf("move_me"), "flood");
+        assertTrue("move fires listener", listenerEvents.contains("move_me:HEAVYMATICA"));
+        same("moved x1", Areas.getBoxes("move_me").get(0)[0], 10);
+        same("moved z2", Areas.getBoxes("move_me").get(0)[5], -3);
+
+        // 10. loadedName cleared on clearSelection / setPos1 / setPos2 / apply
+        QueueMod.runner.start(List.of("sleep()"));
+        Areas.load("heavy1");
+        assertTrue("inUse after load", Areas.inUse("heavy1"));
+        Areas.clearSelection();
+        assertFalse("inUse cleared by clearSelection", Areas.inUse("heavy1"));
+
+        Areas.load("heavy1");
+        assertTrue("inUse after load 2", Areas.inUse("heavy1"));
+        Areas.setPos1(new net.minecraft.core.BlockPos(1, 64, 1));
+        assertFalse("inUse cleared by setPos1", Areas.inUse("heavy1"));
+
+        Areas.load("heavy1");
+        assertTrue("inUse after load 3", Areas.inUse("heavy1"));
+        Areas.setPos2(new net.minecraft.core.BlockPos(2, 65, 2));
+        assertFalse("inUse cleared by setPos2", Areas.inUse("heavy1"));
+
+        Areas.load("heavy1");
+        assertTrue("inUse after load 4", Areas.inUse("heavy1"));
+        Areas.apply(List.of(new int[]{0, 64, 0, 1, 65, 1}));
+        assertFalse("inUse cleared by apply", Areas.inUse("heavy1"));
+        QueueMod.runner.reset();
+
+        // 11. AreasView.AreaEntry owner / role / tag()
+        var entryH = new AreasView.AreaEntry("a", 1, 8, "summary", false, "heavymatica", "dig");
+        same("entryH owner", entryH.owner(), "heavymatica");
+        same("entryH role", entryH.role(), "dig");
+        same("entryH tag", entryH.tag(), "[H]");
+        var entryS = new AreasView.AreaEntry("b", 1, 8, "summary", false, "script", "clear");
+        same("entryS owner", entryS.owner(), "script");
+        same("entryS role", entryS.role(), "clear");
+        same("entryS tag", entryS.tag(), "[S]");
+        var entryM = new AreasView.AreaEntry("c", 1, 8, "summary", false);
+        same("entryM owner", entryM.owner(), "manual");
+        same("entryM role", entryM.role(), "custom");
+        same("entryM tag", entryM.tag(), "[M]");
     }
 }
