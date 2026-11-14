@@ -611,6 +611,45 @@ def test_fill_water_deep(t):
     return "filled 5x5x6 deep pool (150 cells, %d dirt used)" % used
 
 
+def test_fill_water_shaft(t):
+    """fill_water("dirt") in a 1x1x6 shaft: bot must dive and pillar up in a single trip."""
+    reset_area(t)
+    shaft_box = (105, -62, 101, 105, -57, 101)
+    t.cmd("/fill 103 -63 99 107 -57 103 stone",
+          "/fill 105 -62 101 105 -57 101 water",
+          "/fill 103 -56 99 107 -45 103 air",
+          "/give @s dirt 64",
+          "/tp @s 104 -56 101 90 0")
+    time.sleep(1)
+    init_layers = layers(t, [shaft_box])
+    wet_count = sum(init_layers["water"])
+    if wet_count != 6:
+        raise Fail("shaft setup failed: %d of 6 cells hold water" % wet_count)
+    dirt0 = t.count("dirt")
+    t.run("fill-water-shaft.txt")
+    end = time.time() + 120
+    done_at = None
+    while time.time() < end:
+        if not t.b("script")["running"]:
+            done_at = time.time()
+            break
+        time.sleep(0.5)
+    if done_at is None:
+        t.b("stopscript")
+        still = sum(layers(t, [shaft_box])["water"])
+        raise Fail("fill_water_shaft did not finish within 120 s; still wet: %d cells" % still)
+    final_water = sum(layers(t, [shaft_box])["water"])
+    msg = next((l for l in t.lines() if "TEST fill_water_shaft" in l), None)
+    if final_water > 0:
+        raise Fail("cells still wet: %d cells hold water (%s)" % (final_water, msg))
+    if not msg or "left=0" not in msg:
+        raise Fail("script did not report left=0: %s" % msg)
+    used = dirt0 - t.count("dirt")
+    if used < 6:
+        raise Fail("not enough dirt was used: %d used, expected at least 6" % used)
+    return "filled 1x1x6 shaft (%d dirt used)" % used
+
+
 def test_eat(t):
     """on food < 14 ... eat() fires and eats bread."""
     reset_area(t)
@@ -2042,7 +2081,7 @@ def _forest(group):
 TREE_TESTS = [("trees_small", test_trees_small)] + [("trees_forest_" + g, _forest(g)) for g in FOREST_GROUPS]
 
 
-TESTS = [("smoke", test_smoke), ("imgui_spike", test_imgui_spike), ("viewport", test_viewport), ("docked_shell", test_docked_shell), ("panels", test_panels), ("fill_water", test_fill_water), ("fill_water_deep", test_fill_water_deep), ("eat", test_eat), ("defend", test_defend), ("clear_resume", test_clear_resume), ("dump", test_dump), ("chest_index", test_chest_index), ("hotbar_tools", test_hotbar_tools), ("air", test_air), ("clear_wet", test_clear_wet),
+TESTS = [("smoke", test_smoke), ("imgui_spike", test_imgui_spike), ("viewport", test_viewport), ("docked_shell", test_docked_shell), ("panels", test_panels), ("fill_water", test_fill_water), ("fill_water_deep", test_fill_water_deep), ("fill_water_shaft", test_fill_water_shaft), ("eat", test_eat), ("defend", test_defend), ("clear_resume", test_clear_resume), ("dump", test_dump), ("chest_index", test_chest_index), ("hotbar_tools", test_hotbar_tools), ("air", test_air), ("clear_wet", test_clear_wet),
          ("schem_list", test_schem_list), ("schem_add", test_schem_add), ("schem_fix", test_schem_fix), ("schem_fix_wrong", test_schem_fix_wrong), ("schem_exact", test_schem_exact),
          ("colossal_schem", test_colossal_schem)]
 

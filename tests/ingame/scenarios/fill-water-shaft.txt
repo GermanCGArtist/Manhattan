@@ -1,0 +1,6 @@
+// fill_water_shaft: a 1x1 shaft, 6 deep (y -62..-57), set up by run_tests.py at x 105, z 101
+#sel clear
+#sel pos1 105 -62 101
+#sel pos2 105 -57 101
+let left = fill_water("dirt")
+print("TEST fill_water_shaft left={left}")

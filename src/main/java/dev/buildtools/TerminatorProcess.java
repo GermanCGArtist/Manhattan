@@ -61,7 +61,7 @@ final class TerminatorProcess extends Feature {
     private static final int SWIM_STUCK = 20 * 4;
     private static final int DIVE_TIMEOUT = 20 * 25;
 
-    private enum State { WORK, WALK, SWIM, SINK, UNDER, RISE }
+    private enum State { WORK, WALK, SWIM, SINK, UNDER, PILLAR, RISE }
 
     private boolean working;
     private Item preferred;
@@ -84,6 +84,7 @@ final class TerminatorProcess extends Feature {
     private String lastReason = "";
     private boolean ranOut;
     private Boolean breakBefore;   // the player's own allowBreak, given back at the end
+    private Boolean placeBefore;   // the player's own allowPlace, given back at the end
 
     private void setState(State next) {
         if (state != next) {
@@ -161,6 +162,7 @@ final class TerminatorProcess extends Feature {
         ranOut = false;
         lastHeartbeatTick = 0;
         breakBefore = RegionRules.setOwnBreak(false);
+        placeBefore = RegionRules.setOwnPlace(false);
         working = true;
         warnWaterBelow(mc.level);
         Util.msg("Filling the water from the bottom up" + (item != null ? " with " + BuiltInRegistries.ITEM.getKey(item).getPath() : "")
@@ -172,6 +174,10 @@ final class TerminatorProcess extends Feature {
         if (breakBefore != null) {
             RegionRules.setOwnBreak(breakBefore);
             breakBefore = null;
+        }
+        if (placeBefore != null) {
+            RegionRules.setOwnPlace(placeBefore);
+            placeBefore = null;
         }
     }
 
@@ -549,7 +555,7 @@ final class TerminatorProcess extends Feature {
             return;
         }
         // under water without a plan (after an interruption, or a dive that went wrong): come up first
-        if (p.isUnderWater() && state != State.SINK && state != State.UNDER && state != State.RISE) {
+        if (p.isUnderWater() && state != State.SINK && state != State.UNDER && state != State.PILLAR && state != State.RISE) {
             if (state == State.WALK) {
                 EngineSelector.current().cancel();
                 if (goal != null) {
@@ -597,11 +603,20 @@ final class TerminatorProcess extends Feature {
             case RISE -> { rise(p, level); return; }
             case SWIM -> { swim(mc, p, level); return; }
             case SINK -> { sink(mc, p, level); return; }
+            case PILLAR -> { pillar(mc, p, level); return; }
             case UNDER -> {
                 if (stateTicks > DIVE_TIMEOUT) { markBadDive(diveSpot); setState(State.RISE); stateTicks = 0; return; }
                 holdPosition(p);
                 BlockPos t = findInReach(mc, p, level);
                 if (t != null) { begin(mc, p, level, t); return; }
+                BlockPos feet = p.blockPosition();
+                if (!falling && p.getAirSupply() >= AIR_LOW && surfaceAbove(level, feet) != null
+                        && (fillable(level, feet.below()) || fillable(level, feet) || fillable(level, feet.above()))) {
+                    setState(State.PILLAR);
+                    stateTicks = 0;
+                    hold(false, true, false);
+                    return;
+                }
                 if (placed == placedAtDive && diveSpot != null) markBadDive(diveSpot);
                 setState(State.RISE);
                 stateTicks = 0;
@@ -784,8 +799,12 @@ final class TerminatorProcess extends Feature {
         breaking = null;
     }
 
-    /** Under water: stay put (sneak keeps it on the bottom), else nothing held. */
+    /** Under water: stay put (sneak keeps it on the bottom), or swim straight up while pillaring. */
     private void holdPosition(LocalPlayer p) {
+        if (state == State.PILLAR) {
+            hold(false, true, false);
+            return;
+        }
         if (state != State.UNDER || diveSpot == null) { releaseKeys(); return; }
         // stay over the spot: sneak sinks, jump rises; do not touch yaw while Placer/breaking is aiming
         double dx = (diveSpot.getX() + 0.5) - p.getX();
@@ -875,8 +894,35 @@ final class TerminatorProcess extends Feature {
             return;
         }
         // over the middle of the hole first; sneaking on a ledge would keep it from slipping in
-        boolean centered = dist < 0.3;
-        hold(!centered && aligned, false, centered || !p.onGround());
+        boolean centered = dist < 0.15;
+        hold(!centered && aligned, false, !p.onGround());
+    }
+
+    /** Swims straight up a column while placing blocks underneath, filling a 1x1 shaft or final column in one trip. */
+    private void pillar(Minecraft mc, LocalPlayer p, Level level) {
+        BlockPos feet = p.blockPosition();
+        if (!p.isInWater()) {
+            setState(State.WORK);
+            diveSpot = null;
+            releaseKeys();
+            return;
+        }
+        if (p.getAirSupply() < AIR_LOW || ++stateTicks > DIVE_TIMEOUT || surfaceAbove(level, feet) == null) {
+            setState(State.RISE);
+            stateTicks = 0;
+            return;
+        }
+        boolean anyFillable = fillable(level, feet.below()) || fillable(level, feet) || fillable(level, feet.above());
+        if (!anyFillable) {
+            setState(State.RISE);
+            stateTicks = 0;
+            return;
+        }
+        hold(false, true, false);
+        BlockPos below = feet.below();
+        if (p.getY() >= feet.getY() && fillable(level, below)) {
+            begin(mc, p, level, below);
+        }
     }
 
     /** Up to the surface for air (and to go on from there): into a column with open water above, digging if need be. */
