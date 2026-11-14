@@ -58,6 +58,7 @@ end
 // --- 1. expand metro_trench_02 outward by 1 block on all 4 horizontal sides and fill water with dirt
 job "fill_water_metro_trench_02"
   set("allowPlace", false)   // don't bridge over water while filling
+  set("allowBreak", false)   // don't break terrain while filling
   area("metro_trench_02")
   let boxes = selection()
   clear_selection()
@@ -89,6 +90,7 @@ end
 // --- 2. mine metro_trench_02 top-down (exact selection, no inset)
 job "mine_metro_trench_02"
   set("allowPlace", true)
+  set("allowBreak", true)
   area("metro_trench_02")
   let blocks_left = clear_area()
   if blocks_left > 0 then

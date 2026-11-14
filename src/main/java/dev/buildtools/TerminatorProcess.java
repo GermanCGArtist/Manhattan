@@ -160,6 +160,7 @@ final class TerminatorProcess extends Feature {
         lastReason = "";
         ranOut = false;
         lastHeartbeatTick = 0;
+        breakBefore = RegionRules.setOwnBreak(false);
         working = true;
         warnWaterBelow(mc.level);
         Util.msg("Filling the water from the bottom up" + (item != null ? " with " + BuiltInRegistries.ITEM.getKey(item).getPath() : "")
@@ -167,24 +168,15 @@ final class TerminatorProcess extends Feature {
         return null;
     }
 
-    /**
-     * Baritone may dig only when a walk needs it: with digging allowed every path search weighs breaking through every
-     * block, which makes searches many times bigger and slower.
-     */
-    private void allowDigging(boolean on) {
-        if (on && breakBefore == null) breakBefore = RegionRules.setOwnBreak(true);
-        else if (!on && breakBefore != null) {
+    private void giveBackBreak() {
+        if (breakBefore != null) {
             RegionRules.setOwnBreak(breakBefore);
             breakBefore = null;
         }
     }
 
-    private void giveBackBreak() {
-        allowDigging(false);
-    }
-
-    // walking: the goal, whether it needs digging, and whether we are getting closer
-    private boolean digging, triedNear;
+    // walking: the goal, and whether we are getting closer
+    private boolean triedNear, triedExact;
     private double bestGoalDist;
     private int noProgress;
 
@@ -194,16 +186,14 @@ final class TerminatorProcess extends Feature {
         walkTicks = 0;
         noProgress = 0;
         bestGoalDist = Double.MAX_VALUE;
-        digging = !level.getBlockState(to).getCollisionShape(level, to).isEmpty()
-                || !level.getBlockState(to.above()).getCollisionShape(level, to.above()).isEmpty();
-        allowDigging(digging);
-        boolean useLoS = !digging && diveSpot == null && walkTarget != null;
+        boolean useLoS = diveSpot == null && walkTarget != null;
         triedNear = !useLoS;
+        triedExact = false;
         GoalSpec spec = useLoS
                 ? GoalSpec.lineOfSight(walkTarget, 4.5)
-                : (digging ? GoalSpec.exact(to) : GoalSpec.near(to, 1));
-        LOGGER.info("[Terminator] startWalk: to={} digging={} useLoS={} walkTarget={} goal={}",
-                to.toShortString(), digging, useLoS,
+                : GoalSpec.near(to, 1);
+        LOGGER.info("[Terminator] startWalk: to={} useLoS={} walkTarget={} goal={}",
+                to.toShortString(), useLoS,
                 (walkTarget == null ? "none" : walkTarget.toShortString()),
                 to.toShortString());
         EngineSelector.current().goTo(spec);
@@ -393,44 +383,14 @@ final class TerminatorProcess extends Feature {
 
     private record Plan(BlockPos target, BlockPos stand, boolean dive) {}
 
-    /** A block Baritone may dig away to make room: soft enough, not protected, not on its do-not-break list, no water next to it. */
-    private boolean diggable(Level level, BlockPos c) {
-        if (inSelection(c) || protectedAt(c)) return false;
-        BlockState s = level.getBlockState(c);
-        if (!s.getFluidState().isEmpty()) return false;
-        if (!s.isAir()) {
-            float hard = s.getDestroySpeed(level, c);
-            if (hard < 0 || hard > 3.0f) return false;
-        }
-        for (Direction d : Direction.values()) {
-            if (d == Direction.DOWN) continue;
-            if (!level.getBlockState(c.relative(d)).getFluidState().isEmpty()) return false;   // digging there lets water in
-        }
-        return true;
-    }
-
     private static boolean protectedAt(BlockPos c) {
         if (!cfg.protect) return false;
         for (Config.Zone z : cfg.zones) if (z.contains(c)) return true;
         return false;
     }
 
-    /** A spot that becomes a stand once the blocks in it are dug away (never next to water, never in the selection). */
-    private boolean digStand(Level level, BlockPos c) {
-        if (!Util.isSolid(level, c.below())) return false;
-        boolean feetSolid = !level.getBlockState(c).getCollisionShape(level, c).isEmpty();
-        boolean headSolid = !level.getBlockState(c.above()).getCollisionShape(level, c.above()).isEmpty();
-        if (!feetSolid && !headSolid) return false;   // nothing to dig: a normal stand or nothing
-        return diggable(level, c) && diggable(level, c.above());
-    }
-
-    /** A dry (or wading) spot from which the cell is in reach (or one that can be dug out), or null. */
+    /** A dry (or wading) spot from which the cell is in reach, or null. */
     private BlockPos standFor(Level level, BlockPos t) {
-        BlockPos best = standFor(level, t, false);
-        return best != null ? best : standFor(level, t, true);
-    }
-
-    private BlockPos standFor(Level level, BlockPos t, boolean dig) {
         BlockPos best = null;
         double bestD = Double.MAX_VALUE;
         for (int dx = -4; dx <= 4; dx++) {
@@ -439,9 +399,9 @@ final class TerminatorProcess extends Feature {
                     BlockPos s = t.offset(dx, dy, dz);
                     if (s.equals(t) || s.equals(t.above()) || badStand.contains(s) || !level.hasChunkAt(s)) continue;
                     double d = eyeAt(s).distanceTo(Vec3.atCenterOf(t));
-                    if (d > REACH + 0.5 || d >= bestD || !(dig ? digStand(level, s) : stand(level, s))) continue;
+                    if (d > REACH + 0.5 || d >= bestD || !stand(level, s)) continue;
                     // only where a face to click is really visible from there (else it walks there for nothing)
-                    if (!dig && !breakable(level, t) && !Placer.placeableFrom(level, Minecraft.getInstance().player, eyeAt(s), t)) continue;
+                    if (!breakable(level, t) && !Placer.placeableFrom(level, Minecraft.getInstance().player, eyeAt(s), t)) continue;
                     best = s;
                     bestD = d;
                 }
@@ -640,6 +600,15 @@ final class TerminatorProcess extends Feature {
             double dist = Math.sqrt(p.blockPosition().distSqr(goal));
             if (dist < bestGoalDist - 1) { bestGoalDist = dist; noProgress = 0; }
             else noProgress++;
+
+            if (arrived && diveSpot != null) {
+                EngineSelector.current().cancel();
+                setState(State.SWIM);
+                stateTicks = 0;
+                stuckTicks = 0;
+                lastDist = Double.MAX_VALUE;
+                return;
+            }
             if (!arrived && (engFailed || noProgress > 20 * 15) && !triedNear) {
                 triedNear = true;
                 noProgress = 0;
@@ -647,23 +616,16 @@ final class TerminatorProcess extends Feature {
                 EngineSelector.current().goTo(GoalSpec.near(goal, 1));
                 return;
             }
-            if (!arrived && (engFailed || noProgress > 20 * 15) && !digging) {
-                digging = true;
+            if ((engFailed || arrived || noProgress > 20 * 15) && !triedExact) {
+                triedExact = true;
+                triedNear = true;
                 noProgress = 0;
-                allowDigging(true);
-                LOGGER.info("[Terminator] WALK retry digging: goal={} engStatus={}", goal.toShortString(), engStatus);
+                LOGGER.info("[Terminator] WALK retry triedExact: goal={} engStatus={}", goal.toShortString(), engStatus);
                 EngineSelector.current().goTo(GoalSpec.exact(goal));
                 return;
             }
             if (!arrived && !engFailed && noProgress <= 20 * 15 && ++walkTicks <= WALK_TIMEOUT * 6) return;
             EngineSelector.current().cancel();
-            if (arrived && diveSpot != null) {
-                setState(State.SWIM);
-                stateTicks = 0;
-                stuckTicks = 0;
-                lastDist = Double.MAX_VALUE;
-                return;
-            }
             markBadStand(goal);
             if (!arrived && diveSpot != null) {
                 markBadDive(diveSpot);
@@ -671,7 +633,6 @@ final class TerminatorProcess extends Feature {
             }
             if (walkTarget != null) failures.merge(walkTarget, arrived ? 1 : 3, Integer::sum);
             goal = null;
-            allowDigging(false);
         }
 
         if (++fruitless > MAX_FRUITLESS) { finish(level, null); return; }
@@ -775,7 +736,6 @@ final class TerminatorProcess extends Feature {
             EngineSelector.current().cancel();
             setState(State.WORK);
         }
-        allowDigging(false);
         goal = null;
         if (breakable(level, t)) {
             breaking = t;
