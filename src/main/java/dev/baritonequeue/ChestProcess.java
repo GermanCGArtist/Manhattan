@@ -1,9 +1,8 @@
 package dev.baritonequeue;
 
-import baritone.api.pathing.goals.GoalNear;
-import baritone.api.process.IBaritoneProcess;
-import baritone.api.process.PathingCommand;
-import baritone.api.process.PathingCommandType;
+import dev.midtown.api.EngineSelector;
+import dev.midtown.api.EngineStatus;
+import dev.midtown.api.GoalSpec;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -35,7 +34,7 @@ import java.util.Map;
  * Does one chest line of the script: walks to the chest, opens it and moves the items with shift-clicks (whole
  * stacks), then closes it. The queue waits until working() is false and then reads failure().
  */
-final class ChestProcess implements IBaritoneProcess {
+final class ChestProcess {
     private enum State { IDLE, PATHING, OPENING, TRANSFER }
 
     private static final int PATH_TIMEOUT = 20 * 180;
@@ -86,8 +85,14 @@ final class ChestProcess implements IBaritoneProcess {
         return true;
     }
 
+    private boolean pathingStarted;
+
     void cancel() {
         if (state == State.IDLE) return;
+        if (pathingStarted) {
+            EngineSelector.current().cancel();
+            pathingStarted = false;
+        }
         Minecraft mc = Minecraft.getInstance();
         closeAndNote(mc);
         state = State.IDLE;
@@ -106,77 +111,89 @@ final class ChestProcess implements IBaritoneProcess {
         dev.survivalkit.Api.saveChestIndex();
     }
 
-    // ------------------------------------------------------------------ Baritone process
-
-    @Override
-    public boolean isActive() {
-        if (state != State.IDLE && PauseWatch.paused) { cancel(); return false; }
-        if (state != State.IDLE && Minecraft.getInstance().player == null) { state = State.IDLE; dev.survivalkit.Api.chestBusy(false); }
-        return state != State.IDLE;
-    }
-
-    @Override
-    public PathingCommand onTick(boolean calcFailed, boolean isSafeToCancel) {
+    void tick() {
+        if (state == State.IDLE) return;
+        if (PauseWatch.paused) { cancel(); return; }
+        if (Minecraft.getInstance().player == null) {
+            if (pathingStarted) {
+                EngineSelector.current().cancel();
+                pathingStarted = false;
+            }
+            state = State.IDLE;
+            dev.survivalkit.Api.chestBusy(false);
+            return;
+        }
         try {
-            return step(calcFailed);
+            step();
         } catch (Throwable t) {
             t.printStackTrace();
-            return fail("The chest step hit an error (" + t + "). Details are in the game log.");
+            fail("The chest step hit an error (" + t + "). Details are in the game log.");
         }
     }
 
-    private static PathingCommand pause() {
-        return new PathingCommand(null, PathingCommandType.REQUEST_PAUSE);
-    }
-
-    private PathingCommand fail(String why) {
+    private void fail(String why) {
         failure = why;
+        if (pathingStarted) {
+            EngineSelector.current().cancel();
+            pathingStarted = false;
+        }
         Minecraft mc = Minecraft.getInstance();
         closeAndNote(mc);
         state = State.IDLE;
         todo = null;
-        return pause();
     }
 
-    private PathingCommand finish(String text) {
+    private void finish(String text) {
         Util.msg(text);
+        if (pathingStarted) {
+            EngineSelector.current().cancel();
+            pathingStarted = false;
+        }
         Minecraft mc = Minecraft.getInstance();
         closeAndNote(mc);
         state = State.IDLE;
         todo = null;
-        return pause();
     }
 
     private static boolean isStorage(Block b) {
         return b instanceof ChestBlock || b instanceof BarrelBlock || b instanceof ShulkerBoxBlock;
     }
 
-    private PathingCommand step(boolean calcFailed) {
+    private void step() {
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer p = mc.player;
-        if (p == null || mc.gameMode == null || mc.level == null) { state = State.IDLE; dev.survivalkit.Api.chestBusy(false); return pause(); }
+        if (p == null || mc.gameMode == null || mc.level == null) { state = State.IDLE; dev.survivalkit.Api.chestBusy(false); return; }
 
         switch (state) {
             case PATHING -> {
-                if (++timer > PATH_TIMEOUT) return fail("Could not reach the chest " + op.chest + " in time.");
-                if (calcFailed) return fail("Baritone found no path to the chest " + op.chest + ".");
-                GoalNear goal = new GoalNear(chest, 3);
-                if (goal.isInGoal(p.blockPosition())) {
+                if (!pathingStarted) {
+                    EngineSelector.current().goTo(GoalSpec.near(chest, 3));
+                    pathingStarted = true;
+                }
+                EngineStatus st = EngineSelector.current().status();
+                if (p.blockPosition().distSqr(chest) <= 9 || st == EngineStatus.DONE) {
+                    EngineSelector.current().cancel();
+                    pathingStarted = false;
                     state = State.OPENING;
                     timer = 0;
-                    return pause();
+                    return;
                 }
-                return new PathingCommand(goal, PathingCommandType.SET_GOAL_AND_PATH);
+                if (st == EngineStatus.FAILED) {
+                    fail("Could not find a path to the chest " + op.chest + ".");
+                    return;
+                }
+                if (++timer > PATH_TIMEOUT) fail("Could not reach the chest " + op.chest + " in time.");
             }
             case OPENING -> {
                 if (!isStorage(mc.level.getBlockState(chest).getBlock())) {
                     dev.survivalkit.Api.forgetChest(chest);   // not a chest any more: out of the index
-                    return fail("There is no chest, barrel or shulker box at " + chest.toShortString() + ". Is the position right?");
+                    fail("There is no chest, barrel or shulker box at " + chest.toShortString() + ". Is the position right?");
+                    return;
                 }
                 if (p.containerMenu != p.inventoryMenu) {
                     state = State.TRANSFER;
                     timer = 0;
-                    return pause();
+                    return;
                 }
                 if (timer == 1) Util.readyToOpen(p);   // never place a block on top of it or pour a bucket
                 if (timer == 4) {   // let the player come to a stop first
@@ -184,8 +201,7 @@ final class ChestProcess implements IBaritoneProcess {
                     BlockHitResult hit = new BlockHitResult(Vec3.atCenterOf(chest), Direction.UP, chest, false);
                     mc.gameMode.useItemOn(p, InteractionHand.MAIN_HAND, hit);
                 }
-                if (++timer > OPEN_TIMEOUT) return fail("Could not open the chest " + op.chest + "." + Util.blockedText(mc.level, chest));
-                return pause();
+                if (++timer > OPEN_TIMEOUT) fail("Could not open the chest " + op.chest + "." + Util.blockedText(mc.level, chest));
             }
             case TRANSFER -> {
                 AbstractContainerMenu h = p.containerMenu;
@@ -193,24 +209,25 @@ final class ChestProcess implements IBaritoneProcess {
                     if (todo == null && ++reopen <= 3) {   // closed before we did anything: open it again
                         state = State.OPENING;
                         timer = 0;
-                        return pause();
+                        return;
                     }
-                    return fail("The chest closed unexpectedly.");
+                    fail("The chest closed unexpectedly.");
+                    return;
                 }
                 if (todo == null) {
-                    if (++timer < 8) return pause();   // on a server the contents can arrive a moment after it opens
+                    if (++timer < 8) return;   // on a server the contents can arrive a moment after it opens
                     planned = true;
                     dev.survivalkit.Api.noteOpenChest(chest);   // every look into a chest updates the index
                     String problem = plan(p, h);
-                    if (problem != null) return fail(problem);
-                    if (todo.isEmpty()) return finish(noItem ? "No " + ChestOp.name(op.item) + " in " + op.chest + "." : nothingToDo());
+                    if (problem != null) { fail(problem); return; }
+                    if (todo.isEmpty()) { finish(noItem ? "No " + ChestOp.name(op.item) + " in " + op.chest + "." : nothingToDo()); return; }
                 }
-                if (++timer % 2 != 0) return pause();   // one click every 2 ticks
+                if (++timer % 2 != 0) return;   // one click every 2 ticks
                 Integer index = todo.poll();
-                if (index == null) return finish(summary());
+                if (index == null) { finish(summary()); return; }
                 Slot s = h.slots.get(index);
                 int before = s.getItem().getCount();
-                if (before == 0) return pause();
+                if (before == 0) return;
                 int still = needed == Integer.MAX_VALUE ? Integer.MAX_VALUE : needed - moved;
                 if (op.kind == ChestOp.Kind.GET && still > 0 && still < before) {
                     // take exactly what is still needed: all of the stack onto the cursor, one into an empty
@@ -219,13 +236,13 @@ final class ChestProcess implements IBaritoneProcess {
                     for (Slot sl : h.slots) {
                         if (sl.container == p.getInventory() && sl.getItem().isEmpty()) { target = sl; break; }
                     }
-                    if (target == null) return fail("No free slot in the inventory for " + still + " of " + before + " in the chest.");
+                    if (target == null) { fail("No free slot in the inventory for " + still + " of " + before + " in the chest."); return; }
                     mc.gameMode.handleContainerInput(h.containerId, s.index, 0, ContainerInput.PICKUP, p);
                     for (int k = 0; k < still; k++) mc.gameMode.handleContainerInput(h.containerId, target.index, 1, ContainerInput.PICKUP, p);
                     mc.gameMode.handleContainerInput(h.containerId, s.index, 0, ContainerInput.PICKUP, p);
                     moved += still;
                     todo.clear();
-                    return pause();
+                    return;
                 }
                 mc.gameMode.handleContainerInput(h.containerId, s.index, 0, ContainerInput.QUICK_MOVE, p);
                 int delta = before - s.getItem().getCount();   // the client already applied the move
@@ -236,11 +253,8 @@ final class ChestProcess implements IBaritoneProcess {
                     moved += delta;
                     if (op.kind != ChestOp.Kind.DUMP && needed != Integer.MAX_VALUE && moved >= needed) todo.clear();
                 }
-                return pause();
             }
-            default -> {
-                return pause();
-            }
+            default -> {}
         }
     }
 
@@ -441,25 +455,5 @@ final class ChestProcess implements IBaritoneProcess {
                 return "Put " + moved + " " + what + " into '" + op.chest + "'.";
             }
         }
-    }
-
-    @Override
-    public boolean isTemporary() {
-        return true;
-    }
-
-    @Override
-    public void onLostControl() {
-        // other processes (eating, sleeping) take over now and then; the step carries on afterwards
-    }
-
-    @Override
-    public double priority() {
-        return 12;
-    }
-
-    @Override
-    public String displayName0() {
-        return "Queue chest";
     }
 }

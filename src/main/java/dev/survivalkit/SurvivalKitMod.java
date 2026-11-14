@@ -41,8 +41,6 @@ public class SurvivalKitMod implements ClientModInitializer {
     static final Recovery recovery = new Recovery();
     static final Reconnect reconnectTask = new Reconnect();
 
-    private boolean registered = false;
-
     @Override
     public void onInitializeClient() {
         Config.load();
@@ -178,15 +176,6 @@ public class SurvivalKitMod implements ClientModInitializer {
     private void tick(Minecraft mc) {
         reconnectTask.tick(mc);
         if (mc.player == null) return;
-        if (!registered) {
-            var control = Util.baritone().getPathingControlManager();
-            control.registerProcess(eat);
-            control.registerProcess(defence);
-            control.registerProcess(sleep);
-            control.registerProcess(restock);
-            PauseWatch.register(Util.baritone());
-            registered = true;
-        }
         respawnTick(mc);
         Session.tick(mc, mc.player);
         // the queue waits for a "/survival restock now" line while this is set
@@ -199,6 +188,8 @@ public class SurvivalKitMod implements ClientModInitializer {
             Util.warn("paused", "The game is paused (pause menu in a singleplayer world), so nothing can happen. Close the menu.");
         }
         try {
+            eat.tick();
+            defence.tick();
             sleep.tick();
             restock.tick();
         } catch (Throwable t) {

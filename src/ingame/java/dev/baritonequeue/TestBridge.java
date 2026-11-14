@@ -48,6 +48,11 @@ public class TestBridge implements ClientModInitializer {
     private static GuiMessage lastHead;
     private static Field allMessages;
 
+    private static final String BENCHMARK = System.getProperty("manhattan.benchmark");
+    private enum BenchState { IDLE, OPENING_WORLD, WAIT_IN_WORLD, SETUP, RUNNING, DONE }
+    private static BenchState benchState = BenchState.IDLE;
+    private static int benchTicks = 0;
+
     @Override
     public void onInitializeClient() {
         int port = Integer.getInteger("manhattan.testbridge.port", 25599);
@@ -65,6 +70,9 @@ public class TestBridge implements ClientModInitializer {
         if (mc.screen instanceof PauseScreen && mc.level != null) mc.setScreen(null);
         // a test game never keeps the user's mouse: let go whenever the game grabbed it (this jar exists only in test profiles)
         if (mc.mouseHandler.isMouseGrabbed()) mc.mouseHandler.releaseMouse();
+        if (BENCHMARK != null && !BENCHMARK.isBlank()) {
+            tickBenchmark(mc);
+        }
     }
 
     /** Copies every new chat line (also the client-only ones mods print) into {@link #chat}. */
@@ -588,6 +596,214 @@ public class TestBridge implements ClientModInitializer {
                 + ",\"logFiltered\":" + LogBuffer.entries(lf).size()
                 + ",\"selectedLogCount\":" + DockedPanels.selectedLogCount()
                 + ",\"lastCopiedLog\":" + q(DockedPanels.lastCopiedLog()));
+    }
+
+    private static void tickBenchmark(Minecraft mc) {
+        benchTicks++;
+        switch (benchState) {
+            case IDLE -> {
+                if (mc.level == null && mc.screen instanceof TitleScreen && benchTicks >= 10) {
+                    System.out.println("[testbridge] benchmark bootstrap: opening world for scenario=" + BENCHMARK);
+                    openWorld(mc, "manhattan-benchmark", 20261109L);
+                    benchState = BenchState.OPENING_WORLD;
+                    benchTicks = 0;
+                }
+            }
+            case OPENING_WORLD -> {
+                if (mc.level != null && mc.player != null && mc.getSingleplayerServer() != null) {
+                    mc.player.connection.sendCommand("tp @s 100 -60 100 0 0");
+                    mc.player.connection.sendCommand("forceload add 90 90 190 110");
+                    benchState = BenchState.WAIT_IN_WORLD;
+                    benchTicks = 0;
+                }
+            }
+            case WAIT_IN_WORLD -> {
+                if (benchTicks >= 30) {
+                    if (mc.screen != null) mc.setScreen(null);
+                    setupBenchmarkScenario(mc, BENCHMARK.trim());
+                    benchState = BenchState.SETUP;
+                    benchTicks = 0;
+                }
+            }
+            case SETUP -> {
+                String scenario = BENCHMARK.trim();
+                if (benchTicks >= 40 && (setupSynced(mc, scenario) || benchTicks >= 100)) {
+                    List<String> script = benchmarkScript(scenario);
+                    if (script == null) {
+                        System.out.println("[testbridge] unknown benchmark scenario: " + BENCHMARK);
+                        dev.midtown.api.BenchmarkLogger.emit(
+                                dev.midtown.api.EngineSelector.selectedName(), BENCHMARK, false, 0, 0, 0, 0, 0);
+                        benchState = BenchState.DONE;
+                        benchTicks = 0;
+                        return;
+                    }
+                    String err = QueueMod.runner.start(script);
+                    if (err != null) {
+                        System.out.println("[testbridge] benchmark script failed to start: " + err);
+                        dev.midtown.api.BenchmarkLogger.emit(
+                                dev.midtown.api.EngineSelector.selectedName(), BENCHMARK, false, 0, 0, 0, 0, 0);
+                        benchState = BenchState.DONE;
+                        benchTicks = 0;
+                        return;
+                    }
+                    benchState = BenchState.RUNNING;
+                    benchTicks = 0;
+                }
+            }
+            case RUNNING -> {
+                if (!QueueMod.runner.running()) {
+                    // Runner.emitBenchmark(...) already emitted BENCHMARK_RESULT on script completion/failure
+                    benchState = BenchState.DONE;
+                    benchTicks = 0;
+                } else if (benchTicks >= 20 * 210) {
+                    QueueMod.runner.halt("Benchmark timeout");
+                    benchState = BenchState.DONE;
+                    benchTicks = 0;
+                }
+            }
+            case DONE -> {
+                if (benchTicks >= 5) {
+                    if (mc.level != null) mc.disconnectWithSavingScreen();
+                    mc.stop();
+                }
+            }
+        }
+    }
+
+    private static void setupBenchmarkScenario(Minecraft mc, String scenario) {
+        if (mc.player == null) return;
+        List<String> cmds = new ArrayList<>();
+        cmds.add("gamemode survival");
+        cmds.add("effect clear @s");
+        cmds.add("clear @s");
+        cmds.add("time set noon");
+        cmds.add("weather clear");
+        cmds.add("kill @e[type=!player]");
+        cmds.add("fill 90 -63 90 190 -62 110 dirt");
+        cmds.add("fill 90 -61 90 190 -61 110 grass_block");
+        cmds.add("fill 90 -60 90 190 -48 110 air");
+        switch (scenario) {
+            case "nav_flat_obstacle" -> {
+                cmds.add("fill 115 -60 95 115 -59 105 stone");
+                cmds.add("fill 130 -62 96 132 -61 104 air");
+                cmds.add("fill 145 -61 96 145 -61 104 water");
+                cmds.add("fill 160 -61 98 162 -61 102 lava");
+            }
+            case "nav_pillar_bridge" -> {
+                cmds.add("fill 105 -63 96 124 -61 104 air");
+                cmds.add("fill 128 -60 100 128 -55 100 stone");
+                cmds.add("give @s cobblestone 128");
+            }
+            case "interrupt_mid_action" -> {
+                cmds.add("fill 104 -60 99 108 -59 101 stone");
+                cmds.add("give @s diamond_pickaxe 1");
+                cmds.add("give @s diamond_sword 1");
+                cmds.add("give @s bread 16");
+                cmds.add("effect give @s hunger 5 40");
+                cmds.add("summon minecraft:zombie 103 -60 104");
+            }
+            case "water_fill_tight" -> {
+                cmds.add("fill 103 -62 99 107 -61 101 water");
+                cmds.add("setblock 98 -60 100 chest");
+                cmds.add("data merge block 98 -60 100 {Items:[{Slot:0b,id:\"minecraft:dirt\",count:64}]}");
+                cmds.add("give @s dirt 16");
+            }
+            case "schem_unsupported_reach" -> {
+                cmds.add("fill 104 -59 99 106 -57 101 stone");
+                cmds.add("give @s diamond_pickaxe 1");
+                cmds.add("give @s cobblestone 64");
+            }
+            case "survival_marathon" -> {
+                cmds.add("fill 104 -60 98 107 -59 102 stone");
+                cmds.add("setblock 98 -60 100 chest");
+                cmds.add("data merge block 98 -60 100 {Items:[{Slot:0b,id:\"minecraft:bread\",count:32},{Slot:1b,id:\"minecraft:diamond_pickaxe\",count:1}]}");
+                cmds.add("setblock 98 -60 102 red_bed");
+                cmds.add("give @s diamond_pickaxe 1");
+                cmds.add("give @s diamond_sword 1");
+                cmds.add("give @s bread 16");
+                cmds.add("summon minecraft:zombie 110 -60 100");
+            }
+            default -> { }
+        }
+        cmds.add("tp @s 100 -60 100 0 0");
+        for (String c : cmds) {
+            mc.player.connection.sendCommand(c);
+        }
+    }
+
+    private static boolean setupSynced(Minecraft mc, String scenario) {
+        if (mc.level == null) return false;
+        return switch (scenario) {
+            case "survival_marathon", "water_fill_tight" ->
+                    mc.level.getBlockState(new BlockPos(98, -60, 100)).is(net.minecraft.world.level.block.Blocks.CHEST);
+            case "nav_flat_obstacle" ->
+                    mc.level.getBlockState(new BlockPos(115, -60, 100)).is(net.minecraft.world.level.block.Blocks.STONE);
+            case "nav_pillar_bridge" ->
+                    mc.level.getBlockState(new BlockPos(128, -55, 100)).is(net.minecraft.world.level.block.Blocks.STONE);
+            case "interrupt_mid_action" ->
+                    mc.level.getBlockState(new BlockPos(104, -60, 99)).is(net.minecraft.world.level.block.Blocks.STONE);
+            case "schem_unsupported_reach" ->
+                    mc.level.getBlockState(new BlockPos(104, -59, 99)).is(net.minecraft.world.level.block.Blocks.STONE);
+            default -> true;
+        };
+    }
+
+    private static List<String> benchmarkScript(String scenario) {
+        return switch (scenario) {
+            case "nav_flat_obstacle" -> List.of(
+                    "timeout(180)",
+                    "disable()",
+                    "goto(pos(180, -60, 100))"
+            );
+            case "nav_pillar_bridge" -> List.of(
+                    "timeout(180)",
+                    "disable()",
+                    "goto(pos(128, -54, 100))"
+            );
+            case "interrupt_mid_action" -> List.of(
+                    "timeout(180)",
+                    "disable()",
+                    "on mobs_near(12) > 0",
+                    "  defend()",
+                    "end",
+                    "on food < 14",
+                    "  eat()",
+                    "end",
+                    "select(pos(104, -60, 99), pos(108, -59, 101))",
+                    "clear_area()",
+                    "goto(pos(100, -60, 100))"
+            );
+            case "water_fill_tight" -> List.of(
+                    "timeout(180)",
+                    "disable()",
+                    "select(pos(103, -62, 99), pos(107, -61, 101))",
+                    "fill_water(\"dirt\", pos(98, -60, 100))"
+            );
+            case "schem_unsupported_reach" -> List.of(
+                    "timeout(180)",
+                    "disable()",
+                    "goto(pos(105, -56, 100))",
+                    "select(pos(104, -59, 99), pos(106, -57, 101))",
+                    "clear_area()"
+            );
+            case "survival_marathon" -> List.of(
+                    "timeout(200)",
+                    "disable()",
+                    "option(\"survival.bed\", pos(98, -60, 102))",
+                    "option(\"survival.supply\", pos(98, -60, 100))",
+                    "on mobs_near(12) > 0",
+                    "  defend()",
+                    "end",
+                    "on food < 14",
+                    "  eat()",
+                    "end",
+                    "select(pos(104, -60, 98), pos(107, -59, 102))",
+                    "clear_area()",
+                    "dump(pos(98, -60, 100))",
+                    "goto(pos(100, -60, 100))"
+            );
+            default -> null;
+        };
     }
 
     /** Opens the world, or creates it first: a flat creative world with cheats, no structures. */

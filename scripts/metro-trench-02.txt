@@ -1,0 +1,109 @@
+// Metro trench 02: expand selection 1-block outward for fill_water, then mine exact selection.
+
+// --- places
+let bed            = pos(1870, 66, 1216)   // white_bed
+let tool_chest     = pos(1868, 71, 1217)   // supply: tools and food
+let return_chest   = pos(1866, 71, 1216)   // return: worn-out tools
+let dump_chest     = pos(1863, 72, 1211)   // dump: mined items
+let scaffold_chest = pos(1872, 71, 1211)   // dirt for fill_water
+
+// --- safe area
+protect("protect_1", pos(1859, 64, 1203), pos(1875, 75, 1219))
+
+// --- survival & Baritone options
+option("survival.bed", bed)
+option("survival.supply", tool_chest)
+option("survival.returnChest", return_chest)
+option("survival.respawn", true)
+option("survival.resume", true)
+option("survival.reconnect", true)
+option("survival.bedLead", 5)
+option("survival.eatBelow", 18)
+option("survival.logoffOnMissingBed", true)
+option("queue.logoffOnDone", true)
+option("queue.logoffOnError", true)
+
+enable("escape", "pickup")
+
+set("allowBreak", true)
+set("itemSaver", true)
+set("itemSaverThreshold", 50)
+
+// --- want-list (pulled from tool_chest by restock())
+want("diamond_pickaxe", 2)
+want("diamond_shovel", 1)
+want("diamond_sword", 1)
+want("food", 32)
+hotbar(9, "food")
+
+// --- reactive survival & inventory rules (highest priority first)
+on mobs > 0 and health >= 8
+  defend()
+end
+
+on food < 18 or (health < 16 and food < 20)
+  eat()
+end
+
+on bed_time
+  sleep()
+end
+
+on restock_needed
+  restock()
+  hotbar(9, "food")
+end
+
+on full
+  dump(dump_chest)
+end
+
+// --- 1. expand metro_trench_02 outward by 1 block on all 4 horizontal sides and fill water with dirt
+job "fill_water_metro_trench_02"
+  keep("dirt", 512)
+  set("allowPlace", false)   // don't bridge over water while filling
+  set("allowBreak", false)   // don't break terrain while filling
+  area("metro_trench_02")
+  let boxes = selection()
+  clear_selection()
+  let c1 = null
+  let c2 = null
+  let x0 = 0
+  let x1 = 0
+  let z0 = 0
+  let z1 = 0
+  let y0 = 0
+  let y1 = 0
+  for box in boxes
+    c1 = box[0]
+    c2 = box[1]
+    x0 = min(c1.x, c2.x) - 1
+    x1 = max(c1.x, c2.x) + 1
+    z0 = min(c1.z, c2.z) - 1
+    z1 = max(c1.z, c2.z) + 1
+    y0 = min(c1.y, c2.y)
+    y1 = max(c1.y, c2.y)
+    add_box(pos(x0, y0, z0), pos(x1, y1, z1))
+  end
+  let wet_left = fill_water("dirt", scaffold_chest)
+  if wet_left > 0 then
+    error("{wet_left} water cells could not be reached; aborting before mining.")
+  end
+end
+
+// --- 2. mine metro_trench_02 top-down (exact selection, no inset)
+job "mine_metro_trench_02"
+  keep("dirt", 0)
+  set("allowPlace", true)
+  set("allowBreak", true)
+  area("metro_trench_02")
+  let blocks_left = clear_area()
+  if blocks_left > 0 then
+    print("{blocks_left} blocks in metro_trench_02 could not be reached.")
+  end
+  collect_scaffold()
+  pickup()
+  dump(dump_chest)
+end
+
+print("metro_trench_02 complete.")

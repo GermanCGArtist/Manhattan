@@ -31,7 +31,7 @@ final class Lexer {
 
     static final Set<String> KEYWORDS = Set.of("let", "func", "function", "if", "then", "elif", "elseif", "else", "end",
             "while", "do", "for", "in", "repeat", "times", "loop", "break", "continue", "return", "and", "or", "not",
-            "true", "false", "null", "on", "try", "catch", "wait", "until");
+            "true", "false", "null", "on", "job", "try", "catch", "wait", "until");
 
     private static final String[] OPS = {"==", "!=", "<=", ">=", "+=", "-=", "*=", "/=", "&&", "||",
             "+", "-", "*", "/", "%", "<", ">", "=", "(", ")", "[", "]", "{", "}", ",", ".", ":", ";", "!"};

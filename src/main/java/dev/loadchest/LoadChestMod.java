@@ -1,15 +1,7 @@
 package dev.loadchest;
 
-import baritone.api.BaritoneAPI;
-import baritone.api.IBaritone;
-import baritone.api.pathing.goals.GoalNear;
-import baritone.api.event.events.BlockChangeEvent;
-import baritone.api.event.events.BlockInteractEvent;
-import baritone.api.event.listener.AbstractGameEventListener;
-import baritone.api.process.IBaritoneProcess;
-import baritone.api.process.PathingCommand;
-import baritone.api.process.PathingCommandType;
-import baritone.api.utils.input.Input;
+import dev.midtown.api.EngineSelector;
+import dev.midtown.api.GoalSpec;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
@@ -169,8 +161,6 @@ public class LoadChestMod implements ClientModInitializer {
     private ArrayDeque<Action> queue = null;
     private boolean autoRun = false;   // current trip was started by auto mode
     private int autoCheck = 0;
-    private boolean registered = false;
-    private final DepositProcess depositProcess = new DepositProcess();
     private final PickupProcess pickupProcess = new PickupProcess();
 
     // ------------------------------------------------------------------ init
@@ -483,7 +473,8 @@ public class LoadChestMod implements ClientModInitializer {
         }
         timer = 0;
         queue = null;
-        state = State.PATHING;   // DepositProcess now takes control of Baritone
+        state = State.PATHING;
+        EngineSelector.current().goTo(GoalSpec.near(target, 3));
         msg("Going to chest at " + target.toShortString());
         return 1;
     }
@@ -501,21 +492,11 @@ public class LoadChestMod implements ClientModInitializer {
     private long gameTick;
     private long lastMiningTick = -1000;
 
-    private void noteBrokenBlocks(BlockChangeEvent event) {
-        Minecraft mc = Minecraft.getInstance();
-        if (mc.player == null || gameTick - lastMiningTick > 30) return;   // nothing was being broken just now
-        for (var change : event.getBlocks()) {
-            BlockState state = change.second();
-            if (!state.isAir() && state.getFluidState().isEmpty()) continue;   // not removed
-            BlockPos pos = change.first();
-            if (pos.distSqr(mc.player.blockPosition()) > 8 * 8) continue;      // out of reach, so not ours
-            minedBlocks.add(new Mined(pos.immutable(), gameTick));
-        }
-    }
+
 
     private void trackOwnDrops(Minecraft mc, LocalPlayer p) {
         gameTick++;
-        if (baritone().getInputOverrideHandler().isInputForcedDown(Input.CLICK_LEFT) || mc.gameMode.isDestroying()) {
+        if (mc.options.keyAttack.isDown() || (mc.gameMode != null && mc.gameMode.isDestroying())) {
             lastMiningTick = gameTick;
         }
         if (gameTick % 200 == 0) ownedDrops.removeIf(id -> mc.level.getEntity(id) == null);
@@ -542,24 +523,6 @@ public class LoadChestMod implements ClientModInitializer {
         LocalPlayer p = mc.player;
         if (p == null || mc.level == null || mc.gameMode == null) { state = State.IDLE; return; }
 
-        if (!registered) {
-            baritone().getPathingControlManager().registerProcess(depositProcess);
-            baritone().getPathingControlManager().registerProcess(pickupProcess);
-            baritone().getPathingControlManager().registerProcess(new WaitProcess());
-            baritone().getGameEventHandler().registerEventListener(new AbstractGameEventListener() {
-                @Override
-                public void onBlockChange(BlockChangeEvent event) {
-                    noteBrokenBlocks(event);
-                }
-
-                @Override
-                public void onBlockInteract(BlockInteractEvent event) {
-                    if (event.getType() == BlockInteractEvent.Type.START_BREAK) lastMiningTick = gameTick;
-                }
-            });
-            PauseWatch.register(baritone());
-            registered = true;
-        }
         if (PauseWatch.paused) {   // #pause: no chest trips, no pickups
             if (state != State.IDLE) {
                 if (p.containerMenu != p.inventoryMenu) p.closeContainer();
@@ -570,6 +533,8 @@ public class LoadChestMod implements ClientModInitializer {
         trackOwnDrops(mc, p);
 
         if (state == State.IDLE) {
+            System.clearProperty("loadchest.busy");
+            pickupProcess.tick(mc, p);
             // auto mode: check once a second whether the inventory filled up during #mine
             if (scriptOn("autoempty", cfg.auto) && ++autoCheck % 20 == 0 && baritoneBusy() && inventoryFull(p) && !addonOff("autoempty")) {
                 msg("Inventory full - emptying into the chest, mining continues afterwards.");
@@ -604,12 +569,17 @@ public class LoadChestMod implements ClientModInitializer {
             return;
         }
 
+        System.setProperty("loadchest.busy", "1");
         switch (state) {
             case PATHING -> {
                 if (++timer > PATH_TIMEOUT) { stop("Pathing timed out."); return; }
-                if (new GoalNear(target, 3).isInGoal(p.blockPosition())) {
+                double dist = Math.sqrt(target.distSqr(p.blockPosition()));
+                if (dist <= 3.5) {
+                    EngineSelector.current().cancel();
                     timer = 0;
-                    state = State.OPENING;   // DepositProcess now pauses Baritone
+                    state = State.OPENING;
+                } else if (!EngineSelector.current().isBusy()) {
+                    EngineSelector.current().goTo(GoalSpec.near(target, 3));
                 }
             }
             case OPENING -> {
@@ -676,13 +646,9 @@ public class LoadChestMod implements ClientModInitializer {
         return 0;   // no rule -> keep nothing
     }
 
-    /** Same rule as Baritone's item saver: it stops using a tool at this point. */
     private static boolean wornOut(ItemStack st) {
-        var settings = BaritoneAPI.getSettings();
-        if (settings.itemSaver.value) {
-            return st.getMaxDamage() > 1 && st.getDamageValue() + settings.itemSaverThreshold.value >= st.getMaxDamage();
-        }
-        return st.getDamageValue() > st.getMaxDamage() * 0.8;
+        if (!st.isDamageableItem()) return false;
+        return st.getMaxDamage() > 1 && (st.getMaxDamage() - st.getDamageValue() <= 5 || st.getDamageValue() > st.getMaxDamage() * 0.8);
     }
 
     private static final String[] TOOLS = {"_pickaxe", "_axe", "_shovel", "_hoe", "_sword", "shears", "bucket",
@@ -810,9 +776,7 @@ public class LoadChestMod implements ClientModInitializer {
         return best;
     }
 
-    private IBaritone baritone() {
-        return BaritoneAPI.getProvider().getPrimaryBaritone();
-    }
+
 
     /** Ends the chest trip; DepositProcess goes inactive and Baritone hands control back (e.g. to #mine). */
     private void stop(String text) {
@@ -820,6 +784,7 @@ public class LoadChestMod implements ClientModInitializer {
         triedChests.clear();
         queue = null;
         autoRun = false;
+        EngineSelector.current().cancel();
         msg(text);
     }
 
@@ -935,54 +900,11 @@ public class LoadChestMod implements ClientModInitializer {
         return true;
     }
 
-    // ------------------------------------------------------------------ Baritone processes
+    // ------------------------------------------------------------------ helper processes
 
-    /** Drives Baritone during a chest trip: path to the chest, then hold still while the chest is used. */
-    private class DepositProcess implements IBaritoneProcess {
-        @Override
-        public boolean isActive() {
-            return state != State.IDLE;
-        }
-
-        @Override
-        public PathingCommand onTick(boolean calcFailed, boolean isSafeToCancel) {
-            if (state == State.PATHING) {
-                if (calcFailed) {
-                    stop("Baritone could not reach the chest.");
-                    return new PathingCommand(null, PathingCommandType.REQUEST_PAUSE);
-                }
-                return new PathingCommand(new GoalNear(target, 3), PathingCommandType.SET_GOAL_AND_PATH);
-            }
-            return new PathingCommand(null, PathingCommandType.REQUEST_PAUSE);
-        }
-
-        @Override
-        public boolean isTemporary() {
-            return true;   // don't make #mine give up, just pause it
-        }
-
-        @Override
-        public void onLostControl() {   // e.g. #stop
-            if (state != State.IDLE) stop("Cancelled.");
-        }
-
-        @Override
-        public double priority() {
-            return 10;
-        }
-
-        @Override
-        public String displayName0() {
-            return "LoadChest deposit";
-        }
-    }
-
-    /** True while any Baritone task other than LoadChest runs (#mine, #farm, #build, #sel ca, #goto, #explore, ...). */
+    /** True while any engine task other than LoadChest runs. */
     private boolean baritoneBusy() {
-        IBaritone b = baritone();
-        return b.getMineProcess().isActive() || b.getBuilderProcess().isActive() || b.getFarmProcess().isActive()
-                || b.getExploreProcess().isActive() || b.getGetToBlockProcess().isActive()
-                || b.getFollowProcess().isActive() || b.getCustomGoalProcess().isActive();
+        return dev.midtown.api.EngineSelector.current().isBusy();
     }
 
     /** Whether the main inventory (hotbar included) has room for this stack, counting partial stacks. */
@@ -994,70 +916,13 @@ public class LoadChestMod implements ClientModInitializer {
         return false;
     }
 
-    /**
-     * Satisfied by any block where standing lets the player touch the item. Vanilla picks items up when the player's
-     * box grown by (1.0, 0.5, 1.0) overlaps the item, so there is no need to stand in the item's exact block
-     * (which can even be solid: a resting item's y can floor into the block below it).
-     */
-    private static class GoalPickup extends GoalNear {
-        private final double ix, iy, iz;
-
-        GoalPickup(ItemEntity e) {
-            super(e.blockPosition(), 1);
-            ix = e.getX();
-            iy = e.getY();
-            iz = e.getZ();
-        }
-
-        @Override
-        public boolean isInGoal(int x, int y, int z) {
-            // 1.0 instead of the real 1.425 horizontal reach, and feet at most 0.5 above the item: safe margins
-            return Math.abs(ix - (x + 0.5)) <= 1.0 && Math.abs(iz - (z + 0.5)) <= 1.0
-                    && iy >= y - 0.5 && iy <= y + 2.0;
-        }
-    }
-
-    /** While Baritone is busy, walks within reach of the items Baritone itself mined so nothing is left behind. */
-    /** Keeps the task paused while the chest is full; below every other job so those still get their turn. */
-    private class WaitProcess implements IBaritoneProcess {
-        @Override
-        public boolean isActive() {
-            return waiting && state == State.IDLE;
-        }
-
-        @Override
-        public PathingCommand onTick(boolean calcFailed, boolean isSafeToCancel) {
-            return new PathingCommand(null, PathingCommandType.REQUEST_PAUSE);
-        }
-
-        @Override
-        public boolean isTemporary() {
-            return true;
-        }
-
-        @Override
-        public void onLostControl() {
-            // other jobs take over now and then: that is no reason to stop waiting
-        }
-
-        @Override
-        public double priority() {
-            return 3;
-        }
-
-        @Override
-        public String displayName0() {
-            return "LoadChest waiting";
-        }
-    }
-
-    private class PickupProcess implements IBaritoneProcess {
+    private class PickupProcess {
         private ItemEntity item;
         private int itemTimer;    // ticks spent on this item
         private int touchTimer;   // ticks spent within reach without the item being picked up
         private final Set<Integer> ignored = new HashSet<>();   // items we gave up on
         private boolean collecting;   // a batch run is in progress
-        private boolean lastBusy;     // Baritone was busy last time we looked
+        private boolean lastBusy;     // engine was busy last time we looked
         private int scanTick;
         private int oldCount;         // drops on the ground for at least PICKUP_MIN_AGE (set by findDrop)
         private boolean staleFound;   // a drop has been lying around for at least cfg.pickupWait seconds
@@ -1071,8 +936,7 @@ public class LoadChestMod implements ClientModInitializer {
             item = null;
         }
 
-        @Override
-        public boolean isActive() {
+        boolean isActive() {
             Minecraft mc = Minecraft.getInstance();
             if (forced && (++forcedTicks > 20 * 120 || mc.player == null)) forced = false;   // never longer than 2 min
             if ((!scriptOn("pickup", cfg.pickup) && !forced) || (addonOff("pickup") && !forced) || state != State.IDLE || mc.player == null || mc.level == null) {
@@ -1092,9 +956,8 @@ public class LoadChestMod implements ClientModInitializer {
                 return false;
             }
             if (item == null || !item.isAlive()) {
-                // Chasing each drop right after every broken block would interrupt the builder/miner constantly
-                // (Baritone drops its current path on every hand-over). So wait until a batch has piled up,
-                // then collect everything in one go.
+                // Chasing each drop right after every broken block would interrupt the builder/miner constantly.
+                // So wait until a batch has piled up, then collect everything in one go.
                 if (!collecting && ++scanTick % 10 != 0) return false;
                 item = findDrop(mc, collecting);
                 if (!collecting) {
@@ -1120,28 +983,29 @@ public class LoadChestMod implements ClientModInitializer {
             return item != null;
         }
 
-        @Override
-        public PathingCommand onTick(boolean calcFailed, boolean isSafeToCancel) {
-            Minecraft mc = Minecraft.getInstance();
-            if (item == null || mc.player == null) return new PathingCommand(null, PathingCommandType.DEFER);
+        void tick(Minecraft mc, LocalPlayer p) {
+            if (!isActive() || item == null) return;
 
-            if (mc.player.getBoundingBox().inflate(1.0, 0.5, 1.0).intersects(item.getBoundingBox())) {
-                // vanilla pickup range: the server should take it within the pickup delay (max 40 ticks)
+            if (p.getBoundingBox().inflate(1.0, 0.5, 1.0).intersects(item.getBoundingBox())) {
                 if (++touchTimer > 50) giveUp("in reach but not picked up (pickup delay / no room)");
             } else {
                 touchTimer = 0;
             }
-            if (item != null && calcFailed) giveUp("Baritone found no path");
             if (item != null && ++itemTimer > PICKUP_TIMEOUT) giveUp("took too long to reach");
-            if (item == null) return new PathingCommand(null, PathingCommandType.DEFER);
-
-            return new PathingCommand(new GoalPickup(item), PathingCommandType.SET_GOAL_AND_PATH);
+            if (item == null) {
+                EngineSelector.current().cancel();
+                return;
+            }
+            if (!EngineSelector.current().isBusy()) {
+                EngineSelector.current().goTo(GoalSpec.near(item.blockPosition(), 1));
+            }
         }
 
         private void giveUp(String why) {
             debug("skipping item: " + why);
             ignored.add(item.getId());
             item = null;
+            EngineSelector.current().cancel();
         }
 
         /** Nearest reachable drop; while not collecting only drops older than PICKUP_MIN_AGE count. */
@@ -1153,7 +1017,7 @@ public class LoadChestMod implements ClientModInitializer {
             staleFound = false;
             for (ItemEntity e : mc.level.getEntitiesOfClass(ItemEntity.class,
                     mc.player.getBoundingBox().inflate(cfg.pickupRadius, cfg.pickupRadius / 2.0, cfg.pickupRadius))) {
-                if (!cfg.pickupAll && !forced && !ownedDrops.contains(e.getId())) continue;   // not from a block Baritone broke: leave it alone
+                if (!cfg.pickupAll && !forced && !ownedDrops.contains(e.getId())) continue;   // not from a block broke: leave it alone
                 if (!e.isAlive() || ignored.contains(e.getId()) || !canHold(mc.player, e.getItem())) continue;
                 boolean old = e.tickCount >= PICKUP_MIN_AGE;
                 if (old) {
@@ -1165,26 +1029,6 @@ public class LoadChestMod implements ClientModInitializer {
                 if (d < bestDist) { bestDist = d; best = e; }
             }
             return best;
-        }
-
-        @Override
-        public boolean isTemporary() {
-            return true;
-        }
-
-        @Override
-        public void onLostControl() {
-            item = null;
-        }
-
-        @Override
-        public double priority() {
-            return 9;   // below the chest trip, above #mine
-        }
-
-        @Override
-        public String displayName0() {
-            return "LoadChest pickup";
         }
     }
 

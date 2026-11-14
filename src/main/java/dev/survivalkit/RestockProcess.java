@@ -1,8 +1,7 @@
 package dev.survivalkit;
 
-import baritone.api.pathing.goals.GoalNear;
-import baritone.api.process.PathingCommand;
-import baritone.api.process.PathingCommandType;
+import dev.midtown.api.EngineSelector;
+import dev.midtown.api.GoalSpec;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
@@ -75,7 +74,11 @@ final class RestockProcess extends Feature {
         now++;
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer p = mc.player;
-        if (state != State.IDLE || p == null || mc.level == null) return;
+        if (p == null || mc.level == null) return;
+        if (state != State.IDLE) {
+            stepInternal(mc, p);
+            return;
+        }
         if (cooldown > 0) cooldown--;
         if (cfg.want.isEmpty() || ++check % 10 != 0) return;   // 2x per second
 
@@ -203,6 +206,7 @@ final class RestockProcess extends Feature {
         timer = 0;
         queue = null;
         state = State.PATHING;
+        EngineSelector.current().goTo(GoalSpec.near(chest, 3));
     }
 
     /**
@@ -239,7 +243,7 @@ final class RestockProcess extends Feature {
     }
 
     /** One chest is done: on to the next if something is still missing, else wrap the trip up. */
-    private PathingCommand finishChest(Minecraft mc, String text) {
+    private void finishChest(Minecraft mc, String text) {
         failStreak = 0;   // the chest was open
         Util.msg(text);
         boolean missing = shortHere.values().stream().anyMatch(a -> a[0] < a[1]);
@@ -251,14 +255,15 @@ final class RestockProcess extends Feature {
             queue = null;
             shortHere.clear();
             state = State.PATHING;
-            return pause();
+            EngineSelector.current().goTo(GoalSpec.near(chest, 3));
+            return;
         }
         settleShort();
         Session.count("restocks");
         state = State.IDLE;
         queue = null;
         cooldown = 40;
-        return pause();
+        EngineSelector.current().cancel();
     }
 
     /** After the last chest: what is still missing is not worth a trip every minute, so the waiting time grows. */
@@ -294,23 +299,22 @@ final class RestockProcess extends Feature {
         return state != State.IDLE;
     }
 
-    @Override
-    PathingCommand step(boolean calcFailed, boolean isSafeToCancel) {
-        Minecraft mc = Minecraft.getInstance();
-        LocalPlayer p = mc.player;
-        if (p == null || mc.gameMode == null) { state = State.IDLE; return defer(); }
+    private void stepInternal(Minecraft mc, LocalPlayer p) {
+        if (p == null || mc.gameMode == null) { state = State.IDLE; return; }
 
         switch (state) {
             case PATHING -> {
-                if (++timer > PATH_TIMEOUT) return fail("Could not reach the " + chestName() + " in time.");
-                if (calcFailed) return fail("Baritone found no path to the " + chestName() + ".");
-                GoalNear goal = new GoalNear(chest, 3);
-                if (goal.isInGoal(p.blockPosition())) {
+                if (++timer > PATH_TIMEOUT) { fail("Could not reach the " + chestName() + " in time."); return; }
+                double dist = Math.sqrt(chest.distSqr(p.blockPosition()));
+                if (dist <= 3.5) {
+                    EngineSelector.current().cancel();
                     state = State.OPENING;
                     timer = 0;
-                    return pause();
+                    return;
                 }
-                return new PathingCommand(goal, PathingCommandType.SET_GOAL_AND_PATH);
+                if (!EngineSelector.current().isBusy()) {
+                    EngineSelector.current().goTo(GoalSpec.near(chest, 3));
+                }
             }
             case OPENING -> {
                 ChestIndex.hint = chest;
@@ -318,7 +322,7 @@ final class RestockProcess extends Feature {
                     state = State.TAKING;
                     timer = 0;
                     queue = null;
-                    return pause();
+                    return;
                 }
                 if (timer == 1) Util.readyToOpen(p);   // never place a block on top of it or pour a bucket
                 if (timer == 4) {   // let the player come to a stop first
@@ -326,34 +330,33 @@ final class RestockProcess extends Feature {
                     BlockHitResult hit = new BlockHitResult(Vec3.atCenterOf(chest), Direction.UP, chest, false);
                     mc.gameMode.useItemOn(p, InteractionHand.MAIN_HAND, hit);
                 }
-                if (++timer > OPEN_TIMEOUT) return fail("Could not open the " + chestName() + "." + Util.blockedText(mc.level, chest));
-                return pause();
+                if (++timer > OPEN_TIMEOUT) { fail("Could not open the " + chestName() + "." + Util.blockedText(mc.level, chest)); return; }
             }
             case TAKING -> {
                 AbstractContainerMenu h = p.containerMenu;
-                if (h == p.inventoryMenu) { state = State.IDLE; cooldown = 100; return pause(); }
+                if (h == p.inventoryMenu) { state = State.IDLE; cooldown = 100; return; }
                 if (queue == null) {
-                    if (++timer < 8) return pause();   // on a server the chest contents can arrive a moment after it opens
+                    if (++timer < 8) return;   // on a server the chest contents can arrive a moment after it opens
                     summary.clear();
                     queue = returnLeg ? buildReturnPlan(p, h) : buildPlan(p, h);
                     if (queue.isEmpty()) {
                         p.closeContainer();
-                        if (returnLeg) return afterReturnLeg(mc, p);
-                        return finishChest(mc, "Nothing to take from the supply chest" + (summary.isEmpty() ? "." : " (" + String.join(", ", summary) + ")."));
+                        if (returnLeg) { afterReturnLeg(mc, p); return; }
+                        finishChest(mc, "Nothing to take from the supply chest" + (summary.isEmpty() ? "." : " (" + String.join(", ", summary) + ")."));
+                        return;
                     }
                 }
-                if (++timer % 2 != 0) return pause();   // one click every 2 ticks
+                if (++timer % 2 != 0) return;   // one click every 2 ticks
                 Action a = queue.poll();
                 if (a == null) {
                     p.closeContainer();
-                    if (returnLeg) return afterReturnLeg(mc, p);
-                    return finishChest(mc, "Restocked: " + String.join(", ", summary) + ".");
+                    if (returnLeg) { afterReturnLeg(mc, p); return; }
+                    finishChest(mc, "Restocked: " + String.join(", ", summary) + ".");
+                    return;
                 }
                 mc.gameMode.handleContainerInput(h.containerId, a.slot(), a.button(), a.type(), p);
-                return pause();
             }
             default -> {
-                return defer();
             }
         }
     }
@@ -365,7 +368,7 @@ final class RestockProcess extends Feature {
      * "on restock_needed" waits as long (on the live canal it fired every 30 s for 9 hours and kept interrupting the
      * water fill, which then never got anywhere).
      */
-    private PathingCommand fail(String why) {
+    private void fail(String why) {
         long wait = Math.min(RETRY_MAX, 20L * 60 * (1L << Math.min(5, failStreak++)));
         LocalPlayer p = Minecraft.getInstance().player;
         if (p != null) {
@@ -377,22 +380,23 @@ final class RestockProcess extends Feature {
         Util.msg(why + " Trying again in " + Math.max(1, wait / (20 * 60)) + " min" + (failStreak > 2 ? " (it keeps failing: check the way to the chest, and that nothing is on top of it)." : "."));
         state = State.IDLE;
         cooldown = (int) wait;
-        return pause();
+        EngineSelector.current().cancel();
     }
 
     /** Worn tools are dropped off: report it and carry on to the supply chest for the replacement. */
-    private PathingCommand afterReturnLeg(Minecraft mc, LocalPlayer p) {
+    private void afterReturnLeg(Minecraft mc, LocalPlayer p) {
         if (!summary.isEmpty()) Util.msg("Return chest: " + String.join(", ", summary) + ".");
         returnLeg = false;
         queue = null;
         routeIdx = 0;
         chest = route.isEmpty() ? null : route.get(0);
         if (chest == null || !isStorage(mc.level.getBlockState(chest).getBlock())) {
-            return done("Could not continue to the supply chest (not set, or not loaded).");
+            done("Could not continue to the supply chest (not set, or not loaded).");
+            return;
         }
         timer = 0;
         state = State.PATHING;
-        return pause();
+        EngineSelector.current().goTo(GoalSpec.near(chest, 3));
     }
 
     /** Puts every worn-out damageable item that matches a want-rule into the return chest. */
@@ -423,12 +427,12 @@ final class RestockProcess extends Feature {
         return plan;
     }
 
-    private PathingCommand done(String text) {
+    private void done(String text) {
         Util.msg(text);
         state = State.IDLE;
         queue = null;
         cooldown = 40;
-        return pause();
+        EngineSelector.current().cancel();
     }
 
     // ------------------------------------------------------------------ plan
@@ -554,5 +558,6 @@ final class RestockProcess extends Feature {
         }
         state = State.IDLE;
         queue = null;
+        EngineSelector.current().cancel();
     }
 }

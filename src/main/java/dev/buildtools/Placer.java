@@ -103,9 +103,7 @@ final class Placer {
             BlockPos n = cell.relative(d);
             if (!Util.isSolid(level, n)) continue;
             Direction face = d.getOpposite();
-            Vec3 aim = Vec3.atCenterOf(n).add(face.getStepX() * 0.5, face.getStepY() * 0.5, face.getStepZ() * 0.5);
-            if (eye.distanceTo(aim) > REACH - 0.15) continue;
-            if (faceVisible(level, p, eye, n, face, aim)) return true;
+            if (findFaceAim(level, p, eye, n, face, REACH - 0.15) != null) return true;
         }
         return false;
     }
@@ -118,7 +116,25 @@ final class Placer {
         return hit.getType() == HitResult.Type.BLOCK && hit.getBlockPos().equals(cell);
     }
 
-    /** The straight line from the eye to the aim point ends on exactly that face (also checks points near the face centre). */
+    /** Returns a visible aim point on {@code face} of {@code n} within {@code maxReach}, or null. */
+    private static Vec3 findFaceAim(Level level, LocalPlayer p, Vec3 eye, BlockPos n, Direction face, double maxReach) {
+        Vec3 center = Vec3.atCenterOf(n).add(face.getStepX() * 0.5, face.getStepY() * 0.5, face.getStepZ() * 0.5);
+        if (eye.distanceTo(center) <= maxReach && faceVisible(level, p, eye, n, face, center)) return center;
+        if (face.getAxis().isHorizontal()) {
+            for (double dy : new double[]{0.28, -0.28}) {
+                Vec3 cand = center.add(0, dy, 0);
+                if (eye.distanceTo(cand) <= maxReach && faceVisible(level, p, eye, n, face, cand)) return cand;
+            }
+        } else {
+            for (double[] off : new double[][]{{0.25, 0}, {-0.25, 0}, {0, 0.25}, {0, -0.25}}) {
+                Vec3 cand = center.add(off[0], 0, off[1]);
+                if (eye.distanceTo(cand) <= maxReach && faceVisible(level, p, eye, n, face, cand)) return cand;
+            }
+        }
+        return null;
+    }
+
+    /** The straight line from the eye to the aim point ends on exactly that face. */
     private static boolean faceVisible(Level level, LocalPlayer p, Vec3 eye, BlockPos n, Direction face, Vec3 aim) {
         Vec3 end = aim.subtract(face.getStepX() * 0.02, face.getStepY() * 0.02, face.getStepZ() * 0.02);
         BlockHitResult hit = level.clip(new ClipContext(eye, end, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, p));
@@ -146,10 +162,10 @@ final class Placer {
             if (!Util.isSolid(level, n)) continue;
             Direction face = d.getOpposite();   // the face of n that looks at the target cell
             if (badFaces.contains(n.toShortString() + face)) continue;
-            Vec3 aim = Vec3.atCenterOf(n).add(face.getStepX() * 0.5, face.getStepY() * 0.5, face.getStepZ() * 0.5);
+            Vec3 aim = findFaceAim(level, p, eye, n, face, REACH);
+            if (aim == null) continue;
             double dist = eye.distanceTo(aim);
-            if (dist > REACH || dist >= bestDist) continue;
-            if (faceVisible(level, p, eye, n, face, aim)) {
+            if (dist < bestDist) {
                 best = new Click(n, face, aim);
                 bestDist = dist;
             }

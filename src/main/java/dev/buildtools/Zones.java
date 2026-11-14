@@ -1,6 +1,5 @@
 package dev.buildtools;
 
-import baritone.api.selection.ISelection;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -21,6 +20,44 @@ final class Zones {
     private static void put(Config.Zone zone) {
         cfg.zones.removeIf(z -> z.name.equalsIgnoreCase(zone.name));   // same name = replace
         cfg.zones.add(zone);
+        syncEngines();
+    }
+
+    /**
+     * Hands the saved safe areas to the path engine's planner: all of them, or none while safe areas are off. Called
+     * once at start (engines created later get them through EngineSelector.onCreate) and after every change, so the
+     * planner never keeps one that was removed, and still has them all after a restart.
+     */
+    static void syncEngines() {
+        dev.midtown.api.EngineSelector.forEachCreated(Zones::syncEngine);
+    }
+
+    static void syncEngine(dev.midtown.api.PathEngine engine) {
+        engine.clearProtectedAreas();
+        if (!cfg.protect) return;
+        java.util.Map<String, java.util.List<dev.midtown.api.Area>> grouped = new java.util.LinkedHashMap<>();
+        for (Config.Zone z : cfg.zones) {
+            String key = (z.group != null && !z.group.isBlank()) ? z.group : z.name;
+            grouped.computeIfAbsent(key, k -> new java.util.ArrayList<>())
+                    .add(dev.midtown.api.Area.of(z.x1, z.y1, z.z1, z.x2, z.y2, z.z2));
+        }
+        for (var e : grouped.entrySet()) {
+            engine.setProtectedArea(e.getKey(), e.getValue());
+        }
+    }
+
+    static void putGroup(String name, java.util.List<int[]> boxes) {
+        cfg.zones.removeIf(z -> name.equalsIgnoreCase(z.group != null ? z.group : z.name));
+        if (boxes != null) {
+            for (int i = 0; i < boxes.size(); i++) {
+                int[] b = boxes.get(i);
+                String zname = boxes.size() == 1 ? name : name + "#" + (i + 1);
+                cfg.zones.add(new Config.Zone(zname, name,
+                        new BlockPos(b[0], b[1], b[2]), new BlockPos(b[3], b[4], b[5])));
+            }
+        }
+        syncEngines();
+        Config.save();
     }
 
     private static String freeName() {
@@ -30,21 +67,13 @@ final class Zones {
         }
     }
 
-    /** Every #sel selection becomes a safe area. */
+    /** Creates a safe area from current corners. */
     static int addSelection(String name) {
-        ISelection[] selections = Util.baritone().getSelectionManager().getSelections();
-        if (selections.length == 0) {
-            Util.msg("Select the area first with #sel pos1 and #sel pos2, then run this again.");
+        if (cfg.corner1 == null || cfg.corner2 == null) {
+            Util.msg("Set both corners first (/buildtools protect pos1 and pos2), then run this again.");
             return 0;
         }
-        for (int i = 0; i < selections.length; i++) {
-            ISelection s = selections[i];
-            String n = name == null ? freeName() : selections.length == 1 ? name : name + (i + 1);
-            put(new Config.Zone(n, new BlockPos(s.min().x, s.min().y, s.min().z), new BlockPos(s.max().x, s.max().y, s.max().z)));
-            Util.msg("Safe area '" + n + "' saved.");
-        }
-        Config.save();
-        return 1;
+        return addBox(cfg.corner1[0], cfg.corner1[1], cfg.corner1[2], cfg.corner2[0], cfg.corner2[1], cfg.corner2[2], name, false);
     }
 
     private static boolean overlaps(int[] b, Config.Zone z) {
@@ -70,43 +99,8 @@ final class Zones {
         return out;
     }
 
-    /**
-     * Cuts every #sel selection around the safe areas, so "#sel ca" / "#sel replace" never target blocks inside them.
-     * Returns true when something was cut. Called about once a second, so it is done before you type the command.
-     */
     static boolean trimSelections() {
-        var manager = Util.baritone().getSelectionManager();
-        ISelection[] selections = manager.getSelections();
-        if (selections.length == 0 || cfg.zones.isEmpty()) return false;
-
-        boolean changed = false;
-        java.util.List<int[]> result = new java.util.ArrayList<>();
-        String zoneName = "";
-        for (ISelection s : selections) {
-            java.util.List<int[]> boxes = new java.util.ArrayList<>();
-            boxes.add(new int[]{s.min().x, s.min().y, s.min().z, s.max().x, s.max().y, s.max().z});
-            for (Config.Zone z : cfg.zones) {
-                java.util.List<int[]> next = new java.util.ArrayList<>();
-                for (int[] b : boxes) {
-                    if (overlaps(b, z)) { changed = true; zoneName = z.name; }
-                    next.addAll(subtract(b, z));
-                }
-                boxes = next;
-            }
-            result.addAll(boxes);
-        }
-        if (!changed) return false;
-
-        manager.removeAllSelections();
-        for (int[] b : result) {
-            manager.addSelection(new baritone.api.utils.BetterBlockPos(b[0], b[1], b[2]), new baritone.api.utils.BetterBlockPos(b[3], b[4], b[5]));
-        }
-        Util.msg(result.isEmpty()
-                ? "Your selection lay completely inside the safe area '" + zoneName + "', so it was removed."
-                : "Your selection overlapped the safe area '" + zoneName + "': I cut it around it (" + result.size()
-                + " box" + (result.size() == 1 ? "" : "es") + " now), so Baritone leaves the area alone. "
-                + "(/buildtools protect trim off to stop this)");
-        return true;
+        return false;
     }
 
     /** Sets corner 1 or 2 to the block you look at (or the one you stand in). Independent of #sel. */
@@ -189,7 +183,8 @@ final class Zones {
     }
 
     static int remove(String name) {
-        if (cfg.zones.removeIf(z -> z.name.equalsIgnoreCase(name))) {
+        if (cfg.zones.removeIf(z -> z.name.equalsIgnoreCase(name) || name.equalsIgnoreCase(z.group))) {
+            syncEngines();
             Config.save();
             Util.msg("Safe area '" + name + "' removed.");
             return 1;

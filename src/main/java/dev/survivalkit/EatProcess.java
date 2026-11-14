@@ -1,7 +1,5 @@
 package dev.survivalkit;
 
-import baritone.api.process.PathingCommand;
-import baritone.api.utils.input.Input;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.world.InteractionHand;
@@ -22,8 +20,6 @@ final class EatProcess extends Feature {
     private int swappedFrom = -1;        // inventory index the food was swapped in from, -1 = none
     private int swappedTo;
     private Item foodItem;
-    private boolean parallel;
-    private int etaWaited;
     private boolean offhandMode, preferMain;
     private InteractionHand hand = InteractionHand.MAIN_HAND;
     private int offFrom = -1;        // inventory index the food was swapped into the off hand from, -1 = none
@@ -39,6 +35,12 @@ final class EatProcess extends Feature {
     @Override
     boolean busy() {
         return eating;
+    }
+
+    @Override
+    void tick() {
+        if (!isActive()) return;
+        stepInternal();
     }
 
     @Override
@@ -62,11 +64,10 @@ final class EatProcess extends Feature {
         if (p.getFoodData().needsFood() && (hungry || hurt)) {
             slot = pickFood(p);
         } else if (hurt && cfg.golden && goldenCooldown == 0 && p.getHealth() <= GOLDEN_AT) {
-            // food bar is full, so food can't help: a golden apple heals right now
             slot = pickGolden(p);
             if (slot >= 0) goldenCooldown = 20 * 30;
         }
-        if (slot < 0) {   // nothing to eat; restocking may fix that
+        if (slot < 0) {
             forced = false;
             String stats = "food " + p.getFoodData().getFoodLevel() + "/20, health " + Math.round(p.getHealth()) + "/" + Math.round(p.getMaxHealth());
             if (p.getFoodData().needsFood() && (hungry || hurt)) {
@@ -76,16 +77,7 @@ final class EatProcess extends Feature {
             }
             return false;
         }
-        // Do not stop for it when walking along anyway: eat while Baritone keeps going (a pause would also throw the
-        // path away). If the path segment ends within 3 s and nothing is urgent, wait for that instead.
-        boolean urgent = p.getFoodData().getFoodLevel() <= 6 || p.getHealth() <= 8f;
-        parallel = cfg.walkEat && Util.baritoneBusy() && Util.easyWalkAhead(p, 12);
-        if (!parallel && !urgent && cfg.walkEat) {
-            double eta = Util.segmentTicks();
-            if (eta >= 0 && eta < 60 && etaWaited++ < 60) return false;
-        }
-        etaWaited = 0;
-        begin(mc, p, slot);   // forced stays on until the bar is full (checked above) or there is no food
+        begin(mc, p, slot);
         return true;
     }
 
@@ -121,16 +113,14 @@ final class EatProcess extends Feature {
         foodItem = food.getItem();
         foodName = food.getHoverName().getString();
         prevSlot = p.getInventory().getSelectedSlot();
-        // Baritone changes the selected hotbar slot whenever it picks a tool, but never the off hand: eat from there.
-        // (Not if a totem sits there; after a failure the other way is tried.)
         offhandMode = !preferMain && !Util.pathOf(p.getOffhandItem()).contains("totem")
-                && !(p.getMainHandItem().getItem() instanceof net.minecraft.world.item.BlockItem);   // "use" tries the main hand first: a block there would be placed
+                && !(p.getMainHandItem().getItem() instanceof net.minecraft.world.item.BlockItem);
         hand = offhandMode ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND;
         if (offhandMode) {
             offFrom = slot;
             swappedFrom = -1;
             Util.swapWithOffhand(mc, p, slot);
-        } else if (slot >= 9) {   // food is in the main inventory: swap it into the held slot, swapped back afterwards
+        } else if (slot >= 9) {
             swappedFrom = slot;
             swappedTo = prevSlot;
             Util.swapIntoHotbar(mc, p, slot, prevSlot);
@@ -140,46 +130,36 @@ final class EatProcess extends Feature {
         }
     }
 
-    @Override
-    PathingCommand step(boolean calcFailed, boolean isSafeToCancel) {
+    private void stepInternal() {
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer p = mc.player;
-        if (!eating || p == null) return defer();
+        if (!eating || p == null) return;
 
         if (p.isUsingItem()) started = true;
         if ((started && !p.isUsingItem()) || ++timer > EAT_TIMEOUT) {
             if (!started) {
                 failures++;
-                preferMain = offhandMode;   // the other way next time
+                preferMain = offhandMode;
                 cooldown = FAIL_COOLDOWN * Math.min(failures, 6);
                 Util.warn("eatfail", "Could not eat " + foodName + ": the item in " + (offhandMode ? "the off hand" : "hand") + " was "
                         + held(p).getHoverName().getString()
-                        + (reselects > 0 ? " (something else, probably Baritone's tool switching, kept changing the hotbar slot "
+                        + (reselects > 0 ? " (something else kept changing the hotbar slot "
                         + reselects + "x)" : "")
                         + ". Trying again in " + cooldown / 20 + " s.");
             } else {
                 failures = 0;
             }
             finish(mc, p);
-            return pause();
+            return;
         }
-        if (parallel && (p.isInWater() || !p.onGround() && !started && timer > 20 || (mc.gameMode != null && mc.gameMode.isDestroying()))) {
-            parallel = false;   // the path stopped being a plain walk: stand still for the rest of it
-        }
-        // Something (Baritone switching to its pickaxe, a restock swap) can change the held slot after we chose it.
         if (!offhandMode && !started && foodItem != null && p.getInventory().getSelectedItem().getItem() != foodItem && reselects < 20) {
             reselects++;
             holdFood(mc, p);
         }
-        // Vanilla drops the item the moment the use key is up, so hold it (the real key plus Baritone's override).
         mc.options.keyUse.setDown(true);
-        Util.baritone().getInputOverrideHandler().setInputForceState(Input.CLICK_RIGHT, true);
-        // Start eating with the same call a right-click makes. Waiting 2 ticks lets the hotbar swap/selection
-        // reach the server first; if it didn't take, try again every half second.
         if (!started && timer >= 2 && (timer - 2) % 10 == 0) {
             mc.gameMode.useItem(p, hand);
         }
-        return parallel ? defer() : pause();
     }
 
     private ItemStack held(LocalPlayer p) {
@@ -206,9 +186,9 @@ final class EatProcess extends Feature {
     }
 
     private void finish(Minecraft mc, LocalPlayer p) {
+        forced = false;
         Session.count("meals");
         mc.options.keyUse.setDown(false);
-        Util.baritone().getInputOverrideHandler().setInputForceState(Input.CLICK_RIGHT, false);
         if (offFrom >= 0) {
             Util.swapWithOffhand(mc, p, offFrom);
             offFrom = -1;
@@ -228,7 +208,8 @@ final class EatProcess extends Feature {
     }
 
     @Override
-    public void onLostControl() {   // e.g. #stop
+    public void onLostControl() {
+        forced = false;
         if (eating) abort();
     }
 }

@@ -1,10 +1,8 @@
 package dev.baritonequeue;
 
-import baritone.api.BaritoneAPI;
-import baritone.api.pathing.goals.GoalBlock;
-import baritone.api.process.IBaritoneProcess;
-import baritone.api.process.PathingCommand;
-import baritone.api.process.PathingCommandType;
+import dev.midtown.api.EngineSelector;
+import dev.midtown.api.EngineStatus;
+import dev.midtown.api.GoalSpec;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
@@ -41,7 +39,7 @@ import java.util.Set;
  * stop it was at and carries on, keeping the blocks it already gave up on. Every 5 minutes of work it writes where the
  * time went so far into the game log ("[Queue] clear_area progress").
  */
-final class ClearProcess implements IBaritoneProcess {
+final class ClearProcess {
     private static final int LANE = 6, STEP = 3;
     private int pass = 3;   // layers per pass (2 or 3: feet and head, plus the block above the head)
     private static final int TRAVEL_TIMEOUT = 20 * 45, WALK_STUCK = 30, BREAK_TIMEOUT = 20 * 8, PICK_TIMEOUT = 20 * 3;
@@ -70,6 +68,7 @@ final class ClearProcess implements IBaritoneProcess {
     private final Set<Integer> ignoredItems = new HashSet<>();
     private long stepTick, tickCount;
     private boolean keysHeld;
+    private boolean midtownTraveling;
 
     // where the time goes
     private int broken, tBreak, tWalk, tTravel, tPick, tOther, nearFluid;
@@ -165,6 +164,10 @@ final class ClearProcess implements IBaritoneProcess {
 
     private void end() {
         releaseKeys();
+        if (midtownTraveling) {
+            EngineSelector.current().cancel();
+            midtownTraveling = false;
+        }
         Minecraft mc = Minecraft.getInstance();
         if (mc.gameMode != null && breaking != null) mc.gameMode.stopDestroyBlock();
         breaking = null;
@@ -220,8 +223,7 @@ final class ClearProcess implements IBaritoneProcess {
     // ------------------------------------------------------------------ what to break
 
     private static boolean protectedOrForbidden(BlockState s, BlockPos p) {
-        if (dev.buildtools.Api.protectedAt(p)) return true;
-        return BaritoneAPI.getSettings().blocksToDisallowBreaking.value.contains(s.getBlock());
+        return dev.buildtools.Api.protectedAt(p);
     }
 
     private static boolean nextToFluid(Level level, BlockPos p) {
@@ -293,20 +295,41 @@ final class ClearProcess implements IBaritoneProcess {
 
     // ------------------------------------------------------------------ tools
 
-    /** Puts the fastest tool for the block in the hand (not one Baritone's item saver would spare). */
+    /** Puts the fastest tool for the block in the hand (sparing nearly-broken tools). */
     static void equipFor(Minecraft mc, LocalPlayer p, BlockState s) {
+        int saverThreshold = 5;
+        var engine = EngineSelector.current();
+        if ("true".equalsIgnoreCase(engine.getSetting("itemSaver"))) {
+            String raw = engine.getSetting("itemSaverThreshold");
+            if (raw != null) {
+                try {
+                    saverThreshold = Math.max(saverThreshold, Integer.parseInt(raw.trim()));
+                } catch (NumberFormatException ignored) { }
+            }
+        }
         var inv = p.getInventory();
         int best = -1;
         float bestSpeed = 1.0f;
-        var set = BaritoneAPI.getSettings();
         for (int i = 0; i < 36; i++) {
             ItemStack st = inv.getItem(i);
             if (st.isEmpty()) continue;
-            if (set.itemSaver.value && st.isDamageableItem() && st.getDamageValue() + set.itemSaverThreshold.value >= st.getMaxDamage()) continue;
+            if (st.isDamageableItem() && st.getMaxDamage() - st.getDamageValue() <= saverThreshold) continue;
             float sp = st.getDestroySpeed(s);
             if (sp > bestSpeed + 0.01f || (best >= 9 && i < 9 && sp >= bestSpeed - 0.01f && sp > 1.0f)) { best = i; bestSpeed = sp; }
         }
-        if (best < 0) return;
+        if (best < 0) {
+            ItemStack cur = inv.getSelectedItem();
+            if (cur.isDamageableItem() && cur.getMaxDamage() - cur.getDamageValue() <= saverThreshold) {
+                for (int i = 0; i < 9; i++) {
+                    ItemStack st = inv.getItem(i);
+                    if (st.isEmpty() || !st.isDamageableItem()) {
+                        inv.setSelectedSlot(i);
+                        return;
+                    }
+                }
+            }
+            return;
+        }
         if (best < 9) { inv.setSelectedSlot(best); return; }
         int target = inv.getSelectedSlot();
         mc.gameMode.handleContainerInput(p.inventoryMenu.containerId, best, target, ContainerInput.SWAP, p);
@@ -343,10 +366,27 @@ final class ClearProcess implements IBaritoneProcess {
         keysHeld = false;
     }
 
-    /** Every client tick: let go of the keys as soon as another process has taken over. */
+    /** Every client tick: drives clear_area when active, or releases keys if paused. */
     void tick() {
         tickCount++;
-        if (keysHeld && stepTick < tickCount - 1) releaseKeys();
+        if (working && (Minecraft.getInstance().player == null || PauseWatch.paused)) {
+            if (Minecraft.getInstance().player == null) cancel();
+            releaseKeys();
+            return;
+        }
+        if (working) {
+            stepTick = tickCount;
+            try {
+                step();
+            } catch (Throwable t) {
+                t.printStackTrace();
+                failure = "clear_area hit an error (" + t + "). Details are in the game log.";
+                working = false;
+                end();
+            }
+        } else if (keysHeld && stepTick < tickCount - 1) {
+            releaseKeys();
+        }
     }
 
     private static boolean aim(LocalPlayer p, Vec3 at) {
@@ -390,40 +430,13 @@ final class ClearProcess implements IBaritoneProcess {
         return true;
     }
 
-    // ------------------------------------------------------------------ Baritone process
+    // ------------------------------------------------------------------ step
 
-    @Override
-    public boolean isActive() {
-        if (working && (Minecraft.getInstance().player == null || PauseWatch.paused)) {
-            if (Minecraft.getInstance().player == null) cancel();
-            return false;
-        }
-        return working;
-    }
-
-    @Override
-    public PathingCommand onTick(boolean calcFailed, boolean isSafeToCancel) {
-        stepTick = tickCount;
-        try {
-            return step(calcFailed);
-        } catch (Throwable t) {
-            t.printStackTrace();
-            failure = "clear_area hit an error (" + t + "). Details are in the game log.";
-            working = false;
-            end();
-            return pause();
-        }
-    }
-
-    private static PathingCommand pause() {
-        return new PathingCommand(null, PathingCommandType.REQUEST_PAUSE);
-    }
-
-    private PathingCommand step(boolean calcFailed) {
+    private void step() {
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer p = mc.player;
         Level level = mc.level;
-        if (p == null || level == null || mc.gameMode == null) return pause();
+        if (p == null || level == null || mc.gameMode == null) return;
         stateTicks++;
         if (++workTicks % REPORT_EVERY == 0) report("progress");
 
@@ -436,7 +449,7 @@ final class ClearProcess implements IBaritoneProcess {
                 aim(p, Vec3.atCenterOf(breaking));
                 mc.gameMode.continueDestroyBlock(breaking, Direction.UP);
                 p.swing(InteractionHand.MAIN_HAND);
-                return pause();
+                return;
             }
         }
 
@@ -444,7 +457,7 @@ final class ClearProcess implements IBaritoneProcess {
             case WORK -> {
                 releaseKeys();
                 BlockHitResult hit = nextBlock(p, level);
-                if (hit == null) { state = State.PICK; stateTicks = 0; item = null; return pause(); }
+                if (hit == null) { state = State.PICK; stateTicks = 0; item = null; return; }
                 tBreak++;
                 BlockPos b = hit.getBlockPos();
                 BlockState s = level.getBlockState(b);
@@ -453,7 +466,7 @@ final class ClearProcess implements IBaritoneProcess {
                     // still turning: the game's pause between two blocks counts down meanwhile, as it does for a
                     // player who keeps the button held while moving the mouse (nothing is sent while it counts)
                     if (destroyDelay(mc) > 0) mc.gameMode.continueDestroyBlock(b, hit.getDirection());
-                    return pause();
+                    return;
                 }
                 if (s.getDestroyProgress(p, level, b) >= 1.0f) {   // breaks at once: one per tick
                     mc.gameMode.startDestroyBlock(b, hit.getDirection());
@@ -465,7 +478,7 @@ final class ClearProcess implements IBaritoneProcess {
                     mc.gameMode.continueDestroyBlock(b, hit.getDirection());
                     p.swing(InteractionHand.MAIN_HAND);
                 }
-                return pause();
+                return;
             }
             case PICK -> {   // the drops close by, then on
                 tPick++;
@@ -473,30 +486,60 @@ final class ClearProcess implements IBaritoneProcess {
                     if (item != null && item.isAlive()) ignoredItems.add(item.getId());
                     item = nearestDrop(p, level);
                     stateTicks = 0;
-                    if (item == null) { releaseKeys(); state = State.NEXT; stop++; return pause(); }
+                    if (item == null) { releaseKeys(); state = State.NEXT; stop++; return; }
                 }
                 double d = faceTowards(p, item.getX(), item.getZ());
                 hold(d > 0.3 && aligned);
-                return pause();
+                return;
             }
             case WALK -> {
                 tWalk++;
                 double d = faceTowards(p, target.getX() + 0.5, target.getZ() + 0.5);
-                if (d < 0.35) { releaseKeys(); state = State.WORK; stateTicks = 0; return pause(); }
+                if (d < 0.35) { releaseKeys(); state = State.WORK; stateTicks = 0; return; }
                 if (d < lastDist - 0.03) { lastDist = d; stuck = 0; }
-                else if (++stuck > WALK_STUCK) { releaseKeys(); state = State.TRAVEL; stateTicks = 0; return pause(); }
+                else if (++stuck > WALK_STUCK) {
+                    releaseKeys();
+                    state = State.TRAVEL;
+                    stateTicks = 0;
+                    EngineSelector.current().goTo(GoalSpec.near(target, 2));
+                    midtownTraveling = true;
+                    return;
+                }
                 hold(aligned);
-                return pause();
+                return;
             }
             case TRAVEL -> {
                 tTravel++;
                 releaseKeys();
-                if (p.blockPosition().equals(target)) { state = State.WORK; stateTicks = 0; return pause(); }
-                // the timeout counts only while it gets no closer: the way back from the bed may take minutes
+                if (!midtownTraveling) {
+                    EngineSelector.current().goTo(GoalSpec.near(target, 2));
+                    midtownTraveling = true;
+                }
+                EngineStatus engStatus = EngineSelector.current().status();
+                boolean closeWithWork = p.blockPosition().distSqr(target) <= 4 && workAt(level, p.blockPosition(), reach(p));
+                if (p.blockPosition().equals(target) || engStatus == EngineStatus.DONE || closeWithWork) {
+                    EngineSelector.current().cancel();
+                    midtownTraveling = false;
+                    state = State.WORK;
+                    stateTicks = 0;
+                    return;
+                }
                 double d = Math.sqrt(p.blockPosition().distSqr(target));
                 if (d < travelBest - 1) { travelBest = d; stateTicks = 0; }
-                if (calcFailed || stateTicks > TRAVEL_TIMEOUT) { travelFails++; state = State.NEXT; stop++; return pause(); }
-                return new PathingCommand(new GoalBlock(target), PathingCommandType.SET_GOAL_AND_PATH);
+                if (engStatus == EngineStatus.FAILED || stateTicks > TRAVEL_TIMEOUT) {
+                    EngineSelector.current().cancel();
+                    midtownTraveling = false;
+                    if (workAt(level, p.blockPosition(), reach(p))) {
+                        state = State.WORK;
+                        stateTicks = 0;
+                        return;
+                    }
+                    travelFails++;
+                    state = State.NEXT;
+                    stop++;
+                    return;
+                }
+                return;
             }
             default -> { }
         }
@@ -508,27 +551,28 @@ final class ClearProcess implements IBaritoneProcess {
         int checked = 0;
         while (true) {
             if (stop >= stops.size()) {
-                if (!nextPass(level)) return finish(level);
+                if (!nextPass(level)) { finish(level); return; }
                 continue;
             }
             BlockPos s = stops.get(stop);
-            if (++checked > 400) return pause();   // carry on next tick
+            if (++checked > 400) return;   // carry on next tick
             if (!workAt(level, s, reach)) { stop++; continue; }
             if (!dev.buildtools.Api.solid(level, s.below())) { stop++; continue; }   // nothing to stand on there
             target = s;
             break;
         }
         stateTicks = 0;
-        if (p.blockPosition().equals(target)) { state = State.WORK; return pause(); }
+        if (p.blockPosition().equals(target)) { state = State.WORK; return; }
         if (straight(level, p.blockPosition(), target)) {
             state = State.WALK;
             lastDist = Double.MAX_VALUE;
             stuck = 0;
-            return pause();
+            return;
         }
         state = State.TRAVEL;
         travelBest = Double.MAX_VALUE;
-        return new PathingCommand(new GoalBlock(target), PathingCommandType.SET_GOAL_AND_PATH);
+        EngineSelector.current().goTo(GoalSpec.near(target, 2));
+        midtownTraveling = true;
     }
 
     private ItemEntity nearestDrop(LocalPlayer p, Level level) {
@@ -544,7 +588,7 @@ final class ClearProcess implements IBaritoneProcess {
         return best;
     }
 
-    private PathingCommand finish(Level level) {
+    private void finish(Level level) {
         int left = 0, wet = 0, guarded = 0;
         outer:
         for (int[] b : boxes) {
@@ -577,7 +621,6 @@ final class ClearProcess implements IBaritoneProcess {
                 + (resumes > 0 ? " Paused " + resumes + " times for other things (eating, fights, bed, chests): "
                         + Estimate.duration(Math.max(0, secs * 20 - workTicks)) + " of it." : ""));
         report("done, left=" + left + " wet=" + wet + " protected=" + guarded + " open=" + open);
-        return pause();
     }
 
     /** One line in the game log: what it has done so far and where the time went (ticks it was in control). */
@@ -590,25 +633,5 @@ final class ClearProcess implements IBaritoneProcess {
 
     private static String pct(int part, int total) {
         return Math.round(100.0 * part / total) + "%";
-    }
-
-    @Override
-    public boolean isTemporary() {
-        return true;
-    }
-
-    @Override
-    public void onLostControl() {
-        releaseKeys();
-    }
-
-    @Override
-    public double priority() {
-        return 11;
-    }
-
-    @Override
-    public String displayName0() {
-        return "Queue clear_area";
     }
 }

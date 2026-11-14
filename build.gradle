@@ -22,8 +22,6 @@ dependencies {
     implementation "net.fabricmc:fabric-loader:${project.loader_version}"
     implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
 
-    // baritone-api-fabric-<version>.jar from https://github.com/cabaletta/baritone/releases
-    implementation name: "baritone-api-fabric-${project.baritone_version}"
 
     // Dear ImGui (imgui-java) + Windows natives bundled into the mod jar
     shade("io.github.spair:imgui-java-binding:1.90.0")
@@ -96,7 +94,13 @@ tasks.register('parseScripts', JavaExec) {
     inputs.files scripts
     argumentProviders.add({ scripts.files.collect { it.absolutePath } } as CommandLineArgumentProvider)
 }
-tasks.named('check') { dependsOn 'langTest', 'parseScripts' }
+tasks.register('midtownTest', JavaExec) {
+    group = 'verification'
+    description = 'Runs Midtown offline unit tests and assertions.'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.midtown.MidtownTest'
+}
+tasks.named('check') { dependsOn 'langTest', 'parseScripts', 'midtownTest' }
 tasks.named('test') { failOnNoDiscoveredTests = false }   // the tests above are plain programs, not JUnit
 
 java {

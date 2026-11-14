@@ -1,0 +1,8 @@
+// midtown eat: on food < 14 ... eat() using Midtown engine
+option("engine", "midtown")
+on food < 14
+  eat()
+  print("TEST midtown_ate food={food}")
+end
+print("TEST midtown_eat armed")
+wait 90

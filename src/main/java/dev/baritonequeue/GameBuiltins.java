@@ -1,7 +1,5 @@
 package dev.baritonequeue;
 
-import baritone.api.BaritoneAPI;
-import baritone.api.utils.BetterBlockPos;
 import dev.baritonequeue.Values.Pos;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
@@ -78,15 +76,15 @@ final class GameBuiltins {
     }
 
     private static LocalPlayer player(int line) {
-        LocalPlayer p = Minecraft.getInstance().player;
-        if (p == null) throw error("Not in a world.", line);
-        return p;
+        Minecraft mc = Minecraft.getInstance();
+        if (mc == null || mc.player == null) throw error("Not in a world.", line);
+        return mc.player;
     }
 
     private static Level level(int line) {
-        Level l = Minecraft.getInstance().level;
-        if (l == null) throw error("Not in a world.", line);
-        return l;
+        Minecraft mc = Minecraft.getInstance();
+        if (mc == null || mc.level == null) throw error("Not in a world.", line);
+        return mc.level;
     }
 
     static Item item(Object v, String fn, int line) {
@@ -163,14 +161,14 @@ final class GameBuiltins {
     /** Every cell of the selection, a slice per tick, counting those that match. */
     private static double countInSelection(Interp in, java.util.function.Predicate<net.minecraft.world.level.block.state.BlockState> test, int line) {
         Level level = level(line);
-        var sels = Util.baritone().getSelectionManager().getSelections();
-        if (sels.length == 0) throw error("There is no selection. Select an area first: area(\"name\") or select(corner1, corner2).", line);
+        List<int[]> sels = Areas.read();
+        if (sels.isEmpty()) throw error("There is no selection. Select an area first: area(\"name\") or select(corner1, corner2).", line);
         long n = 0, seen = 0;
         BlockPos.MutableBlockPos m = new BlockPos.MutableBlockPos();
-        for (var s : sels) {
-            for (int x = s.min().x; x <= s.max().x; x++) {
-                for (int z = s.min().z; z <= s.max().z; z++) {
-                    for (int y = s.min().y; y <= s.max().y; y++) {
+        for (int[] s : sels) {
+            for (int x = s[0]; x <= s[3]; x++) {
+                for (int z = s[2]; z <= s[5]; z++) {
+                    for (int y = s[1]; y <= s[4]; y++) {
                         m.set(x, y, z);
                         if (++seen % 40000 == 0) in.yieldTick();
                         if (level.hasChunkAt(m) && test.test(level.getBlockState(m))) n++;
@@ -286,13 +284,59 @@ final class GameBuiltins {
             String cmd = c;
             return in.await(() -> new Actions.ChatCommand(cmd), "/" + cmd, l);
         });
-        def(g, "goto", 1, 3, "goto(position)", "walk there with Baritone", (in, a, l) -> {
+        def(g, "goto", 1, 3, "goto(position | x, z)", "walk to a position or (x, z) column with Midtown", (in, a, l) -> {
+            if (a.size() == 2 && !(a.get(0) instanceof Pos)) {
+                int x = toInt(a.get(0), "goto(x, z)", l);
+                int z = toInt(a.get(1), "goto(x, z)", l);
+                String cmd = "goto " + x + " " + z;
+                return in.await(() -> new Actions.BaritoneCommand(cmd), cmd, l);
+            }
             Pos p = toPos(a, 0, "goto()", l);
             String cmd = "goto " + p;
             return in.await(() -> new Actions.BaritoneCommand(cmd), cmd, l);
         });
-        def(g, "cancel", 0, 0, "cancel()", "stop whatever Baritone is doing (like #stop, but the script goes on)", (in, a, l) -> {
-            Util.baritone().getPathingBehavior().cancelEverything();
+        def(g, "mine", 1, -1, "mine(\"block\", ...)", "mine matching blocks with Midtown", (in, a, l) -> {
+            List<String> targets = new ArrayList<>();
+            for (Object o : a) targets.add(str(o));
+            String cmd = "mine " + String.join(" ", targets);
+            return in.await(() -> new Actions.BaritoneCommand(cmd), cmd, l);
+        });
+        def(g, "follow", 0, 1, "follow([\"name\"])", "walk to the nearest entity (optionally matching name) with Midtown", (in, a, l) -> {
+            LocalPlayer me = player(l);
+            Level lvl = level(l);
+            String filter = a.isEmpty() ? null : str(a.get(0)).toLowerCase();
+            net.minecraft.world.entity.Entity best = null;
+            double bestD = Double.MAX_VALUE;
+            for (var e : lvl.getEntities(me, me.getBoundingBox().inflate(32, 16, 32))) {
+                if (!e.isAlive()) continue;
+                if (filter != null && !e.getName().getString().toLowerCase().contains(filter)) continue;
+                double d = e.distanceToSqr(me);
+                if (d < bestD) { bestD = d; best = e; }
+            }
+            if (best == null) throw error("No matching entity nearby for follow().", l);
+            BlockPos dest = best.blockPosition();
+            String cmd = "goto " + dest.getX() + " " + dest.getY() + " " + dest.getZ();
+            return in.await(() -> new Actions.BaritoneCommand(cmd), "follow " + best.getName().getString(), l);
+        });
+        def(g, "tunnel", 0, 1, "tunnel([blocks])", "dig a tunnel forward (default 16 blocks) with Midtown", (in, a, l) -> {
+            LocalPlayer me = player(l);
+            int dist = a.isEmpty() ? 16 : Math.max(1, toInt(a.get(0), "tunnel()", l));
+            net.minecraft.core.Direction dir = me.getDirection();
+            BlockPos dest = me.blockPosition().relative(dir, dist);
+            dev.midtown.api.EngineSelector.current().setAllowBreak(true);
+            String cmd = "goto " + dest.getX() + " " + dest.getY() + " " + dest.getZ();
+            return in.await(() -> new Actions.BaritoneCommand(cmd), "tunnel " + dist, l);
+        });
+        def(g, "cancel", 0, 0, "cancel()", "stop whatever the path engine is doing (like #stop, but the script goes on)", (in, a, l) -> {
+            dev.midtown.api.EngineSelector.current().cancel();
+            return null;
+        });
+        def(g, "disconnect", 0, 1, "disconnect([reason])", "stop the script cleanly and disconnect from the server", (in, a, l) -> {
+            String reason = a.isEmpty() || a.get(0) == null ? "Script disconnected." : str(a.get(0));
+            if (in.runner() != null) {
+                in.runner().reset();
+            }
+            dev.survivalkit.Api.disconnect(reason);
             return null;
         });
 
@@ -591,18 +635,16 @@ final class GameBuiltins {
         });
         def(g, "select", 2, 6, "select(corner1, corner2)", "make the selection this box (replaces the selection)", (in, a, l) -> {
             Pos p = toPos(a, 0, "select()", l), q = toPos(a, a.get(0) instanceof Pos ? 1 : 3, "select()", l);
-            var sm = Util.baritone().getSelectionManager();
-            sm.removeAllSelections();
-            sm.addSelection(new BetterBlockPos(p.x(), p.y(), p.z()), new BetterBlockPos(q.x(), q.y(), q.z()));
+            Areas.setSingleBox(new BlockPos(p.x(), p.y(), p.z()), new BlockPos(q.x(), q.y(), q.z()));
             return null;
         });
         def(g, "add_box", 2, 6, "add_box(corner1, corner2)", "add a box to the selection", (in, a, l) -> {
             Pos p = toPos(a, 0, "add_box()", l), q = toPos(a, a.get(0) instanceof Pos ? 1 : 3, "add_box()", l);
-            Util.baritone().getSelectionManager().addSelection(new BetterBlockPos(p.x(), p.y(), p.z()), new BetterBlockPos(q.x(), q.y(), q.z()));
+            Areas.addBox(new BlockPos(p.x(), p.y(), p.z()), new BlockPos(q.x(), q.y(), q.z()));
             return null;
         });
         def(g, "clear_selection", 0, 0, "clear_selection()", "no selection any more", (in, a, l) -> {
-            Util.baritone().getSelectionManager().removeAllSelections();
+            Areas.clearSelection();
             return null;
         });
         def(g, "save_area", 1, 1, "save_area(\"name\")", "save the selection under a name", (in, a, l) -> {
@@ -705,23 +747,24 @@ final class GameBuiltins {
 
     private static void settings() {
         String g = "settings";
-        def(g, "set", 2, 2, "set(\"setting\", value)", "change a Baritone setting (like #set)", (in, a, l) -> {
+        def(g, "set", 2, 2, "set(\"setting\", value)", "change an engine setting", (in, a, l) -> {
             String name = str(a.get(0));
-            String canon = Util.settingName(name);
-            if (canon == null) throw error("'" + name + "' is not a Baritone setting.", l);
             Object v = a.get(1);
-            if (canon.equals("allowBreak") && v instanceof Boolean b) {   // through the safe-area guard: near a safe area it stays off
+            if (name.equalsIgnoreCase("allowBreak") && v instanceof Boolean b) {
                 dev.buildtools.Api.setOwnBreak(b);
                 return null;
             }
             String text = v instanceof List<?> list ? String.join(",", list.stream().map(Values::str).toList()) : str(v);
-            if (!Actions.BaritoneCommand.execute("set " + canon + " " + text)) throw error("Baritone did not accept " + canon + " = " + text + ".", l);
+            if (!dev.midtown.api.EngineSelector.current().setSetting(name, text)) {
+                throw error("Engine did not accept " + name + " = " + text + ".", l);
+            }
             return null;
         });
-        def(g, "setting", 1, 1, "setting(\"setting\")", "the value of a Baritone setting", (in, a, l) -> {
-            var s = BaritoneAPI.getSettings().byLowerName.get(str(a.get(0)).toLowerCase());
-            if (s == null) throw error("'" + str(a.get(0)) + "' is not a Baritone setting.", l);
-            return settingValue(s.value);
+        def(g, "setting", 1, 1, "setting(\"setting\")", "the value of an engine setting", (in, a, l) -> {
+            String name = str(a.get(0));
+            String val = dev.midtown.api.EngineSelector.current().getSetting(name);
+            if (val == null) throw error("'" + name + "' is not a known engine setting.", l);
+            return settingValue(val);
         });
         def(g, "option", 1, 2, "option(\"group.name\" [, value])", "read or change a helper option, e.g. option(\"survival.eatBelow\", 10), option(\"survival.bed\", pos(...)), option(\"loadchest.auto\", true)", (in, a, l) -> {
             if (a.size() == 1) return Modules.get(str(a.get(0)), l);

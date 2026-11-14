@@ -1,7 +1,5 @@
 package dev.buildtools;
 
-import baritone.api.BaritoneAPI;
-import baritone.api.utils.input.Input;
 import net.fabricmc.fabric.api.event.player.UseBlockCallback;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
@@ -15,12 +13,8 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * Remembers the blocks Baritone itself placed as scaffolding (bridges, pillars, stairs of throwaway blocks) so
- * ScaffoldProcess can pick them up in one quick sweep afterwards, instead of the builder taking them down layer by layer.
- *
- * Only throwaway blocks (Baritone's acceptableThrowawayItems) placed while Baritone is clicking are recorded, and not
- * while the builder is placing real blocks: with the builder running, only a queue step that clears (sel ca,
- * sel replace ... air, sel set air) counts, because there nothing the builder places is wanted.
+ * Remembers the blocks the engine itself placed as scaffolding (bridges, pillars, stairs of throwaway blocks) so
+ * ScaffoldProcess can pick them up in one quick sweep afterwards.
  */
 final class Scaffold {
     private Scaffold() {}
@@ -36,13 +30,14 @@ final class Scaffold {
         UseBlockCallback.EVENT.register((player, level, hand, hit) -> {
             if (!level.isClientSide() || !Config.cfg.scaffoldRecord) return InteractionResult.PASS;
             if (!(player.getItemInHand(hand).getItem() instanceof BlockItem bi)) return InteractionResult.PASS;
-            if (!BaritoneAPI.getSettings().acceptableThrowawayItems.value.contains(bi)) return InteractionResult.PASS;
-            if (!Util.baritone().getInputOverrideHandler().isInputForcedDown(Input.CLICK_RIGHT)) return InteractionResult.PASS;   // you, not Baritone
+            if (!Util.isThrowaway(player.getItemInHand(hand))) return InteractionResult.PASS;
+            Minecraft mc = Minecraft.getInstance();
+            if (!dev.midtown.api.EngineSelector.current().isBusy() || mc.options == null || !mc.options.keyUse.isDown()) return InteractionResult.PASS;
             BlockPos clicked = hit.getBlockPos();
             BlockPos placed = level.getBlockState(clicked).canBeReplaced() ? clicked : clicked.relative(hit.getDirection());
             var outside = Api.scaffoldOutsideSchematic;   // a schematic build knows which blocks are wanted
             if (outside != null && !outside.test(placed, bi.getBlock())) return InteractionResult.PASS;   // the schematic wants it: not scaffolding
-            if (Util.baritone().getBuilderProcess().isActive() && !clearingStep()) {   // the builder may be building
+            if (dev.midtown.api.EngineSelector.current().isBusy() && !clearingStep()) {   // builder/engine may be building
                 if (outside == null || !outside.test(placed, bi.getBlock())) return InteractionResult.PASS;
             }
             if (spots.size() < MAX) spots.put(placed.immutable(), bi.getBlock());

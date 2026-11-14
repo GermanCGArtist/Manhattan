@@ -95,12 +95,12 @@ final class Syntax {
         }
     }
 
+    private static final Set<String> SHIM_COMMANDS = Set.of(
+            "goto", "mine", "m", "stop", "cancel", "p", "pause", "r", "resume", "unpause",
+            "set", "sel", "selection", "follow", "tunnel", "build", "farm", "explore");
+
     private static boolean known(String label) {
-        try {
-            return Util.baritone().getCommandManager().getCommand(label) != null || Util.settingName(label) != null;
-        } catch (Throwable t) {
-            return true;   // no judgement when Baritone can not be asked
-        }
+        return SHIM_COMMANDS.contains(label) || Util.settingName(label) != null;
     }
 
     static boolean isBlock(String word) {

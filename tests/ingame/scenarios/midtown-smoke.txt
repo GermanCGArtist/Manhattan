@@ -1,0 +1,4 @@
+// midtown smoke: option("engine", "midtown") sets active engine
+option("engine", "midtown")
+let cur = option("engine")
+print("TEST midtown_smoke engine={cur}")

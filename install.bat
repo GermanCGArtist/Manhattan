@@ -19,7 +19,7 @@ if not exist "%JAR%" (
   exit /b 1
 )
 if not exist "%OFF%" mkdir "%OFF%"
-for %%F in ("%MODS%\survivalkit-*.jar" "%MODS%\buildtools-*.jar" "%MODS%\loadchest-*.jar" "%MODS%\baritonequeue-*.jar") do (
+for %%F in ("%MODS%\baritone-*.jar" "%MODS%\baritoneui-*.jar" "%MODS%\survivalkit-*.jar" "%MODS%\buildtools-*.jar" "%MODS%\loadchest-*.jar" "%MODS%\baritonequeue-*.jar") do (
   if exist "%%~F" (
     move /Y "%%~F" "%OFF%\" >nul && echo moved out: %%~nxF
   )

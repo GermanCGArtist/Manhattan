@@ -1,9 +1,8 @@
 package dev.buildtools;
 
-import baritone.api.pathing.goals.GoalBlock;
-import baritone.api.process.PathingCommand;
-import baritone.api.process.PathingCommandType;
-import baritone.api.selection.ISelection;
+import dev.midtown.api.EngineSelector;
+import dev.midtown.api.EngineStatus;
+import dev.midtown.api.GoalSpec;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
@@ -19,6 +18,8 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.FallingBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -48,12 +49,14 @@ import static dev.buildtools.Config.cfg;
  * With sand, gravel or concrete powder it drops the block into the top of a column; it sinks by itself.
  */
 final class TerminatorProcess extends Feature {
+    private static final Logger LOGGER = LoggerFactory.getLogger(TerminatorProcess.class);
+
     private static final double REACH = 4.3;
     private static final int WALK_TIMEOUT = 20 * 40;
     private static final int RANGE = 5;
     private static final int BREAK_TIMEOUT = 20 * 4;
     private static final int TARGET_TIMEOUT = 20 * 3;     // a cell that turned out to be out of reach: next one
-    private static final int MAX_FRUITLESS = 40;          // decisions in a row without placing anything: give up
+    private static final int MAX_FRUITLESS = 120;         // decisions in a row without placing anything: give up
     private static final int AIR_LOW = 110;               // of 300: come up for air
     private static final int SWIM_STUCK = 20 * 4;
     private static final int DIVE_TIMEOUT = 20 * 25;
@@ -72,6 +75,7 @@ final class TerminatorProcess extends Feature {
     private int placedAtDive;
     private BlockPos walkTarget;   // the cell the current walk is for
     private long stepTick, tickCount;
+    private long lastHeartbeatTick;
     private boolean keysHeld;
     private final Map<BlockPos, Integer> failures = new HashMap<>();
     private final Set<BlockPos> badStand = new HashSet<>(), badDive = new HashSet<>();
@@ -80,6 +84,25 @@ final class TerminatorProcess extends Feature {
     private String lastReason = "";
     private boolean ranOut;
     private Boolean breakBefore;   // the player's own allowBreak, given back at the end
+
+    private void setState(State next) {
+        if (state != next) {
+            LOGGER.info("[Terminator] state {} -> {}", state, next);
+            state = next;
+        }
+    }
+
+    private void markBadStand(BlockPos s) {
+        if (s != null && badStand.add(s)) {
+            LOGGER.info("[Terminator] badStand added: {}", s.toShortString());
+        }
+    }
+
+    private void markBadDive(BlockPos s) {
+        if (s != null && badDive.add(s)) {
+            LOGGER.info("[Terminator] badDive added: {}", s.toShortString());
+        }
+    }
 
     TerminatorProcess() {
         super("BuildTools terminator", 13);
@@ -112,10 +135,13 @@ final class TerminatorProcess extends Feature {
         if (item != null && Util.slotOf(p, item) < 0) return "There is no " + BuiltInRegistries.ITEM.getKey(item).getPath() + " in the inventory.";
         if (item == null && Util.countThrowaway(p) == 0) return "I have no blocks to fill with (dirt, cobblestone ... or name one: fill_water(\"dirt\")).";
         boxes.clear();
-        for (ISelection s : Util.baritone().getSelectionManager().getSelections()) {
-            boxes.add(new int[]{s.min().x, s.min().y, s.min().z, s.max().x, s.max().y, s.max().z});
+        boxes.addAll(dev.baritonequeue.Areas.read());
+        if (boxes.isEmpty() && Config.cfg.corner1 != null && Config.cfg.corner2 != null) {
+            boxes.add(new int[]{
+                    Math.min(Config.cfg.corner1[0], Config.cfg.corner2[0]), Math.min(Config.cfg.corner1[1], Config.cfg.corner2[1]), Math.min(Config.cfg.corner1[2], Config.cfg.corner2[2]),
+                    Math.max(Config.cfg.corner1[0], Config.cfg.corner2[0]), Math.max(Config.cfg.corner1[1], Config.cfg.corner2[1]), Math.max(Config.cfg.corner1[2], Config.cfg.corner2[2])});
         }
-        if (boxes.isEmpty()) return "Select the area first: area(\"name\"), select(corner1, corner2), or #sel pos1 / #sel pos2.";
+        if (boxes.isEmpty()) return "Select the area first: area(\"name\"), select(corner1, corner2).";
         preferred = item;
         falling = item instanceof BlockItem bi && bi.getBlock() instanceof FallingBlock;
         Placer.preferred = item;
@@ -126,13 +152,15 @@ final class TerminatorProcess extends Feature {
         goal = null;
         breaking = null;
         diveSpot = null;
-        state = State.WORK;
+        setState(State.WORK);
         walkTicks = 0;
         placed = 0;
         fruitless = 0;
         stepAside = 0;
         lastReason = "";
         ranOut = false;
+        lastHeartbeatTick = 0;
+        breakBefore = RegionRules.setOwnBreak(false);
         working = true;
         warnWaterBelow(mc.level);
         Util.msg("Filling the water from the bottom up" + (item != null ? " with " + BuiltInRegistries.ITEM.getKey(item).getPath() : "")
@@ -140,52 +168,52 @@ final class TerminatorProcess extends Feature {
         return null;
     }
 
-    /**
-     * Baritone may dig only when a walk needs it: with digging allowed every path search weighs breaking through every
-     * block, which makes searches many times bigger and slower.
-     */
-    private void allowDigging(boolean on) {
-        if (on && breakBefore == null) breakBefore = RegionRules.setOwnBreak(true);
-        else if (!on && breakBefore != null) {
+    private void giveBackBreak() {
+        if (breakBefore != null) {
             RegionRules.setOwnBreak(breakBefore);
             breakBefore = null;
         }
     }
 
-    private void giveBackBreak() {
-        allowDigging(false);
-    }
-
-    // walking: the goal, whether it needs digging, and whether we are getting closer
-    private boolean digging;
+    // walking: the goal, and whether we are getting closer
+    private boolean triedNear, triedExact;
     private double bestGoalDist;
     private int noProgress;
 
     private void startWalk(Level level, BlockPos to) {
         goal = to;
-        state = State.WALK;
+        setState(State.WALK);
         walkTicks = 0;
         noProgress = 0;
         bestGoalDist = Double.MAX_VALUE;
-        digging = !level.getBlockState(to).getCollisionShape(level, to).isEmpty()
-                || !level.getBlockState(to.above()).getCollisionShape(level, to.above()).isEmpty();
-        allowDigging(digging);
-    }
-
-    /** Near the spot is enough (any cell next to it), unless the spot has to be dug out. */
-    private PathingCommand walkCommand() {
-        return new PathingCommand(digging ? new GoalBlock(goal) : new baritone.api.pathing.goals.GoalNear(goal, 1),
-                PathingCommandType.SET_GOAL_AND_PATH);
+        LocalPlayer p = Minecraft.getInstance().player;
+        boolean inWet = p != null && (p.isInWater() || p.isUnderWater()
+                || p.blockPosition().equals(walkTarget)
+                || (inSelection(p.blockPosition()) && wet(level, p.blockPosition())));
+        boolean useLoS = diveSpot == null && walkTarget != null && !inWet;
+        triedNear = !useLoS;
+        triedExact = !useLoS && diveSpot == null;
+        GoalSpec spec = useLoS
+                ? GoalSpec.lineOfSight(walkTarget, 4.5)
+                : (triedExact ? GoalSpec.exact(to) : GoalSpec.near(to, 1));
+        LOGGER.info("[Terminator] startWalk: to={} useLoS={} walkTarget={} goal={}",
+                to.toShortString(), useLoS,
+                (walkTarget == null ? "none" : walkTarget.toShortString()),
+                to.toShortString());
+        EngineSelector.current().goTo(spec);
     }
 
     void cancel() {
+        LOGGER.info("[Terminator] cancel");
+        EngineSelector.current().cancel();
         giveBackBreak();
         working = false;
         current = null;
         goal = null;
         breaking = null;
         diveSpot = null;
-        state = State.WORK;
+        setState(State.WORK);
+        lastHeartbeatTick = 0;
         Placer.preferred = null;
         releaseKeys();
         Minecraft mc = Minecraft.getInstance();
@@ -215,11 +243,15 @@ final class TerminatorProcess extends Feature {
         keysHeld = false;
     }
 
-    /** Every client tick: when another process (sleep, eating, a fight) has taken over, let go of the keys. */
     @Override
     void tick() {
         tickCount++;
-        if (keysHeld && stepTick < tickCount - 1) releaseKeys();
+        if (!working) {
+            if (keysHeld && stepTick < tickCount - 1) releaseKeys();
+            return;
+        }
+        stepTick = tickCount;
+        stepInternal();
     }
 
     // ------------------------------------------------------------------ geometry
@@ -355,45 +387,14 @@ final class TerminatorProcess extends Feature {
 
     private record Plan(BlockPos target, BlockPos stand, boolean dive) {}
 
-    /** A block Baritone may dig away to make room: soft enough, not protected, not on its do-not-break list, no water next to it. */
-    private boolean diggable(Level level, BlockPos c) {
-        if (inSelection(c) || protectedAt(c)) return false;
-        BlockState s = level.getBlockState(c);
-        if (!s.getFluidState().isEmpty()) return false;
-        if (!s.isAir()) {
-            float hard = s.getDestroySpeed(level, c);
-            if (hard < 0 || hard > 3.0f) return false;
-            if (baritone.api.BaritoneAPI.getSettings().blocksToDisallowBreaking.value.contains(s.getBlock())) return false;
-        }
-        for (Direction d : Direction.values()) {
-            if (d == Direction.DOWN) continue;
-            if (!level.getBlockState(c.relative(d)).getFluidState().isEmpty()) return false;   // digging there lets water in
-        }
-        return true;
-    }
-
     private static boolean protectedAt(BlockPos c) {
         if (!cfg.protect) return false;
         for (Config.Zone z : cfg.zones) if (z.contains(c)) return true;
         return false;
     }
 
-    /** A spot that becomes a stand once the blocks in it are dug away (never next to water, never in the selection). */
-    private boolean digStand(Level level, BlockPos c) {
-        if (!Util.isSolid(level, c.below())) return false;
-        boolean feetSolid = !level.getBlockState(c).getCollisionShape(level, c).isEmpty();
-        boolean headSolid = !level.getBlockState(c.above()).getCollisionShape(level, c.above()).isEmpty();
-        if (!feetSolid && !headSolid) return false;   // nothing to dig: a normal stand or nothing
-        return diggable(level, c) && diggable(level, c.above());
-    }
-
-    /** A dry (or wading) spot from which the cell is in reach (or one that can be dug out), or null. */
+    /** A dry (or wading) spot from which the cell is in reach, or null. */
     private BlockPos standFor(Level level, BlockPos t) {
-        BlockPos best = standFor(level, t, false);
-        return best != null ? best : standFor(level, t, true);
-    }
-
-    private BlockPos standFor(Level level, BlockPos t, boolean dig) {
         BlockPos best = null;
         double bestD = Double.MAX_VALUE;
         for (int dx = -4; dx <= 4; dx++) {
@@ -402,9 +403,9 @@ final class TerminatorProcess extends Feature {
                     BlockPos s = t.offset(dx, dy, dz);
                     if (s.equals(t) || s.equals(t.above()) || badStand.contains(s) || !level.hasChunkAt(s)) continue;
                     double d = eyeAt(s).distanceTo(Vec3.atCenterOf(t));
-                    if (d > REACH + 0.5 || d >= bestD || !(dig ? digStand(level, s) : stand(level, s))) continue;
+                    if (d > REACH + 0.5 || d >= bestD || !stand(level, s)) continue;
                     // only where a face to click is really visible from there (else it walks there for nothing)
-                    if (!dig && !breakable(level, t) && !Placer.placeableFrom(level, Minecraft.getInstance().player, eyeAt(s), t)) continue;
+                    if (!breakable(level, t) && !Placer.placeableFrom(level, Minecraft.getInstance().player, eyeAt(s), t)) continue;
                     best = s;
                     bestD = d;
                 }
@@ -492,8 +493,8 @@ final class TerminatorProcess extends Feature {
         return dive;
     }
 
-    /** A dry spot at the water's edge near the dive spot, to swim out from. */
-    private BlockPos shoreNear(Level level, BlockPos spot, BlockPos surface) {
+    /** A dry spot at the water's edge near the dive spot, preferring the player's side of the lake. */
+    private BlockPos shoreNear(Level level, BlockPos spot, BlockPos surface, BlockPos me) {
         BlockPos best = null;
         double bestD = Double.MAX_VALUE;
         for (int dx = -16; dx <= 16; dx++) {
@@ -501,7 +502,7 @@ final class TerminatorProcess extends Feature {
                 for (int dy = -2; dy <= 3; dy++) {
                     BlockPos c = surface.offset(dx, dy - 1, dz);
                     if (badStand.contains(c) || !level.hasChunkAt(c)) continue;
-                    double d = c.distSqr(surface);
+                    double d = c.distSqr(surface) + 0.25 * c.distSqr(me);
                     if (d >= bestD || !stand(level, c)) continue;
                     if (!touchesWater(level, c)) continue;
                     best = c;
@@ -536,46 +537,64 @@ final class TerminatorProcess extends Feature {
         return working;
     }
 
-    @Override
-    PathingCommand step(boolean calcFailed, boolean isSafeToCancel) {
-        stepTick = tickCount;
+    private void stepInternal() {
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer p = mc.player;
-        if (!working || p == null || mc.level == null || mc.gameMode == null) return defer();
+        if (!working || p == null || mc.level == null || mc.gameMode == null) return;
         Level level = mc.level;
 
         if (materialCount(p) == 0) {
             ranOut = true;
-            return finish(level, "I ran out of blocks to fill with.");
+            finish(level, "I ran out of blocks to fill with.");
+            return;
         }
         // under water without a plan (after an interruption, or a dive that went wrong): come up first
         if (p.isUnderWater() && state != State.SINK && state != State.UNDER && state != State.RISE) {
-            state = State.RISE;
+            if (state == State.WALK) EngineSelector.current().cancel();
+            setState(State.RISE);
             stateTicks = 0;
         }
         if (p.isUnderWater() && p.getAirSupply() < AIR_LOW && state != State.RISE) {
             abortWork(mc);
-            state = State.RISE;
+            setState(State.RISE);
             stateTicks = 0;
         }
 
+        if (state == State.UNDER && ++stateTicks > DIVE_TIMEOUT) {
+            abortWork(mc);
+            markBadDive(diveSpot);
+            setState(State.RISE);
+            stateTicks = 0;
+            return;
+        }
+
         // one placement (or a plant to break) in progress
-        PathingCommand busyWithCell = workOnCell(mc, p, level);
-        if (busyWithCell != null) return busyWithCell;
+        boolean busyWithCell = workOnCell(mc, p, level);
+        if (busyWithCell) return;
+
+        if (tickCount - lastHeartbeatTick >= 100) {
+            lastHeartbeatTick = tickCount;
+            EngineStatus engStatus = EngineSelector.current().status();
+            LOGGER.info("[Terminator] heartbeat: state={} pos={} goal={} diveSpot={} engineStatus={} placed={} fruitless={}",
+                    state, p.blockPosition().toShortString(),
+                    (goal == null ? "none" : goal.toShortString()),
+                    (diveSpot == null ? "none" : diveSpot.toShortString()),
+                    engStatus, placed, fruitless);
+        }
 
         switch (state) {
-            case RISE -> { return rise(p, level); }
-            case SWIM -> { return swim(mc, p, level); }
-            case SINK -> { return sink(mc, p, level); }
+            case RISE -> { rise(p, level); return; }
+            case SWIM -> { swim(mc, p, level); return; }
+            case SINK -> { sink(mc, p, level); return; }
             case UNDER -> {
-                if (++stateTicks > DIVE_TIMEOUT) { badDive.add(diveSpot); state = State.RISE; stateTicks = 0; return pause(); }
+                if (stateTicks > DIVE_TIMEOUT) { markBadDive(diveSpot); setState(State.RISE); stateTicks = 0; return; }
                 holdPosition(p);
                 BlockPos t = findInReach(mc, p, level);
-                if (t != null) return begin(mc, p, level, t);
-                if (placed == placedAtDive && diveSpot != null) badDive.add(diveSpot);   // down here for nothing: not this spot again
-                state = State.RISE;   // nothing more from down here
+                if (t != null) { begin(mc, p, level, t); return; }
+                if (placed == placedAtDive && diveSpot != null) markBadDive(diveSpot);
+                setState(State.RISE);
                 stateTicks = 0;
-                return pause();
+                return;
             }
             default -> { }
         }
@@ -583,38 +602,62 @@ final class TerminatorProcess extends Feature {
 
         // from where we stand
         BlockPos target = findInReach(mc, p, level);
-        if (target != null) return begin(mc, p, level, target);
+        if (target != null) { begin(mc, p, level, target); return; }
 
         // walking to a stand already
         if (state == State.WALK && goal != null) {
-            boolean arrived = p.blockPosition().distSqr(goal) <= 2;
+            EngineStatus engStatus = EngineSelector.current().status();
+            boolean inLiquid = p.isInWater() || p.isUnderWater();
+            boolean needExactDry = inLiquid && !wet(level, goal);
+            boolean arrived = needExactDry
+                    ? (p.blockPosition().equals(goal) || (!inLiquid && engStatus == EngineStatus.DONE))
+                    : (triedExact
+                        ? (p.blockPosition().equals(goal) || engStatus == EngineStatus.DONE)
+                        : (p.blockPosition().distSqr(goal) <= 2 || engStatus == EngineStatus.DONE));
+            boolean engFailed = engStatus == EngineStatus.FAILED;
             double dist = Math.sqrt(p.blockPosition().distSqr(goal));
             if (dist < bestGoalDist - 1) { bestGoalDist = dist; noProgress = 0; }
             else noProgress++;
-            // no closer for 15 s (Baritone searching and searching), or no path: once more with digging, then another spot
-            if (!arrived && (calcFailed || noProgress > 20 * 15) && !digging) {
-                digging = true;
-                noProgress = 0;
-                allowDigging(true);
-                return new PathingCommand(new GoalBlock(goal), PathingCommandType.SET_GOAL_AND_PATH);
-            }
-            if (!arrived && !calcFailed && noProgress <= 20 * 15 && ++walkTicks <= WALK_TIMEOUT * 6) return walkCommand();
-            if (arrived && diveSpot != null) {   // at the shore: swim out
-                state = State.SWIM;
+
+            if (arrived && diveSpot != null) {
+                EngineSelector.current().cancel();
+                setState(State.SWIM);
                 stateTicks = 0;
                 stuckTicks = 0;
                 lastDist = Double.MAX_VALUE;
-                return pause();
+                return;
             }
-            badStand.add(goal);   // there, or could not get there, and still nothing to do: not again
-            if (walkTarget != null) failures.merge(walkTarget, 1, Integer::sum);   // three strikes and the cell is left
+            if (!arrived && (engFailed || noProgress > 20 * 15) && !triedNear) {
+                triedNear = true;
+                noProgress = 0;
+                LOGGER.info("[Terminator] WALK retry triedNear: goal={} engStatus={}", goal.toShortString(), engStatus);
+                EngineSelector.current().goTo(GoalSpec.near(goal, 1));
+                return;
+            }
+            if ((engFailed || arrived || noProgress > 20 * 15) && !triedExact) {
+                triedExact = true;
+                triedNear = true;
+                noProgress = 0;
+                LOGGER.info("[Terminator] WALK retry triedExact: goal={} engStatus={}", goal.toShortString(), engStatus);
+                EngineSelector.current().goTo(GoalSpec.exact(goal));
+                return;
+            }
+            if (!arrived && !engFailed && noProgress <= 20 * 15 && ++walkTicks <= WALK_TIMEOUT * 6) return;
+            EngineSelector.current().cancel();
+            markBadStand(goal);
+            if (!arrived && diveSpot != null) {
+                for (Direction d : Direction.Plane.HORIZONTAL) markBadStand(goal.relative(d));
+                markBadDive(diveSpot);
+                diveSpot = null;
+            }
+            if (walkTarget != null) failures.merge(walkTarget, arrived ? 1 : 3, Integer::sum);
             goal = null;
-            allowDigging(false);
         }
 
-        if (++fruitless > MAX_FRUITLESS) return finish(level, null);
+        if (++fruitless > MAX_FRUITLESS) { finish(level, null); return; }
         Plan plan = plan(p, level);
         if (plan == null) {
+            LOGGER.info("[Terminator] plan: none found");
             // the last wet cell may be the one we stand in: nothing goes where the body is, so step out of it first
             BlockPos feet = p.blockPosition();
             boolean inWetCell = (inSelection(feet) && wet(level, feet)) || (inSelection(feet.above()) && wet(level, feet.above()));
@@ -623,80 +666,82 @@ final class TerminatorProcess extends Feature {
                 if (aside != null) {
                     stepAside++;
                     startWalk(level, aside);
-                    return walkCommand();
+                    return;
                 }
             }
-            return finish(level, null);
+            finish(level, null);
+            return;
         }
+        LOGGER.info("[Terminator] plan selected: dive={} target={} stand={}",
+                plan.dive, plan.target.toShortString(), plan.stand.toShortString());
         walkTicks = 0;
         if (!plan.dive) {
             diveSpot = null;
             walkTarget = plan.target;
             startWalk(level, plan.stand);
             if (p.blockPosition().distSqr(goal) > 64 * 64) Util.msg("Walking to the next part (" + goal.toShortString() + ").");
-            return walkCommand();
+            return;
         }
         diveSpot = plan.stand;
         diveTarget = plan.target;
         walkTarget = plan.target;
         BlockPos surface = surfaceAbove(level, diveSpot);
-        if (p.isInWater() && !p.isUnderWater() && surface != null && Math.sqrt(p.blockPosition().distSqr(surface)) < 24) {
-            state = State.SWIM;   // already swimming near it
+        if (p.isInWater() && !p.isUnderWater() && surface != null && p.blockPosition().distSqr(surface) <= 64 * 64) {
+            setState(State.SWIM);
             stateTicks = 0;
             stuckTicks = 0;
             lastDist = Double.MAX_VALUE;
-            return pause();
+            return;
         }
-        BlockPos shore = surface == null ? null : shoreNear(level, diveSpot, surface);
+        BlockPos shore = surface == null ? null : shoreNear(level, diveSpot, surface, p.blockPosition());
         if (shore == null) {
-            badDive.add(diveSpot);
+            markBadDive(diveSpot);
             diveSpot = null;
-            return pause();
+            return;
         }
         startWalk(level, shore);
         Util.msg("Too deep to reach from the shore: diving at " + diveSpot.toShortString() + ".");
-        return walkCommand();
     }
 
-    /** Places / breaks the current cell; null when nothing is in progress. */
-    private PathingCommand workOnCell(Minecraft mc, LocalPlayer p, Level level) {
+    /** Places / breaks the current cell; false when nothing is in progress. */
+    private boolean workOnCell(Minecraft mc, LocalPlayer p, Level level) {
         if (breaking != null) {
             if (!breakable(level, breaking) || ++breakTicks > BREAK_TIMEOUT) {
                 if (breakTicks > BREAK_TIMEOUT) failures.merge(breaking, 1, Integer::sum);
                 mc.gameMode.stopDestroyBlock();
                 breaking = null;
-                return null;
+                return false;
             }
             holdPosition(p);
             if (Util.aimAt(p, Vec3.atCenterOf(breaking))) {
                 mc.gameMode.continueDestroyBlock(breaking, Direction.UP);
                 p.swing(InteractionHand.MAIN_HAND);
             }
-            return pause();
+            return true;
         }
-        if (current == null) return null;
+        if (current == null) return false;
         if (!wet(level, current) && !falling) {
             done();
-            return null;
+            return false;
         }
         Placer.Status st = placer.tick(mc, p);
         if (falling && materialCount(p) < countBefore) {
             placed += countBefore - materialCount(p);
             fruitless = 0;
             current = null;
-            return null;
+            return false;
         }
         if (st == Placer.Status.DONE) {
             done();
-            return null;
+            return false;
         }
-        if (st == Placer.Status.FAILED || (++targetTicks > TARGET_TIMEOUT && !placer.canReach(mc, p))) {
+        if (st == Placer.Status.FAILED || (++targetTicks > TARGET_TIMEOUT && !placer.canReach(mc, p)) || targetTicks > TARGET_TIMEOUT * 2) {
             failures.merge(current, 1, Integer::sum);
             current = null;
-            return null;
+            return false;
         }
         holdPosition(p);
-        return pause();
+        return true;
     }
 
     private void done() {
@@ -705,20 +750,21 @@ final class TerminatorProcess extends Feature {
         current = null;
     }
 
-    private PathingCommand begin(Minecraft mc, LocalPlayer p, Level level, BlockPos t) {
-        if (state == State.WALK) state = State.WORK;
-        allowDigging(false);
+    private void begin(Minecraft mc, LocalPlayer p, Level level, BlockPos t) {
+        if (state == State.WALK) {
+            EngineSelector.current().cancel();
+            setState(State.WORK);
+        }
         goal = null;
         if (breakable(level, t)) {
             breaking = t;
             breakTicks = 0;
-            return pause();
+            return;
         }
         placer.start(t, Placer.Mode.BLOCK);
         current = t;
         targetTicks = 0;
         countBefore = materialCount(p);
-        return pause();
     }
 
     private void abortWork(Minecraft mc) {
@@ -730,13 +776,20 @@ final class TerminatorProcess extends Feature {
     /** Under water: stay put (sneak keeps it on the bottom), else nothing held. */
     private void holdPosition(LocalPlayer p) {
         if (state != State.UNDER || diveSpot == null) { releaseKeys(); return; }
-        // stay over the spot: sneak sinks, jump rises, nothing drifts down slowly
-        double dist = face(p, diveSpot.getX() + 0.5, diveSpot.getZ() + 0.5);
+        // stay over the spot: sneak sinks, jump rises; do not touch yaw while Placer/breaking is aiming
+        double dx = (diveSpot.getX() + 0.5) - p.getX();
+        double dz = (diveSpot.getZ() + 0.5) - p.getZ();
+        double dist = Math.sqrt(dx * dx + dz * dz);
+        boolean forward = false;
+        if (current == null && breaking == null && dist > 0.4) {
+            face(p, diveSpot.getX() + 0.5, diveSpot.getZ() + 0.5);
+            forward = aligned;
+        }
         boolean floor = Util.isSolid(Minecraft.getInstance().level, diveSpot.below());
         double y = p.getY(), want = diveSpot.getY();
         boolean up = !floor && y < want - 0.15;
         boolean down = floor || y > want + 0.25;
-        hold(dist > 0.4 && aligned, up, down && !up);
+        hold(forward, up, down && !up);
     }
 
     // ------------------------------------------------------------------ diving
@@ -755,38 +808,37 @@ final class TerminatorProcess extends Feature {
     private static boolean aligned = true;
 
     /** At the surface, towards the water above the dive spot. */
-    private PathingCommand swim(Minecraft mc, LocalPlayer p, Level level) {
-        if (diveSpot == null) { state = State.WORK; releaseKeys(); return pause(); }
+    private void swim(Minecraft mc, LocalPlayer p, Level level) {
+        if (diveSpot == null) { setState(State.WORK); releaseKeys(); return; }
         double dist = face(p, diveSpot.getX() + 0.5, diveSpot.getZ() + 0.5);
         if (dist < 0.35) {
-            state = State.SINK;
+            setState(State.SINK);
             stateTicks = 0;
             hold(false, false, true);
-            return pause();
+            return;
         }
         if (dist < lastDist - 0.05) { lastDist = dist; stuckTicks = 0; }
         else if (++stuckTicks > SWIM_STUCK) {   // something in the way
-            badDive.add(diveSpot);
+            markBadDive(diveSpot);
             diveSpot = null;
-            state = State.WORK;
+            setState(State.WORK);
             releaseKeys();
-            return pause();
+            return;
         }
         hold(dist > 0.35 && aligned, true, false);
-        return pause();
     }
 
     /** Straight down to the spot on the bottom. */
     private double sinkBestY;
     private int sinkStill;
 
-    private PathingCommand sink(Minecraft mc, LocalPlayer p, Level level) {
+    private void sink(Minecraft mc, LocalPlayer p, Level level) {
         if (stateTicks == 0) { sinkBestY = p.getY(); sinkStill = 0; }
         if (++stateTicks > 20 * 12 || !wet(level, diveSpot) || !open(level, diveSpot.above())) {   // could not get down, or it changed
-            badDive.add(diveSpot);
-            state = State.RISE;
+            markBadDive(diveSpot);
+            setState(State.RISE);
             stateTicks = 0;
-            return pause();
+            return;
         }
         double dist = face(p, diveSpot.getX() + 0.5, diveSpot.getZ() + 0.5);
         boolean floor = Util.isSolid(level, diveSpot.below());
@@ -798,38 +850,38 @@ final class TerminatorProcess extends Feature {
         }
         if (down) {
             placedAtDive = placed;
-            state = State.UNDER;
+            setState(State.UNDER);
             stateTicks = 0;
             hold(false, false, !floor || p.getY() > diveSpot.getY() + 0.2);
-            return pause();
+            return;
         }
         // not getting deeper (a ledge, something pushing up): another spot
         if (p.getY() < sinkBestY - 0.1) { sinkBestY = p.getY(); sinkStill = 0; }
         else if (++sinkStill > 40) {
-            badDive.add(diveSpot);
-            state = State.RISE;
+            markBadDive(diveSpot);
+            setState(State.RISE);
             stateTicks = 0;
-            return pause();
+            return;
         }
         // over the middle of the hole first; sneaking on a ledge would keep it from slipping in
         boolean centered = dist < 0.3;
         hold(!centered && aligned, false, centered || !p.onGround());
-        return pause();
     }
 
     /** Up to the surface for air (and to go on from there): into a column with open water above, digging if need be. */
-    private PathingCommand rise(LocalPlayer p, Level level) {
+    private void rise(LocalPlayer p, Level level) {
         Minecraft mc = Minecraft.getInstance();
         abortWork(mc);
         if (!p.isUnderWater() && (!p.isInWater() || ++stateTicks > 10)) {
-            state = State.WORK;
+            setState(State.WORK);
             diveSpot = null;
             releaseKeys();
-            return pause();
+            return;
         }
         if (++stateTicks > 20 * 30) {   // cannot get up at all: let go, the player must help
             releaseKeys();
-            return finish(level, "Could not come up from the water.");
+            finish(level, "Could not come up from the water.");
+            return;
         }
         BlockPos feet = p.blockPosition();
         BlockPos open = surfaceAbove(level, feet) != null ? feet : null;
@@ -850,7 +902,7 @@ final class TerminatorProcess extends Feature {
         if (open != null) {
             double dist = face(p, open.getX() + 0.5, open.getZ() + 0.5);
             hold(dist > 0.3 && aligned, true, false);
-            return pause();
+            return;
         }
         // nowhere open nearby: break the block above the head
         BlockPos roof = BlockPos.containing(p.getEyePosition()).above();
@@ -861,15 +913,15 @@ final class TerminatorProcess extends Feature {
                 mc.gameMode.continueDestroyBlock(roof, Direction.DOWN);
                 p.swing(InteractionHand.MAIN_HAND);
             }
-            return pause();
+            return;
         }
         hold(false, true, false);
-        return pause();
     }
 
     // ------------------------------------------------------------------ the end
 
-    private PathingCommand finish(Level level, String reason) {
+    private void finish(Level level, String reason) {
+        LOGGER.info("[Terminator] finish: placed={} fruitless={} reason={}", placed, fruitless, reason);
         int left = 0, notLoaded = 0;
         outer:
         for (int[] b : boxes) {
@@ -889,6 +941,7 @@ final class TerminatorProcess extends Feature {
                     ? "The rest has nothing to build against yet, is cut off, or was not loaded."
                     : "The rest cannot be reached without swimming. Dive mode is off: option(\"buildtools.dive\", true).";
         }
+        LOGGER.info("[Terminator] finish: left={} notLoaded={}", left, notLoaded);
         if (left > 0) {   // say where, so it can be looked at
             BlockPos me = Minecraft.getInstance().player == null ? BlockPos.ZERO : Minecraft.getInstance().player.blockPosition();
             List<BlockPos> rest = new ArrayList<>();
@@ -906,20 +959,21 @@ final class TerminatorProcess extends Feature {
         }
         lastResult = new int[]{placed, left, notLoaded};
         lastReason = reason == null ? "" : reason;
+        EngineSelector.current().cancel();
         giveBackBreak();
         working = false;
         current = null;
         goal = null;
         breaking = null;
         diveSpot = null;
-        state = State.WORK;
+        setState(State.WORK);
+        lastHeartbeatTick = 0;
         Placer.preferred = null;
         releaseKeys();
         Util.msg("Water fill done: " + placed + " cell" + (placed == 1 ? "" : "s") + " filled"
                 + (left > 0 ? ", " + left + " still water" : ", no water left")
                 + (notLoaded > 0 ? " (" + notLoaded + " cells not loaded, not checked)" : "")
                 + (reason != null ? ". " + reason : "."));
-        return pause();
     }
 
     @Override

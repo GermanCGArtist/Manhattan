@@ -22,10 +22,24 @@ final class Reconnect {
     private ServerData last;
     private int attempts, countdown, connecting, settle;
     private boolean pending;   // a reconnect cycle is in progress
+    private static volatile boolean suppressed;   // intentional disconnect: do not auto-reconnect
+
+    static void suppressNextDisconnect() {
+        suppressed = true;
+    }
+
+    static boolean isSuppressed() {
+        return suppressed;
+    }
+
+    static void resetSuppression() {
+        suppressed = false;
+    }
 
     /** Every client tick, also while no world is loaded. */
     void tick(Minecraft mc) {
         if (mc.player != null && mc.level != null) {
+            suppressed = false;
             if (mc.getCurrentServer() != null) last = mc.getCurrentServer();
             if (pending) {
                 if (++settle >= SETTLE) {
@@ -39,7 +53,7 @@ final class Reconnect {
             return;
         }
         settle = 0;
-        if (!cfg.reconnect || last == null) return;
+        if (suppressed || !cfg.reconnect || last == null) return;
 
         if (mc.screen instanceof DisconnectedScreen) {
             if (!pending) {

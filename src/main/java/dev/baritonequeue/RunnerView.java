@@ -35,12 +35,11 @@ public final class RunnerView {
         return QueueMod.runner.status();
     }
 
-    /** The Baritone process in control ("Builder", "SurvivalKit sleep", ...), or "idle". */
+    /** The active path engine ("midtown") when busy, or "idle". */
     public static String controller() {
         try {
-            var control = Util.baritone().getPathingControlManager().mostRecentInControl();
-            if (control.isEmpty()) return "idle";
-            return String.valueOf(control.get().displayName());
+            var engine = dev.midtown.api.EngineSelector.current();
+            return engine.isBusy() ? engine.name() : "idle";
         } catch (Throwable t) {
             return "";
         }
@@ -51,13 +50,13 @@ public final class RunnerView {
         return QueueMod.runner.start(Config.cfg.script);
     }
 
-    /** Stops the running script and cancels any active Baritone task. */
+    /** Stops the running script and cancels any active path engine task. */
     public static void stop() {
         if (QueueMod.runner.running()) {
             QueueMod.runner.halt("Script stopped.");
         }
         try {
-            Util.baritone().getPathingBehavior().cancelEverything();
+            dev.midtown.api.EngineSelector.current().cancel();
         } catch (Throwable ignored) {
         }
     }

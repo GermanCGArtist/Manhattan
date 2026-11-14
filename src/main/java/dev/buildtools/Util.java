@@ -1,7 +1,6 @@
 package dev.buildtools;
 
-import baritone.api.BaritoneAPI;
-import baritone.api.IBaritone;
+import dev.midtown.api.EngineSelector;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
@@ -24,10 +23,6 @@ import java.util.Map;
 
 final class Util {
     private Util() {}
-
-    static IBaritone baritone() {
-        return BaritoneAPI.getProvider().getPrimaryBaritone();
-    }
 
     static void msg(String s) {
         Minecraft mc = Minecraft.getInstance();
@@ -58,12 +53,9 @@ final class Util {
         return false;
     }
 
-    /** True while any Baritone task other than ours runs. */
+    /** True while any engine task other than ours runs. */
     static boolean baritoneBusy() {
-        IBaritone b = baritone();
-        return b.getMineProcess().isActive() || b.getBuilderProcess().isActive() || b.getFarmProcess().isActive()
-                || b.getExploreProcess().isActive() || b.getGetToBlockProcess().isActive()
-                || b.getFollowProcess().isActive() || b.getCustomGoalProcess().isActive();
+        return EngineSelector.current().isBusy();
     }
 
     /** Tells the running script to stop. */
@@ -122,13 +114,20 @@ final class Util {
 
     // ------------------------------------------------------------------ inventory
 
-    /** Inventory index of a block Baritone considers a throwaway (cobblestone, dirt, ...), hotbar first; -1 if none. */
+    static boolean isThrowaway(ItemStack st) {
+        if (st.isEmpty() || !(st.getItem() instanceof BlockItem bi)) return false;
+        var b = bi.getBlock();
+        if (b instanceof net.minecraft.world.level.block.FallingBlock || b instanceof net.minecraft.world.level.block.EntityBlock) return false;
+        var s = b.defaultBlockState();
+        return s.blocksMotion() && !s.hasBlockEntity();
+    }
+
+    /** Inventory index of a throwaway block (cobblestone, dirt, ...), hotbar first; -1 if none. */
     static int throwawaySlot(LocalPlayer p) {
-        List<Item> ok = BaritoneAPI.getSettings().acceptableThrowawayItems.value;
         int found = -1;
         for (int i = 0; i < 36; i++) {
             ItemStack st = p.getInventory().getItem(i);
-            if (!st.isEmpty() && st.getItem() instanceof BlockItem && ok.contains(st.getItem())) {
+            if (isThrowaway(st)) {
                 if (i < 9) return i;
                 if (found < 0) found = i;
             }
@@ -137,11 +136,10 @@ final class Util {
     }
 
     static int countThrowaway(LocalPlayer p) {
-        List<Item> ok = BaritoneAPI.getSettings().acceptableThrowawayItems.value;
         int n = 0;
         for (int i = 0; i < 36; i++) {
             ItemStack st = p.getInventory().getItem(i);
-            if (!st.isEmpty() && st.getItem() instanceof BlockItem && ok.contains(st.getItem())) n += st.getCount();
+            if (isThrowaway(st)) n += st.getCount();
         }
         return n;
     }

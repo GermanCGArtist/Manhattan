@@ -356,9 +356,13 @@ final class Capture {
         }
         for (var e : cfg.areas.entrySet()) {
             if (taken.contains(e.getKey())) continue;
+            var meta = Areas.meta(e.getKey());
+            String roleOwner = (meta != null && ("heavymatica".equalsIgnoreCase(meta.owner) || !"custom".equalsIgnoreCase(meta.role)))
+                    ? (meta.role + ", from " + ("heavymatica".equalsIgnoreCase(meta.owner) ? "Heavymatica" : meta.owner))
+                    : "saved area";
             for (int[] b : e.getValue()) {
                 sheet = CaptureSheet.add(sheet, CaptureSheet.AREAS, "area_box(\"" + e.getKey() + "\", " + CaptureSheet.pos(b[0], b[1], b[2]) + ", "
-                        + CaptureSheet.pos(b[3], b[4], b[5]) + ")   // area: saved area; " + CaptureSheet.box(b));
+                        + CaptureSheet.pos(b[3], b[4], b[5]) + ")   // area: " + roleOwner + "; " + CaptureSheet.box(b));
             }
             taken.add(e.getKey());
             n++;
@@ -451,7 +455,7 @@ final class Capture {
     }
 
     /** The 12 edges of a box, at most about 40 particles an edge. */
-    private static void outline(Level level, int[] b, ParticleOptions kind, int[] budget) {
+    static void outline(Level level, int[] b, ParticleOptions kind, int[] budget) {
         double x0 = b[0], y0 = b[1], z0 = b[2], x1 = b[3] + 1, y1 = b[4] + 1, z1 = b[5] + 1;
         double[][] edges = {
                 {x0, y0, z0, x1, y0, z0}, {x0, y1, z0, x1, y1, z0}, {x0, y0, z1, x1, y0, z1}, {x0, y1, z1, x1, y1, z1},
@@ -505,7 +509,17 @@ final class Capture {
             want.forEach((k, v) -> parts.add(k + " " + v));
             sb.append("// want-list (restock keeps this with you): ").append(String.join(", ", parts)).append('\n');
         }
-        if (!cfg.areas.isEmpty()) sb.append("// areas saved in the game (area(\"name\")): ").append(String.join(", ", cfg.areas.keySet())).append('\n');
+        if (!cfg.areas.isEmpty()) {
+            List<String> names = new ArrayList<>();
+            for (String k : cfg.areas.keySet()) {
+                var meta = Areas.meta(k);
+                String tag = (meta != null && ("heavymatica".equalsIgnoreCase(meta.owner) || !"custom".equalsIgnoreCase(meta.role)))
+                        ? k + " (" + meta.role + ", from " + ("heavymatica".equalsIgnoreCase(meta.owner) ? "Heavymatica" : meta.owner) + ")"
+                        : k;
+                names.add(tag);
+            }
+            sb.append("// areas saved in the game (area(\"name\")): ").append(String.join(", ", names)).append('\n');
+        }
         if (!cfg.chests.isEmpty()) sb.append("// chests saved in the game (chest(\"name\")): ").append(String.join(", ", cfg.chests.keySet())).append('\n');
         List<String> stats = areaStats();
         if (!stats.isEmpty()) {

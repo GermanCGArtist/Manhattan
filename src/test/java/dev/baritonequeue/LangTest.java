@@ -1,5 +1,7 @@
 package dev.baritonequeue;
 
+import dev.baritonequeue.api.ManhattanAreas;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -60,6 +62,18 @@ public class LangTest {
         System.out.println("FAIL " + name + "\n  expected: " + expected + "\n  got:      " + got);
     }
 
+    static void assertTrue(String name, boolean condition) {
+        if (condition) { passes++; return; }
+        fails++;
+        System.out.println("FAIL " + name + "\n  expected: true\n  got:      false");
+    }
+
+    static void assertFalse(String name, boolean condition) {
+        if (!condition) { passes++; return; }
+        fails++;
+        System.out.println("FAIL " + name + "\n  expected: false\n  got:      true");
+    }
+
     /** The capture sheet's text handling. */
     static void sheet() {
         String t = CaptureSheet.header("w", "main");
@@ -85,6 +99,106 @@ public class LangTest {
         } catch (Parser.ParseError e) {
             fails++;
             System.out.println("FAIL sheet parses: " + e.getMessage());
+        }
+    }
+
+    /** The ledger file: save, load, states, reset, retry; the job queue's description and ids. */
+    static void ledger() {
+        try {
+            java.nio.file.Path dir = java.nio.file.Files.createTempDirectory("manhattan-ledger");
+            java.nio.file.Path f = Ledger.fileFor(dir, "my_world", "main");
+            Ledger l = Ledger.load(f);
+            same("ledger starts empty", l.size(), 0);
+            String a = "script/schem_build@12(all,add)#1";
+            l.set(a + "/0,0", Ledger.State.DONE, 1, 0, null, "sig1");
+            l.set(a + "/32,0", Ledger.State.DEFERRED, 2, 7, "attached: 7 left", "sig1");
+            l.set(a + "/64,0", Ledger.State.RUNNING, 1, 30, null, "sig1");
+            l.putVars("build", java.util.Map.of("n", 5.0));
+            same("ledger file written", java.nio.file.Files.exists(f), true);
+            same("ledger no temp file left", java.nio.file.Files.exists(f.resolveSibling(f.getFileName() + ".tmp")), false);
+            Ledger r = Ledger.load(f);
+            same("ledger size", r.size(), 4);
+            same("ledger state", r.state(a + "/0,0", "sig1") + " " + r.state(a + "/32,0", "sig1") + " " + r.state(a + "/64,0", "sig1"), "DONE DEFERRED RUNNING");
+            var e = r.get(a + "/32,0");
+            same("ledger fields", e.tries + " " + e.left + " " + e.reason + " " + e.sig, "2 7 attached: 7 left sig1");
+            same("ledger vars", r.get("build").vars, "{n=5.0}");
+            same("ledger stale signature is ignored", r.state(a + "/0,0", "other"), "PENDING");
+            same("ledger unknown id", r.state("nope", null), "PENDING");
+            same("ledger ids by state", r.ids(a, Ledger.State.DONE), "[" + a + "/0,0]");
+            same("ledger under", Ledger.under(a + "/0,0", a) + " " + Ledger.under(a + "#2/0,0", a), "true false");
+            same("ledger retry", r.retry(a), 2);
+            same("ledger retried states", r.state(a + "/32,0", null) + " " + r.get(a + "/32,0").tries + " " + r.get(a + "/0,0").state, "PENDING 0 DONE");
+            same("ledger reset one", r.reset(a + "/0,0"), 1);
+            same("ledger reset job", r.reset(a), 2);
+            same("ledger reset all", r.reset(null), 1);
+            same("ledger reset saved", Ledger.load(f).size(), 0);
+            // the start of a run reports what is done
+            Ledger g = Ledger.load(f);
+            g.set(a + "/0,0", Ledger.State.DONE, 1, 0, null, null);
+            g.set(a + "/32,0", Ledger.State.PENDING, 0, 0, null, null);
+            g.set("canal", Ledger.State.DONE, 1, 0, null, null);
+            g.set("walls", Ledger.State.FAILED, 1, 0, "boom", null);
+            Jobs.useLedger(g);
+            same("resume text", Jobs.startRun(), "Resuming: 1 of 2 jobs done (1 of 2 chunks).");
+            Jobs.useLedger(Ledger.load(dir.resolve("none.json")));
+            same("no resume text on a fresh ledger", Jobs.startRun(), null);
+        } catch (Exception ex) {
+            fails++;
+            System.out.println("FAIL ledger: " + ex);
+            ex.printStackTrace(System.out);
+        }
+    }
+
+    /** job "name" ... end: skip when done, restore variables, FAILED on error, duplicate-name warning. */
+    static void jobs() {
+        try {
+            java.nio.file.Path dir = java.nio.file.Files.createTempDirectory("manhattan-jobs");
+            java.nio.file.Path f = dir.resolve("jobs.json");
+            Jobs.useLedger(Ledger.load(f));
+            Jobs.startRun();
+            String script = "let total = 0\nlet spot = null\nlet names = []\nlet fn = null\n"
+                    + "job \"a\"\n  out(\"ran a\")\n  total = 5\n  total += 2\n  spot = pos(1, 2, 3)\n  push(names, \"x\")\n  let m = {k: [1, 2.5, \"t\"]}\n  fn = func() return 1 end\nend\n"
+                    + "out(total, spot, names, m, type(fn))";
+            same("job first run", run(script), "ran a | 7 1 2 3 [\"x\"] {k: [1, 2.5, \"t\"]} function");
+            same("job done in ledger", Jobs.ledger().state("a", null), "DONE");
+            same("job saved vars", new java.util.TreeSet<>(Jobs.ledger().get("a").vars.keySet()), "[m, names, spot, total]");
+            // a second run (the ledger is read back from the file): the body is skipped, the variables come back
+            Jobs.useLedger(Ledger.load(f));
+            Jobs.startRun();
+            same("job skip and restore", run(script), "7 1 2 3 [\"x\"] {k: [1, 2.5, \"t\"]} null");
+            same("restored position is a position", run("let spot = null\njob \"a\"\n  out(\"no\")\nend\nout(spot.x + spot.y + spot.z, type(spot))"), "6 pos");
+            // reset: it runs again
+            Jobs.reset("a");
+            Jobs.startRun();
+            same("job after reset runs again", run("job \"a\"\n  out(\"ran a\")\nend"), "ran a");
+            // an error: FAILED with the message, the script stops, the next run goes into the job again
+            Jobs.useLedger(Ledger.load(dir.resolve("fail.json")));
+            Jobs.startRun();
+            String bad = "job \"one\"\n  out(\"one\")\nend\njob \"two\"\n  out(\"two\")\n  let x = nothing\nend\nout(\"after\")";
+            same("job error stops the script", run(bad), "one | two | ERROR line 6: 'nothing' is not defined. Give it a value first (let nothing = ...).");
+            same("job failed state", Jobs.ledger().state("one", null) + " " + Jobs.ledger().state("two", null), "DONE FAILED");
+            same("job failed reason", Jobs.ledger().get("two").reason, "line 6: 'nothing' is not defined. Give it a value first (let nothing = ...).");
+            Jobs.startRun();
+            same("next run continues at the failed job", run("job \"one\"\n  out(\"one\")\nend\njob \"two\"\n  out(\"two\")\nend\nout(\"after\")"), "two | after");
+            // lines outside jobs always run
+            Jobs.startRun();
+            same("lines outside jobs run again", run("out(\"top\")\njob \"one\"\n  out(\"never\")\nend\nout(\"end\")"), "top | end");
+            same("job names", Jobs.jobName(" a/b ", 1), "a-b");
+            same("script name for the ledger file", Jobs.fileSafe("my build.txt") + " " + Jobs.fileSafe(null) + " " + Jobs.fileSafe("main"), "my_build main main");
+            // parse errors and the check
+            same("job needs a name", run("job\nend"), "PARSE line 1: 'job' needs a name in quotes: job \"build\" ... end");
+            same("job not closed", run("job \"a\"\n  out(1)\n"), "PARSE line 1: 'job' (line 1) is never closed with 'end'.");
+            same("no nested jobs", run("job \"a\"\n  job \"b\"\n  end\nend"), "PARSE line 2: A 'job' cannot be inside another job (line 2). Put them one after the other.");
+            same("reserved job name", run("job \"script\"\nend"), "ERROR line 1: The job name 'script' is reserved for the lines outside jobs. Pick another name.");
+            List<ScriptCheck.Entry> chk = ScriptCheck.run(List.of("job \"a\"", "  out(1)", "end", "job \"a\"", "  out(2)", "end", "job \"b\"", "  func f()", "  end", "end"));
+            String warnings = chk.stream().filter(e -> e.level() != ScriptCheck.Level.OK).map(e -> e.line() + ": " + e.text()).toList().toString();
+            same("duplicate job name warning", warnings.contains("4: There is already a job called \"a\" (line 1)"), true);
+            same("function in a job warning", warnings.contains("8: The function 'f' is defined inside a job"), true);
+            same("job is a keyword", Lexer.KEYWORDS.contains("job"), true);
+        } catch (Exception ex) {
+            fails++;
+            System.out.println("FAIL jobs: " + ex);
+            ex.printStackTrace(System.out);
         }
     }
 
@@ -115,6 +229,16 @@ public class LangTest {
         check("comments", "// top\nlet x = 2 // after\n/* block\ncomment */ out(x)", "2");
         check("semicolons", "let a = 1; let b = 2; out(a + b)", "3");
         check("baritone line", "let p = pos(1, 2, 3)\n#goto {p}\nout(\"done\")", "done");
+        check("shim goto", "#goto 100 64 200\nout(\"done\")", "done");
+        check("shim mine", "#mine iron_ore\nout(\"done\")", "done");
+        check("shim stop", "#stop\nout(\"done\")", "done");
+        check("shim cancel", "#cancel\nout(\"done\")", "done");
+        check("native goto pos", "let p = pos(1, 2, 3)\ngoto(p)\nout(\"done\")", "done");
+        check("native goto xz", "goto(10, 20)\nout(\"done\")", "done");
+        check("native mine", "mine(\"diamond_ore\", \"iron_ore\")\nout(\"done\")", "done");
+        check("native follow error", "follow()\nout(\"done\")", "ERROR line 1: Not in a world.");
+        check("native tunnel error", "tunnel()\nout(\"done\")", "ERROR line 1: Not in a world.");
+        check("native cancel", "cancel()\nout(\"done\")", "done");
         check("pos", "let p = pos(1, 2, 3)\nout(p.x + p.y + p.z, p + pos(1, 1, 1), \"{p}\")", "6 2 3 4 1 2 3");
         check("wait stmt", "wait 2\nout(\"w\")", "w");
         check("long loop yields", "let s = 0\nfor i in range(100000)\n  s += 1\nend\nout(s)", "100000");
@@ -204,7 +328,226 @@ public class LangTest {
             System.out.println("FAIL converted script does not parse: line " + e.line + ": " + e.getMessage());
         }
         sheet();
+        ledger();
+        jobs();
+        heavymaticaApi();
+        logoffAndDisconnect();
         System.out.println(passes + " passed, " + fails + " failed");
         System.exit(fails == 0 ? 0 : 1);
+    }
+
+    /** Heavymatica API & metadata tests. */
+    static void heavymaticaApi() {
+        // 1. Old config without areaMeta loads; every area reads as manual / custom
+        String oldConfigJson = "{\"areas\":{\"old_manual\":[[0,64,0,10,70,10]]}}";
+        Config oldCfg = new com.google.gson.Gson().fromJson(oldConfigJson, Config.class);
+        Config.cfg = oldCfg;
+        same("old config owner", Areas.ownerOf("old_manual"), "manual");
+        same("old config role", Areas.roleOf("old_manual"), "custom");
+
+        // 2. ManhattanAreas.put -> owner HEAVYMATICA; area_box on that name in a run -> owner SCRIPT and warning fires once
+        List<String> listenerEvents = new ArrayList<>();
+        ManhattanAreas.addListener((name, owner) -> listenerEvents.add(name + ":" + owner));
+
+        var putRes = ManhattanAreas.put("heavy1", List.of(new int[]{0, 64, 0, 5, 70, 5}), ManhattanAreas.Role.DIG, false);
+        same("put heavy1", putRes, ManhattanAreas.Result.OK);
+        same("owner heavy1", Areas.ownerOf("heavy1"), "heavymatica");
+        same("role heavy1", Areas.roleOf("heavy1"), "dig");
+        assertTrue("listener fired on put", listenerEvents.contains("heavy1:HEAVYMATICA"));
+
+        // Run script with area_box on heavy1
+        run("area_box(\"heavy1\", pos(0, 64, 0), pos(2, 65, 2))");
+        same("owner heavy1 after script area_box", Areas.ownerOf("heavy1"), "script");
+        assertTrue("listener fired on script overwrite", listenerEvents.contains("heavy1:SCRIPT"));
+        long warningCount = LogBuffer.entries(LogBuffer.Filter.ALL).stream()
+                .filter(e -> e.text().contains("replaces the area Heavymatica sent"))
+                .count();
+        same("warning fired once", warningCount, 1L);
+
+        // Run a second area_box for heavy1 in the same run to ensure warning does NOT fire twice
+        run("area_box(\"heavy1\", pos(0, 64, 0), pos(3, 65, 3))");
+        long warningCount2 = LogBuffer.entries(LogBuffer.Filter.ALL).stream()
+                .filter(e -> e.text().contains("replaces the area Heavymatica sent"))
+                .count();
+        same("warning still fired once", warningCount2, 1L);
+
+        // 3. put on a script-owned name -> SCRIPT_OWNED; with replaceScriptOwned = true -> OK
+        var putScriptOwned = ManhattanAreas.put("heavy1", List.of(new int[]{0, 64, 0, 5, 70, 5}), ManhattanAreas.Role.DIG, false);
+        same("put on script-owned without replace", putScriptOwned, ManhattanAreas.Result.SCRIPT_OWNED);
+
+        var putReplaceScriptOwned = ManhattanAreas.put("heavy1", List.of(new int[]{0, 64, 0, 5, 70, 5}), ManhattanAreas.Role.CLEAR, true);
+        same("put on script-owned with replace", putReplaceScriptOwned, ManhattanAreas.Result.OK);
+        same("role updated", Areas.roleOf("heavy1"), "clear");
+        same("owner updated to heavymatica", Areas.ownerOf("heavy1"), "heavymatica");
+
+        // 4. put on loadedName while running -> IN_USE; selection is unchanged after any put
+        Areas.load("heavy1");
+        List<int[]> selBefore = Areas.read();
+        same("inUse false before runner starts", Areas.inUse("heavy1"), false);
+
+        QueueMod.runner.start(List.of("sleep()"));
+        same("inUse true while runner running", Areas.inUse("heavy1"), true);
+
+        var putInUse = ManhattanAreas.put("heavy1", List.of(new int[]{100, 64, 100, 110, 70, 110}), ManhattanAreas.Role.DIG, true);
+        same("put in use", putInUse, ManhattanAreas.Result.IN_USE);
+
+        same("selection unchanged", Areas.read().size(), selBefore.size());
+        same("selection corner x1", Areas.read().get(0)[0], selBefore.get(0)[0]);
+
+        QueueMod.runner.reset();
+        same("inUse false after runner reset", Areas.inUse("heavy1"), false);
+
+        // 5. invalid input (empty name, "last", no boxes, > MAX_BOXES) -> INVALID
+        same("empty name invalid", ManhattanAreas.put("", List.of(new int[]{0, 64, 0, 1, 65, 1}), ManhattanAreas.Role.CUSTOM, true), ManhattanAreas.Result.INVALID);
+        same("blank name invalid", ManhattanAreas.put("   ", List.of(new int[]{0, 64, 0, 1, 65, 1}), ManhattanAreas.Role.CUSTOM, true), ManhattanAreas.Result.INVALID);
+        same("last name invalid", ManhattanAreas.put("last", List.of(new int[]{0, 64, 0, 1, 65, 1}), ManhattanAreas.Role.CUSTOM, true), ManhattanAreas.Result.INVALID);
+        same("no boxes invalid", ManhattanAreas.put("valid", List.of(), ManhattanAreas.Role.CUSTOM, true), ManhattanAreas.Result.INVALID);
+        same("null boxes invalid", ManhattanAreas.put("valid", null, ManhattanAreas.Role.CUSTOM, true), ManhattanAreas.Result.INVALID);
+
+        List<int[]> tooMany = new ArrayList<>();
+        for (int i = 0; i <= ManhattanAreas.MAX_BOXES; i++) {
+            tooMany.add(new int[]{0, 64, 0, 1, 65, 1});
+        }
+        same("too many boxes invalid", ManhattanAreas.put("overflow", tooMany, ManhattanAreas.Role.CUSTOM, true), ManhattanAreas.Result.INVALID);
+
+        // 6. remove only deletes heavymatica-owned areas, listener fires on changes
+        Areas.save("manual_area");
+        same("manual_area owner", Areas.ownerOf("manual_area"), "manual");
+        assertFalse("remove manual area fails", ManhattanAreas.remove("manual_area"));
+        assertTrue("manual_area still exists", Areas.getBoxes("manual_area") != null);
+
+        ManhattanAreas.put("heavy_to_remove", List.of(new int[]{0, 64, 0, 1, 65, 1}), ManhattanAreas.Role.CUSTOM, false);
+        listenerEvents.clear();
+        assertTrue("remove heavymatica area succeeds", ManhattanAreas.remove("heavy_to_remove"));
+        same("heavy_to_remove no longer exists", Areas.getBoxes("heavy_to_remove"), null);
+        assertTrue("listener fired on delete with null owner", listenerEvents.contains("heavy_to_remove:null"));
+
+        // 7. Coordinate normalization and name trimming in ManhattanAreas.put() / get() / names() / select() / selection()
+        same("put inverted coords with padded name",
+                ManhattanAreas.put("  norm_area  ", List.of(new int[]{10, 80, 20, -5, 64, 5}), ManhattanAreas.Role.DIG, false),
+                ManhattanAreas.Result.OK);
+        var normInfo = ManhattanAreas.get(" norm_area ");
+        assertTrue("get trimmed name present", normInfo.isPresent());
+        same("normalized area name", normInfo.get().name(), "norm_area");
+        same("normalized x1", normInfo.get().boxes().get(0)[0], -5);
+        same("normalized y1", normInfo.get().boxes().get(0)[1], 64);
+        same("normalized z1", normInfo.get().boxes().get(0)[2], 5);
+        same("normalized x2", normInfo.get().boxes().get(0)[3], 10);
+        same("normalized y2", normInfo.get().boxes().get(0)[4], 80);
+        same("normalized z2", normInfo.get().boxes().get(0)[5], 20);
+        assertTrue("get missing empty", ManhattanAreas.get("does_not_exist").isEmpty());
+        assertTrue("names contains norm_area", ManhattanAreas.names().contains("norm_area"));
+
+        assertTrue("select trimmed name succeeds", ManhattanAreas.select("  norm_area  "));
+        assertFalse("select missing fails", ManhattanAreas.select("does_not_exist"));
+        assertFalse("select blank fails", ManhattanAreas.select("   "));
+        List<int[]> selCopy = ManhattanAreas.selection();
+        same("selection has 1 box", selCopy.size(), 1);
+        selCopy.get(0)[0] = 99999;
+        same("selection copy isolated", ManhattanAreas.selection().get(0)[0], -5);
+
+        // 8. protectedAreas() and Areas.delete() unprotecting PROTECT areas
+        same("put protect area",
+                ManhattanAreas.put("prot_zone", List.of(new int[]{0, 64, 0, 4, 70, 4}), ManhattanAreas.Role.PROTECT, false),
+                ManhattanAreas.Result.OK);
+        assertTrue("protectedAreas contains prot_zone",
+                ManhattanAreas.protectedAreas().stream().anyMatch(a -> "prot_zone".equals(a.name())));
+        assertTrue("Areas.delete removes prot_zone", Areas.delete("prot_zone"));
+        assertFalse("protectedAreas no longer contains prot_zone",
+                ManhattanAreas.protectedAreas().stream().anyMatch(a -> "prot_zone".equals(a.name())));
+        assertTrue("buildtools zones no longer contains prot_zone",
+                dev.buildtools.Api.zones().stream().noneMatch(z -> z.contains("prot_zone")));
+
+        // 9. Areas.move() preserves owner/role and fires listener
+        ManhattanAreas.put("move_me", List.of(new int[]{0, 64, 0, 2, 66, 2}), ManhattanAreas.Role.FLOOD, false);
+        listenerEvents.clear();
+        same("Areas.move succeeds", Areas.move("move_me", 10, 0, -5), null);
+        same("move preserves owner", Areas.ownerOf("move_me"), "heavymatica");
+        same("move preserves role", Areas.roleOf("move_me"), "flood");
+        assertTrue("move fires listener", listenerEvents.contains("move_me:HEAVYMATICA"));
+        same("moved x1", Areas.getBoxes("move_me").get(0)[0], 10);
+        same("moved z2", Areas.getBoxes("move_me").get(0)[5], -3);
+
+        // 10. loadedName cleared on clearSelection / setPos1 / setPos2 / apply
+        QueueMod.runner.start(List.of("sleep()"));
+        Areas.load("heavy1");
+        assertTrue("inUse after load", Areas.inUse("heavy1"));
+        Areas.clearSelection();
+        assertFalse("inUse cleared by clearSelection", Areas.inUse("heavy1"));
+
+        Areas.load("heavy1");
+        assertTrue("inUse after load 2", Areas.inUse("heavy1"));
+        Areas.setPos1(new net.minecraft.core.BlockPos(1, 64, 1));
+        assertFalse("inUse cleared by setPos1", Areas.inUse("heavy1"));
+
+        Areas.load("heavy1");
+        assertTrue("inUse after load 3", Areas.inUse("heavy1"));
+        Areas.setPos2(new net.minecraft.core.BlockPos(2, 65, 2));
+        assertFalse("inUse cleared by setPos2", Areas.inUse("heavy1"));
+
+        Areas.load("heavy1");
+        assertTrue("inUse after load 4", Areas.inUse("heavy1"));
+        Areas.apply(List.of(new int[]{0, 64, 0, 1, 65, 1}));
+        assertFalse("inUse cleared by apply", Areas.inUse("heavy1"));
+        QueueMod.runner.reset();
+
+        // 11. AreasView.AreaEntry owner / role / tag()
+        var entryH = new AreasView.AreaEntry("a", 1, 8, "summary", false, "heavymatica", "dig");
+        same("entryH owner", entryH.owner(), "heavymatica");
+        same("entryH role", entryH.role(), "dig");
+        same("entryH tag", entryH.tag(), "[H]");
+        var entryS = new AreasView.AreaEntry("b", 1, 8, "summary", false, "script", "clear");
+        same("entryS owner", entryS.owner(), "script");
+        same("entryS role", entryS.role(), "clear");
+        same("entryS tag", entryS.tag(), "[S]");
+        var entryM = new AreasView.AreaEntry("c", 1, 8, "summary", false);
+        same("entryM owner", entryM.owner(), "manual");
+        same("entryM role", entryM.role(), "custom");
+        same("entryM tag", entryM.tag(), "[M]");
+    }
+
+    /** Logoff options and disconnect() builtin tests. */
+    static void logoffAndDisconnect() {
+        check("option queue.logoffOnDone", "option(\"queue.logoffOnDone\", true)\nout(option(\"queue.logoffOnDone\"))", "true");
+        same("cfg.logoffOnDone is true", Config.cfg.logoffOnDone, true);
+
+        check("option queue.logoffOnError", "option(\"queue.logoffOnError\", true)\nout(option(\"queue.logoffOnError\"))", "true");
+        same("cfg.logoffOnError is true", Config.cfg.logoffOnError, true);
+
+        check("option survival.logoffOnMissingBed", "option(\"survival.logoffOnMissingBed\", true)\nout(option(\"survival.logoffOnMissingBed\"))", "true");
+        same("survival logoffOnMissingBed is true", dev.survivalkit.Api.isLogoffOnMissingBed(), true);
+
+        dev.survivalkit.Api.resetDisconnectSuppression();
+        assertFalse("disconnect suppression initially false", dev.survivalkit.Api.isDisconnectSuppressed());
+        run("disconnect(\"user requested\")");
+        assertTrue("disconnect suppressed reconnect", dev.survivalkit.Api.isDisconnectSuppressed());
+
+        dev.survivalkit.Api.resetDisconnectSuppression();
+        boolean[] disconnected = {false};
+        Config.cfg.logoffOnDone = true;
+        QueueMod.runner.start(List.of("let x = 1"));
+        dev.survivalkit.Api.onBeforeDisconnect = () -> disconnected[0] = true;
+        while (QueueMod.runner.running()) {
+            QueueMod.runner.tick();
+        }
+        assertTrue("runner called disconnect on done", disconnected[0]);
+        assertTrue("runner disconnect on done set suppression", dev.survivalkit.Api.isDisconnectSuppressed());
+
+        dev.survivalkit.Api.resetDisconnectSuppression();
+        disconnected[0] = false;
+        Config.cfg.logoffOnError = true;
+        QueueMod.runner.start(List.of("error(\"test fatal error\")"));
+        dev.survivalkit.Api.onBeforeDisconnect = () -> disconnected[0] = true;
+        while (QueueMod.runner.running()) {
+            QueueMod.runner.tick();
+        }
+        assertTrue("runner called disconnect on error", disconnected[0]);
+        assertTrue("runner disconnect on error set suppression", dev.survivalkit.Api.isDisconnectSuppressed());
+
+        dev.survivalkit.Api.onBeforeDisconnect = null;
+        dev.survivalkit.Api.resetDisconnectSuppression();
+        Config.cfg.logoffOnDone = false;
+        Config.cfg.logoffOnError = false;
+        Modules.set("survival.logoffOnMissingBed", false, 0);
     }
 }

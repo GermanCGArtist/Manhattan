@@ -1,0 +1,73 @@
+// colossal-schem: build a multi-chunk schematic (36x5x18) end-to-end from chests
+stall(1)
+let placement = 1
+let mode = "add"
+
+let scaffold_chest = pos(96, -60, 97)
+let scaffold_item = "dirt"
+let scaffold_amount = 64
+
+let area_a = pos(96, -60, 98)
+let area_b = pos(96, -60, 101)
+
+take_upto(scaffold_chest, scaffold_item, scaffold_amount)
+
+let chests = []
+let p = null
+let b = null
+for x in range(min(area_a.x, area_b.x) - 1, max(area_a.x, area_b.x) + 2)
+  for y in range(min(area_a.y, area_b.y) - 1, max(area_a.y, area_b.y) + 2)
+    for z in range(min(area_a.z, area_b.z) - 1, max(area_a.z, area_b.z) + 2)
+      p = pos(x, y, z)
+      b = block(p)
+      if b != null and p != scaffold_chest and (contains(b, "chest") or b == "barrel" or contains(b, "shulker_box")) then push(chests, p) end
+    end
+  end
+end
+print("{len(chests)} material chests found: {chests}")
+if len(chests) == 0 then stop("No chests in the material area.") end
+
+#acceptableThrowawayItems {scaffold_item}
+
+let unavailable = []
+func fetch()
+  let need = schem_needed(placement, mode)
+  let seen = null
+  for item in keys(need)
+    if contains(unavailable, item) then continue end
+    for c in chests
+      if count(item) >= need[item] or full then break end
+      seen = chest_contents(c)
+      if seen == null or contains(keys(seen), item) then
+        try
+          take_upto(c, item, need[item])
+        catch err
+        end
+      end
+    end
+    if count(item) == 0 and not full then
+      push(unavailable, item)
+    end
+  end
+end
+
+let left = -1
+let now_left = 0
+let stuck = 0
+loop
+  take_upto(scaffold_chest, scaffold_item, scaffold_amount)
+  fetch()
+  now_left = schem_build(placement, mode, "skip")
+  if now_left == 0 then break end
+  if now_left == left then
+    stuck += 1
+    if stuck >= 2 then break end
+  else
+    stuck = 0
+  end
+  left = now_left
+end
+
+collect_scaffold()
+let check_left = schem_check(placement, mode)
+print("TEST colossal_schem done left={now_left} check={check_left}")

@@ -52,7 +52,8 @@ final class Builtins {
             }
             // Functions that change the game must run on its main thread (chat messages, settings, the selection ...).
             // The script has its own thread, so it hands them over and waits one tick.
-            if (onGameThread() && in.fiber != null && !net.minecraft.client.Minecraft.getInstance().isSameThread()) {
+            net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+            if (onGameThread() && in.fiber != null && mc != null && !mc.isSameThread()) {
                 return in.await(() -> new Actions.Now(() -> fn.call(in, args, line)), name, line);
             }
             return fn.call(in, args, line);

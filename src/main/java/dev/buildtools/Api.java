@@ -119,9 +119,19 @@ public final class Api {
         return Zones.addSelection(name) == 1 ? null : "Could not save the safe area (is there a selection?).";
     }
 
+    /** Replaces all protected boxes belonging to group {@code name} and syncs engines. */
+    public static void protectGroup(String name, java.util.List<int[]> boxes) {
+        if (name == null || name.isBlank()) return;
+        Zones.putGroup(name, boxes);
+    }
+
     public static boolean unprotect(String name) {
-        boolean had = cfg.zones.removeIf(z -> z.name.equalsIgnoreCase(name));
-        if (had) Config.save();
+        if (name == null) return false;
+        boolean had = cfg.zones.removeIf(z -> z.name.equalsIgnoreCase(name) || name.equalsIgnoreCase(z.group));
+        if (had) {
+            Zones.syncEngines();
+            Config.save();
+        }
         return had;
     }
 
@@ -144,6 +154,7 @@ public final class Api {
     /** Inside a safe area (and safe areas are on). */
     public static boolean protectedAt(net.minecraft.core.BlockPos p) {
         if (!cfg.protect) return false;
+        if (dev.midtown.api.EngineSelector.current().isProtectedAt(p)) return true;
         for (var z : cfg.zones) if (z.contains(p)) return true;
         return false;
     }

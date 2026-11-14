@@ -57,6 +57,9 @@ final class Config {
     /** Reconnect by itself after the server dropped the connection, then carry on with the task. */
     boolean reconnect = true;
 
+    /** Disconnect from the server when the saved bed is missing. */
+    boolean logoffOnMissingBed = false;
+
     int[] bed = null;
     int[] supply = null;
     /** More supply chests (the first one is "supply"); the chest index decides which to visit first. */
@@ -95,7 +98,13 @@ final class Config {
     }
 
     static void save() {
-        try (Writer w = Files.newBufferedWriter(path())) {
+        Path p;
+        try {
+            p = path();
+        } catch (Throwable ignored) {
+            return;   // offline tests outside Fabric
+        }
+        try (Writer w = Files.newBufferedWriter(p)) {
             GSON.toJson(cfg, w);
         } catch (Exception e) {
             e.printStackTrace();

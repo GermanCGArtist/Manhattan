@@ -1,7 +1,5 @@
 package dev.baritonequeue;
 
-import baritone.api.BaritoneAPI;
-import baritone.api.IBaritone;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 
@@ -10,10 +8,6 @@ import java.util.Map;
 
 final class Util {
     private Util() {}
-
-    static IBaritone baritone() {
-        return BaritoneAPI.getProvider().getPrimaryBaritone();
-    }
 
     private static final java.util.List<String> pending = new java.util.ArrayList<>();
 
@@ -70,47 +64,35 @@ final class Util {
         msg("PROBLEM: " + text);
     }
 
-    /** The canonical name when the word is a Baritone setting (typed like a command: buildInLayers false), else null. */
+    /** Returns the canonical setting name if known by the active PathEngine, else null. */
     static String settingName(String word) {
         try {
-            var s = BaritoneAPI.getSettings().byLowerName.get(word.toLowerCase());
-            return s == null ? null : s.getName();
+            return dev.midtown.api.EngineSelector.current().getSetting(word) != null ? word : null;
         } catch (Throwable t) {
             return null;
         }
     }
 
-    /** "buildInLayers false" is Baritone's shortcut for "set buildInLayers false"; the command manager does not know it. */
+    /** Normalizes a legacy `#` command line. */
     static String normalize(String command) {
         String c = command.trim();
-        int sp = c.indexOf(' ');
-        String first = sp < 0 ? c : c.substring(0, sp);
-        String prefix = BaritoneAPI.getSettings().prefix.value;
-        if (first.startsWith(prefix)) first = first.substring(prefix.length());
-        try {
-            if (baritone().getCommandManager().getCommand(first.toLowerCase()) != null) return c;
-        } catch (Throwable ignored) {
-        }
-        String name = settingName(first);
-        return name == null ? c : "set " + name + (sp < 0 ? "" : c.substring(sp));
+        if (c.startsWith("#")) c = c.substring(1).trim();
+        return c;
     }
 
-    /** True while any Baritone task runs (#mine, #farm, #build, #sel ca, #goto, ...). */
+    /** True while the active PathEngine is busy. */
     static boolean baritoneBusy() {
-        IBaritone b = baritone();
-        return b.getMineProcess().isActive() || b.getBuilderProcess().isActive() || b.getFarmProcess().isActive()
-                || b.getExploreProcess().isActive() || b.getGetToBlockProcess().isActive()
-                || b.getFollowProcess().isActive() || b.getCustomGoalProcess().isActive();
+        return dev.midtown.api.EngineSelector.current().isBusy();
     }
 
     /**
      * Right-clicking a chest while sneaking, with a block or a bucket in hand, places the block on top of it (or pours
-     * the bucket) instead of opening it - and a block on top of a chest keeps it shut for good. On the live canal a
-     * stone brick ended up on the tools chest that way and every restock after it failed. So: stand up, and hold
+     * the bucket) instead of opening it - and a block on top of a chest keeps it shut for good. So: stand up, and hold
      * something harmless.
      */
     static void readyToOpen(net.minecraft.client.player.LocalPlayer p) {
-        baritone().getInputOverrideHandler().setInputForceState(baritone.api.utils.input.Input.SNEAK, false);
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.options != null) mc.options.keyShift.setDown(false);
         p.setShiftKeyDown(false);
         var inv = p.getInventory();
         if (!placesSomething(inv.getItem(inv.getSelectedSlot()))) return;

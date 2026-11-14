@@ -1,0 +1,8 @@
+// midtown defend: on mobs > 0 ... defend() using Midtown engine
+option("engine", "midtown")
+on mobs > 0
+  defend()
+  print("TEST midtown_defended")
+end
+print("TEST midtown_defend armed")
+wait 90

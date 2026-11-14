@@ -80,11 +80,13 @@ final class Recovery {
         Util.msg("Back on the server - resuming: " + lastTask);
         boolean ok;
         try {
-            ok = Util.baritone().getCommandManager().execute(lastTask);
+            var engine = dev.midtown.api.EngineSelector.current();
+            engine.resume();
+            ok = true;
         } catch (Throwable t) {
             ok = false;
         }
-        if (!ok) Util.warn("resumefail", "Baritone did not accept '" + lastTask + "' any more.");
+        if (!ok) Util.warn("resumefail", "Engine did not accept '" + lastTask + "' any more.");
     }
 
     void onDeath() {
@@ -138,12 +140,31 @@ final class Recovery {
             return;
         }
         Util.msg("Safe again - resuming: " + lastTask);
-        boolean ok;
+        boolean ok = false;
         try {
-            ok = Util.baritone().getCommandManager().execute(lastTask);
+            var engine = dev.midtown.api.EngineSelector.current();
+            String trimmed = lastTask.trim();
+            String[] parts = trimmed.split("\\s+");
+            if (parts.length >= 4 && parts[0].equalsIgnoreCase("goto")) {
+                try {
+                    int x = Integer.parseInt(parts[1]);
+                    int y = Integer.parseInt(parts[2]);
+                    int z = Integer.parseInt(parts[3]);
+                    engine.goTo(dev.midtown.api.GoalSpec.exact(new net.minecraft.core.BlockPos(x, y, z)));
+                    ok = true;
+                } catch (NumberFormatException ignored) {}
+            } else if (parts.length >= 2 && parts[0].equalsIgnoreCase("mine")) {
+                String[] targets = java.util.Arrays.copyOfRange(parts, 1, parts.length);
+                engine.mine(dev.midtown.api.BlockFilter.ofNames(targets));
+                ok = true;
+            }
+            if (!ok) {
+                engine.resume();
+                ok = true;
+            }
         } catch (Throwable t) {
             ok = false;
         }
-        if (!ok) Util.warn("resumefail", "Baritone did not accept '" + lastTask + "' any more.");
+        if (!ok) Util.warn("resumefail", "Engine did not accept '" + lastTask + "' any more.");
     }
 }

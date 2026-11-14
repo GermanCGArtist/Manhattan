@@ -1,8 +1,7 @@
 package dev.buildtools;
 
-import baritone.api.pathing.goals.GoalNear;
-import baritone.api.process.PathingCommand;
-import baritone.api.process.PathingCommandType;
+import dev.midtown.api.EngineSelector;
+import dev.midtown.api.GoalSpec;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
@@ -24,10 +23,8 @@ import java.util.Set;
 import static dev.buildtools.Config.cfg;
 
 /**
- * Picks up the scaffolding Baritone left behind (see Scaffold): walks to the nearest recorded block, and breaks
+ * Picks up scaffolding left behind: walks to the nearest recorded block, and breaks
  * everything within reach from where it stands with the fastest tool in the hotbar, then collects the drops.
- * Runs on demand (/buildtools scaffold collect, also usable as a queue line) and, when switched on, by itself once enough
- * scaffolding has piled up near you while Baritone is busy. The task underneath carries on afterwards.
  */
 final class ScaffoldProcess extends Feature {
     private static final double REACH = 4.4;
@@ -59,8 +56,16 @@ final class ScaffoldProcess extends Feature {
         LocalPlayer p = mc.player;
         Scaffold.tick(mc);
         if (cooldown > 0) cooldown--;
-        if (working || p == null || mc.level == null || !Util.scriptOn("scaffold", cfg.scaffoldAuto) || cooldown > 0 || ++check % 20 != 0 || Util.addonOff("scaffold")) return;
-        if (!Util.baritoneBusy()) return;   // only in the middle of a job; when idle, /buildtools scaffold collect does it
+        if (working) {
+            if (p == null || mc.level == null || mc.gameMode == null) {
+                setWorking(false);
+                return;
+            }
+            stepInternal(mc, p);
+            return;
+        }
+        if (p == null || mc.level == null || !Util.scriptOn("scaffold", cfg.scaffoldAuto) || cooldown > 0 || ++check % 20 != 0 || Util.addonOff("scaffold")) return;
+        if (!Util.baritoneBusy()) return;
         if (Scaffold.near(p, 40) >= cfg.scaffoldBatch) start(mc, p, true);
     }
 
@@ -74,7 +79,7 @@ final class ScaffoldProcess extends Feature {
     private void start(Minecraft mc, LocalPlayer p, boolean auto) {
         int n = Scaffold.near(p, auto ? 40 : 128);
         if (n == 0) {
-            if (!auto) Util.msg("No scaffolding recorded near you. (Only blocks Baritone placed itself are remembered, since the mod was loaded.)");
+            if (!auto) Util.msg("No scaffolding recorded near you.");
             return;
         }
         setWorking(true);
@@ -86,27 +91,17 @@ final class ScaffoldProcess extends Feature {
         Util.msg((auto ? "Enough scaffolding piled up (" : "Collecting scaffolding (") + n + " blocks)" + (auto ? ": taking it down now." : "..."));
     }
 
-    private Boolean breakBefore;   // Baritone's allowBreak while collecting (restored afterwards)
-    private int fallBefore;        // and its maxFallHeightNoWater
+    private Boolean breakBefore;
 
-    /**
-     * While collecting, Baritone only walks (no digging): our own clicks take the scaffolding down. Else its path from
-     * the top of a fresh build down to the scaffolding could dig straight through the build (a schematic corner).
-     */
     private void setWorking(boolean on) {
         if (on == working) return;
         working = on;
-        var s = baritone.api.BaritoneAPI.getSettings();
         if (on) {
-            breakBefore = s.allowBreak.value;
-            fallBefore = s.maxFallHeightNoWater.value;
-            s.allowBreak.value = false;
-            // without digging, the way down from the top of a build is a drop: allow a little more than 3 blocks
-            s.maxFallHeightNoWater.value = Math.max(fallBefore, 5);
+            breakBefore = RegionRules.setOwnBreak(false);
         } else if (breakBefore != null) {
-            s.allowBreak.value = breakBefore;
-            s.maxFallHeightNoWater.value = fallBefore;
+            RegionRules.setOwnBreak(breakBefore);
             breakBefore = null;
+            EngineSelector.current().cancel();
         }
     }
 
@@ -116,6 +111,7 @@ final class ScaffoldProcess extends Feature {
         item = null;
         Minecraft mc = Minecraft.getInstance();
         if (mc.gameMode != null) mc.gameMode.stopDestroyBlock();
+        EngineSelector.current().cancel();
     }
 
     // ------------------------------------------------------------------ work
@@ -127,51 +123,64 @@ final class ScaffoldProcess extends Feature {
         return working;
     }
 
-    @Override
-    PathingCommand step(boolean calcFailed, boolean isSafeToCancel) {
-        Minecraft mc = Minecraft.getInstance();
-        LocalPlayer p = mc.player;
-        if (p == null || mc.level == null || mc.gameMode == null) { setWorking(false); return defer(); }
+    private void stepInternal(Minecraft mc, LocalPlayer p) {
         Level level = mc.level;
 
-        if (target != null && !Scaffold.valid(level, target)) {   // gone: broken by us (or by anything else)
+        if (target != null && !Scaffold.valid(level, target)) {
             broken++;
             target = null;
         }
-        if (target != null && level.getBlockState(target).isAir() == false && (p.tickCount % 1) == 0 && !announced.contains(target)) {
-            announced.add(target.immutable());   // one line per block we take down, so the chat shows what goes
+        if (target != null && !level.getBlockState(target).isAir() && !announced.contains(target)) {
+            announced.add(target.immutable());
             Util.msg("Taking down scaffolding at " + target.toShortString() + " (" + level.getBlockState(target).getBlock().getName().getString() + ")");
         }
         if (target == null) {
             target = pickTarget(p, level);
             targetTicks = 0;
         }
-        if (target != null) return work(mc, p, level, calcFailed);
+        if (target != null) {
+            work(mc, p, level);
+            return;
+        }
 
         // nothing left to break: gather the drops
         if (item == null || !item.isAlive()) {
             item = findItem(p, level);
             itemTicks = 0;
         }
-        if (item == null) { finish(mc); return defer(); }
-        if (++itemTicks > GATHER_TIMEOUT || calcFailed) {
+        if (item == null) {
+            finish(mc);
+            return;
+        }
+        if (++itemTicks > GATHER_TIMEOUT) {
             ignoredItems.add(item.getId());
             item = null;
-            return defer();
+            return;
         }
-        return new PathingCommand(new GoalNear(item.blockPosition(), 1), PathingCommandType.SET_GOAL_AND_PATH);
+        if (!EngineSelector.current().isBusy()) {
+            EngineSelector.current().goTo(GoalSpec.near(item.blockPosition(), 1));
+        }
     }
 
-    private PathingCommand work(Minecraft mc, LocalPlayer p, Level level, boolean calcFailed) {
-        if (++targetTicks > TARGET_TIMEOUT || calcFailed) {
+    private void work(Minecraft mc, LocalPlayer p, Level level) {
+        if (++targetTicks > TARGET_TIMEOUT) {
             Scaffold.forget(target);
             skipped++;
             target = null;
             mc.gameMode.stopDestroyBlock();
-            return defer();
+            return;
         }
         Direction face = reachFace(p, level, target);
-        if (face == null) return new PathingCommand(new GoalNear(target, 2), PathingCommandType.SET_GOAL_AND_PATH);
+        if (face == null) {
+            if (!EngineSelector.current().isBusy()) {
+                EngineSelector.current().goTo(GoalSpec.near(target, 2));
+            }
+            return;
+        }
+
+        if (EngineSelector.current().isBusy()) {
+            EngineSelector.current().cancel();
+        }
 
         BlockState state = level.getBlockState(target);
         selectBestTool(p, state);
@@ -181,10 +190,8 @@ final class ScaffoldProcess extends Feature {
             mc.gameMode.continueDestroyBlock(target, face);
             p.swing(InteractionHand.MAIN_HAND);
         }
-        return pause();   // stand still while digging
     }
 
-    /** The face to dig at when the block can be hit from where the player stands, else null. */
     private static Direction reachFace(LocalPlayer p, Level level, BlockPos pos) {
         Vec3 eye = p.getEyePosition();
         Vec3 aim = Vec3.atCenterOf(pos);
@@ -194,7 +201,6 @@ final class ScaffoldProcess extends Feature {
         return hit.getDirection();
     }
 
-    /** Highest block in reach first (a pillar goes top-down), else the nearest one; safe areas and failed spots are left out. */
     private BlockPos pickTarget(LocalPlayer p, Level level) {
         BlockPos best = null;
         boolean bestReach = false;
@@ -202,7 +208,7 @@ final class ScaffoldProcess extends Feature {
         var it = Scaffold.spots().keySet().iterator();
         while (it.hasNext()) {
             BlockPos pos = it.next();
-            if (!Scaffold.valid(level, pos)) { it = Scaffold.spots().keySet().iterator(); continue; }   // valid() removed it
+            if (!Scaffold.valid(level, pos)) { it = Scaffold.spots().keySet().iterator(); continue; }
             if (cfg.protect) {
                 Config.Zone z = Guard.zoneAt(pos);
                 if (z != null && !z.allowBreak) continue;
@@ -253,7 +259,7 @@ final class ScaffoldProcess extends Feature {
     }
 
     @Override
-    public void onLostControl() {   // e.g. #stop
+    public void onLostControl() {
         if (working) cancel();
     }
 }

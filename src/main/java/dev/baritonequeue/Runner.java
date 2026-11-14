@@ -34,6 +34,12 @@ final class Runner {
     private int stepTimeout;   // ticks; 0 = none
     private final java.util.Set<String> switchedOff = new java.util.LinkedHashSet<>();
     private final java.util.Set<String> switchedOn = new java.util.LinkedHashSet<>();
+    private int blocksMoved;
+    private int stuckCount;
+    private int interruptsHandled;
+    private int deaths;
+    private double lastX, lastY, lastZ;
+    private boolean hasLastPos;
 
     static final class Handler {
         final Ast.On on;
@@ -167,6 +173,11 @@ final class Runner {
 
     /** Parses and starts the script; returns an error text or null. */
     String start(List<String> script) {
+        return start(script, Jobs.SCRIPT);
+    }
+
+    /** As start, for the script of this name (the editor tab; its ledger file is per world and name). */
+    String start(List<String> script, String scriptName) {
         if (running) return "Already running (" + current() + ").";
         dev.survivalkit.Api.resetIndexRefresh();   // index_refresh() lasts for one run
         String text = String.join("\n", script);
@@ -185,9 +196,25 @@ final class Runner {
         System.clearProperty("baritonequeue.helpers.on");
         stepTimeout = 0;
         actions = 0;
+        blocksMoved = 0;
+        stuckCount = 0;
+        interruptsHandled = 0;
+        deaths = 0;
+        hasLastPos = false;
+        var mc = net.minecraft.client.Minecraft.getInstance();
+        var p = mc != null ? mc.player : null;
+        if (p != null) {
+            lastX = p.getX();
+            lastY = p.getY();
+            lastZ = p.getZ();
+            hasLastPos = true;
+        }
         awaitRecovery = false;
+        dev.survivalkit.Api.onBeforeDisconnect = () -> { if (running) halt("Disconnected."); };
         Areas.scripted.clear();
         Areas.restoreIfNeeded(text);
+        String resume = Jobs.startRun(scriptName);   // the saved ledger of this world: what an earlier run finished
+        if (resume != null) Util.msg(resume);
         globals = new Ast.Env(Builtins.root());
         main = new Fiber("queue-script", () -> Ast.run(program, mainIn, globals));
         mainIn = new Interp(this, main);
@@ -202,9 +229,11 @@ final class Runner {
     /** Stops running; the script text itself is untouched. */
     void halt(String why) {
         if (!running) return;
+        long elapsedMs = System.currentTimeMillis() - startedAt;
         running = false;
         endAll();
         Util.warn("queue", why);
+        emitBenchmark(false, elapsedMs);
     }
 
     void reset() {
@@ -275,6 +304,25 @@ final class Runner {
         if (recovering()) return;
 
         if (++handlerTick % 10 == 0) checkHandlers();
+        var mc = net.minecraft.client.Minecraft.getInstance();
+        var p = mc == null ? null : mc.player;
+        if (p != null) {
+            if (hasLastPos) {
+                double dx = p.getX() - lastX, dy = p.getY() - lastY, dz = p.getZ() - lastZ;
+                double dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+                if (dist >= 1.0) {
+                    blocksMoved += (int) Math.floor(dist);
+                    lastX = p.getX();
+                    lastY = p.getY();
+                    lastZ = p.getZ();
+                }
+            } else {
+                lastX = p.getX();
+                lastY = p.getY();
+                lastZ = p.getZ();
+                hasLastPos = true;
+            }
+        }
         Fiber f = active();
         drive(f);
     }
@@ -292,6 +340,7 @@ final class Runner {
                     a.fail("The action hit an error (" + t + "). Details are in the game log.");
                 }
                 if (!a.done && stepTimeout > 0 && a.timed() && a.ticks > stepTimeout) {
+                    stuckCount++;
                     Util.warn("queue", "'" + f.actionText + "' took longer than " + stepTimeout / 20 + " s, so I stopped it and go on.");
                     a.cancel();
                     a.finish(false);
@@ -321,6 +370,7 @@ final class Runner {
             }
             if (!stack.isEmpty() && f == stack.peek().f() && !f.exited) {
                 stack.pop().h().lastEnd = tickCounter;
+                interruptsHandled++;
                 Fiber m = active();   // what it interrupted carries on
                 if (m != null && m.action != null && !m.action.done) {
                     try {
@@ -332,11 +382,16 @@ final class Runner {
                 return;
             }
             running = false;
-            long secs = (System.currentTimeMillis() - startedAt) / 1000;
+            long elapsedMs = System.currentTimeMillis() - startedAt;
+            long secs = elapsedMs / 1000;
             String summary = actions + " action" + (actions == 1 ? "" : "s") + ", " + Estimate.duration(secs * 20);
             endAll();
             Util.msg("Script finished (" + summary + ").");
             System.setProperty("baritonequeue.finished", summary + "|" + System.currentTimeMillis());
+            emitBenchmark(true, elapsedMs);
+            if (Config.cfg.logoffOnDone) {
+                dev.survivalkit.Api.disconnect("Script complete.");
+            }
             return;
         }
         if (f.wanted != null && f.action == null) {   // the script waits for a new action: make it and start it
@@ -368,6 +423,9 @@ final class Runner {
         endAll();
         Util.msg("PROBLEM in line " + line + (line > 0 && line <= lines.length ? " (" + lineText(line) + ")" : "") + ": " + text);
         Util.msg("The script stopped. Fix it and press Run again.");
+        if (Config.cfg.logoffOnError) {
+            dev.survivalkit.Api.disconnect("Script stopped: " + text);
+        }
     }
 
     private void checkHandlers() {
@@ -387,6 +445,9 @@ final class Runner {
                 running = false;
                 endAll();
                 Util.msg("PROBLEM in the 'on' condition of line " + h.on.line + ": " + e.getMessage());
+                if (Config.cfg.logoffOnError) {
+                    dev.survivalkit.Api.disconnect("Script stopped: " + e.getMessage());
+                }
                 return;
             }
             // when it becomes true; and again a minute after it last ran if it is still true (no food, a mob left ...)
@@ -438,9 +499,13 @@ final class Runner {
 
     /** After a death or a reconnect the respawn helper gets you back and then signals; the action is run again. */
     private boolean recovering() {
-        var p = Minecraft.getInstance().player;
+        var mc = Minecraft.getInstance();
+        var p = mc == null ? null : mc.player;
         if (p != null && p.isDeadOrDying()) {
-            if (!awaitRecovery) suspendCurrent();
+            if (!awaitRecovery) {
+                deaths++;
+                suspendCurrent();
+            }
             awaitRecovery = true;
             recoveryWait = 0;
             return true;
@@ -467,5 +532,25 @@ final class Runner {
             halt("The script stopped (you died or the connection dropped, and auto-respawn/resume is off).");
         }
         return true;
+    }
+
+    private void emitBenchmark(boolean pass, long elapsedMs) {
+        String scenario = System.getProperty("manhattan.benchmark");
+        if (scenario == null || scenario.isBlank()) {
+            scenario = System.getProperty("manhattan.scenario");
+        }
+        if (scenario != null && !scenario.isBlank()) {
+            String engine = dev.midtown.api.EngineSelector.selectedName();
+            dev.midtown.api.BenchmarkLogger.emit(
+                    engine,
+                    scenario,
+                    pass,
+                    elapsedMs,
+                    blocksMoved,
+                    stuckCount,
+                    interruptsHandled,
+                    deaths
+            );
+        }
     }
 }

@@ -12,6 +12,48 @@ import static dev.survivalkit.Config.cfg;
 public final class Api {
     private Api() {}
 
+    public static volatile Runnable onBeforeDisconnect;
+
+    public static boolean isDisconnectSuppressed() {
+        return Reconnect.isSuppressed();
+    }
+
+    public static void resetDisconnectSuppression() {
+        Reconnect.resetSuppression();
+    }
+
+    public static boolean isLogoffOnMissingBed() {
+        return cfg.logoffOnMissingBed;
+    }
+
+    /**
+     * Intentionally disconnects from the current world/server, suppressing auto-reconnect
+     * and cancelling any active pathing. Safe to call from any thread or in headless tests.
+     */
+    public static void disconnect(String reason) {
+        Reconnect.suppressNextDisconnect();
+        Runnable hook = onBeforeDisconnect;
+        if (hook != null) {
+            try {
+                hook.run();
+            } catch (Throwable ignored) {
+            }
+        }
+        dev.midtown.api.EngineSelector.current().cancel();
+        if (reason != null && !reason.isBlank()) {
+            System.out.println("[SurvivalKit] Disconnecting: " + reason);
+        }
+        Minecraft mc = Minecraft.getInstance();
+        if (mc == null) return;
+        Runnable action = () -> {
+            if (mc.level == null && mc.getConnection() == null) return;
+            mc.disconnectWithSavingScreen();
+            mc.setScreen(new net.minecraft.client.gui.screens.TitleScreen());
+        };
+        if (mc.isSameThread()) action.run();
+        else mc.execute(action);
+    }
+
     public static String sleepNow() {
         if (cfg.bed == null) return "No bed saved. Set it in the script: option(\"survival.bed\", pos(x, y, z)) - or look at the bed and /survival bed set.";
         SurvivalKitMod.sleep.startNow();

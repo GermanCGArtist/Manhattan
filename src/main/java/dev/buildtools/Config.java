@@ -53,6 +53,7 @@ final class Config {
     /** A box of blocks (both corners inclusive). */
     static final class Zone {
         String name;
+        String group;   // null = its own name
         int x1, y1, z1, x2, y2, z2;
 
         /** May Baritone break / place blocks inside, and while you are inside or near (reach) the area? false = no. */
@@ -63,7 +64,12 @@ final class Config {
         Zone() {}
 
         Zone(String name, BlockPos a, BlockPos b) {
+            this(name, null, a, b);
+        }
+
+        Zone(String name, String group, BlockPos a, BlockPos b) {
             this.name = name;
+            this.group = group;
             x1 = Math.min(a.getX(), b.getX());
             y1 = Math.min(a.getY(), b.getY());
             z1 = Math.min(a.getZ(), b.getZ());
@@ -114,7 +120,13 @@ final class Config {
     }
 
     static void save() {
-        try (Writer w = Files.newBufferedWriter(path())) {
+        Path p;
+        try {
+            p = path();
+        } catch (Throwable ignored) {
+            return;   // offline tests outside Fabric
+        }
+        try (Writer w = Files.newBufferedWriter(p)) {
             GSON.toJson(cfg, w);
         } catch (Exception e) {
             e.printStackTrace();

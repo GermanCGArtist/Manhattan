@@ -1,8 +1,8 @@
 package dev.buildtools;
 
-import baritone.api.utils.input.Input;
 import net.fabricmc.fabric.api.event.player.AttackBlockCallback;
 import net.fabricmc.fabric.api.event.player.UseBlockCallback;
+import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.MenuProvider;
@@ -17,14 +17,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import static dev.buildtools.Config.cfg;
 
 /**
- * Enforces the safe areas. Every block break and block placement by Baritone goes through Minecraft's own
- * startDestroyBlock / useItemOn, and Fabric lets us veto those. A break or placement is only vetoed when Baritone
- * itself is clicking (its forced input is down), so what you do by hand, and what the other addons do, is untouched.
- *
- * Walking through a safe area, opening its chests and sleeping in its bed all still work.
- *
- * The veto stops the damage but not Baritone's plan: if it keeps insisting on breaking something in there, it would
- * retry forever. So after a few seconds of being blocked the running Baritone task is stopped, with a message.
+ * Enforces the safe areas.
  */
 final class Guard {
     private Guard() {}
@@ -39,7 +32,7 @@ final class Guard {
 
     static void register() {
         AttackBlockCallback.EVENT.register((player, level, hand, pos, direction) ->
-                level.isClientSide() ? check(pos, "break a block", Input.CLICK_LEFT, true) : InteractionResult.PASS);
+                level.isClientSide() ? check(pos, "break a block", true) : InteractionResult.PASS);
 
         UseBlockCallback.EVENT.register((player, level, hand, hit) -> {
             if (!level.isClientSide()) return InteractionResult.PASS;
@@ -48,7 +41,7 @@ final class Guard {
             BlockState state = level.getBlockState(clicked);
             if (usable(level, clicked, state)) return InteractionResult.PASS;   // opening a chest, bed, door ...
             BlockPos placed = state.canBeReplaced() ? clicked : clicked.relative(hit.getDirection());
-            return check(placed, "place a block", Input.CLICK_RIGHT, false);
+            return check(placed, "place a block", false);
         });
     }
 
@@ -60,9 +53,13 @@ final class Guard {
                 || state.getBlock() instanceof FenceGateBlock;
     }
 
-    private static InteractionResult check(BlockPos pos, String action, Input input, boolean breaking) {
+    private static InteractionResult check(BlockPos pos, String action, boolean breaking) {
         if (!cfg.protect || cfg.zones.isEmpty()) return InteractionResult.PASS;
-        if (!Util.baritone().getInputOverrideHandler().isInputForcedDown(input)) return InteractionResult.PASS;   // not Baritone
+        if (!dev.midtown.api.EngineSelector.current().isBusy()) return InteractionResult.PASS;
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.options == null) return InteractionResult.PASS;
+        boolean clicking = breaking ? mc.options.keyAttack.isDown() : mc.options.keyUse.isDown();
+        if (!clicking) return InteractionResult.PASS;
         Config.Zone zone = zoneAt(pos);
         if (zone == null || (breaking ? zone.allowBreak : zone.allowPlace)) return InteractionResult.PASS;
 
@@ -99,7 +96,7 @@ final class Guard {
             stop = false;
             firstBlocked = -1;
             Util.haltQueue("The task was stopped, so the queue stopped too.");
-            Util.baritone().getPathingBehavior().cancelEverything();
+            dev.midtown.api.EngineSelector.current().cancel();
             Util.msg("PROBLEM: Baritone's route leads through the safe area '" + zoneName + "': it kept trying to " + what
                     + (blockName.isEmpty() ? "" : " (" + blockName + ")") + " at " + where.toShortString()
                     + ". It cannot plan around plain blocks, so I stopped the task. Move the job away from the area, "

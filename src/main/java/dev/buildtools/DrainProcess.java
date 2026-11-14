@@ -1,15 +1,13 @@
 package dev.buildtools;
 
-import baritone.api.pathing.goals.GoalNear;
-import baritone.api.process.IBuilderProcess;
-import baritone.api.process.PathingCommand;
-import baritone.api.process.PathingCommandType;
-import baritone.api.selection.ISelection;
+import dev.midtown.api.EngineSelector;
+import dev.midtown.api.GoalSpec;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
-import net.minecraft.world.item.Items;
+import net.minecraft.core.Direction;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.state.BlockState;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -19,15 +17,7 @@ import java.util.Set;
 import static dev.buildtools.Config.cfg;
 
 /**
- * Gets water out of the way of Baritone's builder (#build, #sel ca ...). The builder can replace water SOURCE blocks
- * itself but gives up ("Unreplaceable liquids", it pauses) on FLOWING water. Water is infinite in Minecraft, so just
- * bucketing it mostly does not work. What this does instead:
- *
- *   dam    - with a #sel selection: plug the water just OUTSIDE the selection's edge, so nothing flows back in
- *   plug   - put a throwaway block into every flowing / refilling water cell inside the work area
- *   bucket - only for a lone source (fewer than two source neighbours), where it really drains for good
- *
- * then it resumes the builder. It runs by itself when the builder pauses (see tick()), or on demand.
+ * Gets water out of the way of building operations.
  */
 final class DrainProcess extends Feature {
     private record Task(BlockPos pos, boolean bucket, boolean dam) {}
@@ -38,15 +28,20 @@ final class DrainProcess extends Feature {
 
     private boolean working;
     private final List<Task> tasks = new ArrayList<>();
+    private final Set<BlockPos> failed = new HashSet<>();
     private Task current;
     private final Placer placer = new Placer();
-    private final Set<BlockPos> failed = new HashSet<>();
-    private int cooldown, check, rounds, waitTicks;
-    private boolean resumeBuilder;
+    private int waitTicks, cooldown, check;
+    private int rounds;
     private int bucketed, plugged, dammed;
 
     DrainProcess() {
-        super("BuildTools drain", 14);
+        super("BuildTools drain", 9);
+    }
+
+    @Override
+    boolean active() {
+        return working;
     }
 
     @Override
@@ -54,16 +49,14 @@ final class DrainProcess extends Feature {
         return working;
     }
 
-    // ------------------------------------------------------------------ triggers
-
     @Override
     void tick() {
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer p = mc.player;
         if (cooldown > 0) cooldown--;
-        if (working || p == null || mc.level == null || !Util.scriptOn("drain", cfg.drainAuto) || cooldown > 0 || ++check % 20 != 0 || Util.addonOff("drain")) return;
-        IBuilderProcess builder = Util.baritone().getBuilderProcess();
-        if (builder.isActive() && builder.isPaused()) start(mc, p, true);
+        if (!working) return;
+        if (p == null || mc.level == null || mc.gameMode == null) return;
+        stepInternal(mc, p);
     }
 
     /** /buildtools drain now */
@@ -78,12 +71,13 @@ final class DrainProcess extends Feature {
         working = false;
         tasks.clear();
         current = null;
+        EngineSelector.current().cancel();
     }
 
     private void start(Minecraft mc, LocalPlayer p, boolean auto) {
         List<Task> found = scan(mc, p);
         if (found.isEmpty()) {
-            if (auto) Util.warn("drain-none", "The builder is paused, but I found no water to remove. Check /buildtools status and the builder's own message (missing materials?).");
+            if (auto) Util.warn("drain-none", "No water found to remove.");
             else Util.msg("No water found in the selection (or within 8 blocks of you).");
             cooldown = 20 * 10;
             return;
@@ -100,18 +94,16 @@ final class DrainProcess extends Feature {
         rounds = 1;
         waitTicks = 0;
         bucketed = plugged = dammed = 0;
-        resumeBuilder = Util.baritone().getBuilderProcess().isPaused();
         working = true;
         Util.msg("Removing " + found.size() + " water cells" + (cfg.dam ? " (including a dam outside the selection edge)" : "") + "...");
     }
 
-    // ------------------------------------------------------------------ what to do
-
-    /** The area to clear: the #sel selections, or a box around the player when there is none. */
     private List<int[]> boxes(LocalPlayer p) {
-        List<int[]> boxes = new ArrayList<>();
-        for (ISelection s : Util.baritone().getSelectionManager().getSelections()) {
-            boxes.add(new int[]{s.min().x, s.min().y, s.min().z, s.max().x, s.max().y, s.max().z});
+        List<int[]> boxes = new ArrayList<>(dev.baritonequeue.Areas.read());
+        if (boxes.isEmpty() && cfg.corner1 != null && cfg.corner2 != null) {
+            boxes.add(new int[]{
+                    Math.min(cfg.corner1[0], cfg.corner2[0]), Math.min(cfg.corner1[1], cfg.corner2[1]), Math.min(cfg.corner1[2], cfg.corner2[2]),
+                    Math.max(cfg.corner1[0], cfg.corner2[0]), Math.max(cfg.corner1[1], cfg.corner2[1]), Math.max(cfg.corner1[2], cfg.corner2[2])});
         }
         if (boxes.isEmpty()) {
             BlockPos b = p.blockPosition();
@@ -122,78 +114,107 @@ final class DrainProcess extends Feature {
 
     private List<Task> scan(Minecraft mc, LocalPlayer p) {
         Level level = mc.level;
-        boolean haveBucket = Util.slotOf(p, Items.BUCKET) >= 0;
-        boolean hasSelection = Util.baritone().getSelectionManager().getSelections().length > 0;
-        List<Task> out = new ArrayList<>();
-        int scanned = 0;
+        List<int[]> boxes = boxes(p);
+        boolean hasSelection = dev.baritonequeue.Areas.any() || (cfg.corner1 != null && cfg.corner2 != null);
+        List<Task> dams = new ArrayList<>();
+        List<Task> plugs = new ArrayList<>();
+        List<Task> buckets = new ArrayList<>();
+        int count = 0;
 
-        for (int[] b : boxes(p)) {
-            boolean dam = hasSelection && cfg.dam;
-            int pad = dam ? 1 : 0;   // the shell just outside the selection is the dam
-            for (int x = b[0] - pad; x <= b[3] + pad && scanned < MAX_SCAN; x++) {
-                for (int y = b[1] - pad; y <= b[4] + pad; y++) {
-                    for (int z = b[2] - pad; z <= b[5] + pad; z++) {
-                        scanned++;
+        for (int[] b : boxes) {
+            for (int y = b[4]; y >= b[1]; y--) {
+                for (int x = b[0]; x <= b[3]; x++) {
+                    for (int z = b[2]; z <= b[5]; z++) {
+                        if (++count > MAX_SCAN) break;
                         BlockPos pos = new BlockPos(x, y, z);
-                        if (!Util.isWater(level.getBlockState(pos))) continue;
-                        boolean inside = x >= b[0] && x <= b[3] && y >= b[1] && y <= b[4] && z >= b[2] && z <= b[5];
-                        if (!inside) {
-                            out.add(new Task(pos, false, true));
-                        } else if (haveBucket && Util.isSourceWater(level.getBlockState(pos)) && !Util.regenerates(level, pos)) {
-                            out.add(new Task(pos, true, false));   // a lone source: draining it really works
-                        } else {
-                            out.add(new Task(pos, false, false));
+                        BlockState s = level.getBlockState(pos);
+                        if (!Util.isWater(s)) continue;
+                        if (Api.protectedAt(pos)) continue;
+
+                        boolean damCell = false;
+                        if (cfg.dam && hasSelection) {
+                            for (Direction d : Direction.Plane.HORIZONTAL) {
+                                BlockPos n = pos.relative(d);
+                                if (!inAnyBox(n, boxes) && !Util.isSolid(level, n) && !Api.protectedAt(n)) {
+                                    dams.add(new Task(n, false, true));
+                                    damCell = true;
+                                }
+                            }
                         }
+                        if (damCell) continue;
+
+                        if (Util.isSourceWater(s)) {
+                            if (Util.regenerates(level, pos)) continue;
+                            if (loneSource(level, pos) && Util.slotOf(p, net.minecraft.world.item.Items.BUCKET) >= 0) buckets.add(new Task(pos, true, false));
+                            else plugs.add(new Task(pos, false, false));
+                        } else {
+                            plugs.add(new Task(pos, false, false));
+                        }
+                        if (dams.size() + plugs.size() + buckets.size() >= MAX_TASKS) break;
                     }
                 }
             }
         }
-        if (out.size() > MAX_TASKS) {
-            Util.msg("Lots of water (" + out.size() + " cells): doing the first " + MAX_TASKS + " now, then looking again.");
-            out = new ArrayList<>(out.subList(0, MAX_TASKS));
-        }
+        List<Task> out = new ArrayList<>();
+        out.addAll(dams);
+        out.addAll(plugs);
+        out.addAll(buckets);
         return out;
     }
 
-    private Task nextTask(LocalPlayer p) {
-        Task best = null;
-        double bestDist = Double.MAX_VALUE;
-        for (Task t : tasks) {
-            double d = t.pos().distSqr(p.blockPosition());
-            if (d < bestDist) { bestDist = d; best = t; }
+    private static boolean inAnyBox(BlockPos p, List<int[]> boxes) {
+        for (int[] b : boxes) {
+            if (p.getX() >= b[0] && p.getX() <= b[3] && p.getY() >= b[1] && p.getY() <= b[4] && p.getZ() >= b[2] && p.getZ() <= b[5]) return true;
         }
-        if (best != null) tasks.remove(best);
-        return best;
+        return false;
     }
 
-    // ------------------------------------------------------------------ doing it
-
-    @Override
-    boolean active() {
-        if (working && Minecraft.getInstance().player == null) cancel();
-        return working;
+    private static boolean loneSource(Level level, BlockPos pos) {
+        int sources = 0;
+        for (Direction d : Direction.values()) {
+            if (Util.isSourceWater(level.getBlockState(pos.relative(d)))) sources++;
+        }
+        return sources <= 1;
     }
 
-    @Override
-    PathingCommand step(boolean calcFailed, boolean isSafeToCancel) {
-        Minecraft mc = Minecraft.getInstance();
-        LocalPlayer p = mc.player;
-        if (!working || p == null || mc.level == null || mc.gameMode == null) return defer();
+    private Task nextTask(LocalPlayer p) {
+        if (tasks.isEmpty()) return null;
+        BlockPos pos = p.blockPosition();
+        int bestIdx = 0;
+        double bestD = tasks.get(0).pos().distSqr(pos);
+        for (int i = 1; i < tasks.size(); i++) {
+            double d = tasks.get(i).pos().distSqr(pos);
+            if (d < bestD) { bestD = d; bestIdx = i; }
+        }
+        return tasks.remove(bestIdx);
+    }
 
+    private void stepInternal(Minecraft mc, LocalPlayer p) {
+        if (!working || p == null || mc.level == null || mc.gameMode == null) return;
         if (waitTicks > 0) {
             waitTicks--;
-            return pause();
+            return;
         }
 
         if (current == null) {
             current = nextTask(p);
-            if (current == null) return endOfRound(mc, p);
+            if (current == null) {
+                endOfRound(mc, p);
+                return;
+            }
             placer.start(current.pos(), current.bucket() ? Placer.Mode.PICKUP : Placer.Mode.BLOCK);
         }
 
-        if (!Util.isWater(mc.level.getBlockState(current.pos()))) {   // gone already (its source was removed)
+        if (!Util.isWater(mc.level.getBlockState(current.pos()))) {
             current = null;
-            return pause();
+            return;
+        }
+
+        if (!placer.canReach(mc, p)) {
+            EngineSelector.current().goTo(GoalSpec.near(current.pos(), 3));
+            return;
+        } else {
+            EngineSelector.current().cancel();
         }
 
         switch (placer.tick(mc, p)) {
@@ -202,27 +223,21 @@ final class DrainProcess extends Feature {
                 else if (current.dam()) dammed++;
                 else plugged++;
                 current = null;
-                return pause();
             }
             case FAILED -> {
-                if (current.bucket()) {   // could not bucket it: plug it instead
+                if (current.bucket()) {
                     tasks.add(new Task(current.pos(), false, false));
                 } else {
                     failed.add(current.pos());
                     Util.warn("drain-fail", "Could not plug water at " + current.pos().toShortString() + ": " + placer.failure());
                 }
                 current = null;
-                return pause();
             }
-            default -> {
-                if (placer.canReach(mc, p)) return pause();
-                return new PathingCommand(new GoalNear(current.pos(), 3), PathingCommandType.SET_GOAL_AND_PATH);
-            }
+            default -> {}
         }
     }
 
-    /** All planned cells done: give removed water a moment to recede, look again, and finish when it stays dry. */
-    private PathingCommand endOfRound(Minecraft mc, LocalPlayer p) {
+    private void endOfRound(Minecraft mc, LocalPlayer p) {
         if (waitTicks == 0 && rounds <= MAX_ROUNDS) {
             List<Task> more = scan(mc, p);
             more.removeIf(t -> failed.contains(t.pos()));
@@ -230,11 +245,10 @@ final class DrainProcess extends Feature {
                 tasks.addAll(more);
                 rounds++;
                 waitTicks = 20;
-                return pause();
+                return;
             }
         }
         finish();
-        return pause();
     }
 
     private void finish() {
@@ -242,18 +256,18 @@ final class DrainProcess extends Feature {
         tasks.clear();
         current = null;
         cooldown = 20 * 10;
-        if (resumeBuilder) Util.baritone().getBuilderProcess().resume();
+        EngineSelector.current().cancel();
         Util.msg("Water removed: " + plugged + " plugged, " + bucketed + " bucketed, " + dammed + " dammed outside"
-                + (failed.isEmpty() ? "" : ", " + failed.size() + " could not be reached")
-                + (resumeBuilder ? ". Builder resumed." : "."));
+                + (failed.isEmpty() ? "" : ", " + failed.size() + " could not be reached."));
     }
 
     @Override
-    public void onLostControl() {   // e.g. #stop
+    public void onLostControl() {
         if (working) {
             working = false;
             tasks.clear();
             current = null;
+            EngineSelector.current().cancel();
         }
     }
 }
