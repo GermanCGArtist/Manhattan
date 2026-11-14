@@ -10,9 +10,19 @@ import static dev.baritonequeue.Config.cfg;
  * for the Stage 3 Areas panel.
  */
 public final class AreasView {
-    public record AreaEntry(String name, int boxCount, long totalBlocks, String summary, boolean isLast) {
+    public record AreaEntry(String name, int boxCount, long totalBlocks, String summary, boolean isLast, String owner, String role) {
+        public AreaEntry(String name, int boxCount, long totalBlocks, String summary, boolean isLast) {
+            this(name, boxCount, totalBlocks, summary, isLast, "manual", "custom");
+        }
+
         public String scriptCall() {
             return "area(\"" + name + "\")";
+        }
+
+        public String tag() {
+            if ("heavymatica".equalsIgnoreCase(owner)) return "[H]";
+            if ("script".equalsIgnoreCase(owner)) return "[S]";
+            return "[M]";
         }
     }
 
@@ -38,7 +48,10 @@ public final class AreasView {
         for (int[] b : boxes) {
             blocks += (b[3] - b[0] + 1L) * (b[4] - b[1] + 1L) * (b[5] - b[2] + 1L);
         }
-        return new AreaEntry(name, boxes.size(), blocks, Areas.describe(boxes), isLast);
+        Config.AreaMeta m = isLast ? new Config.AreaMeta() : Areas.meta(name);
+        String owner = m != null && m.owner != null ? m.owner : "manual";
+        String role = m != null && m.role != null ? m.role : "custom";
+        return new AreaEntry(name, boxes.size(), blocks, Areas.describe(boxes), isLast, owner, role);
     }
 
     public static String currentSelectionSummary() {

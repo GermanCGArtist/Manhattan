@@ -119,8 +119,15 @@ public final class Api {
         return Zones.addSelection(name) == 1 ? null : "Could not save the safe area (is there a selection?).";
     }
 
+    /** Replaces all protected boxes belonging to group {@code name} and syncs engines. */
+    public static void protectGroup(String name, java.util.List<int[]> boxes) {
+        if (name == null || name.isBlank()) return;
+        Zones.putGroup(name, boxes);
+    }
+
     public static boolean unprotect(String name) {
-        boolean had = cfg.zones.removeIf(z -> z.name.equalsIgnoreCase(name));
+        if (name == null) return false;
+        boolean had = cfg.zones.removeIf(z -> z.name.equalsIgnoreCase(name) || name.equalsIgnoreCase(z.group));
         if (had) {
             Zones.syncEngines();
             Config.save();

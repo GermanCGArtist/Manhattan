@@ -26,6 +26,15 @@ final class Config {
     java.util.Map<String, List<int[]>> areas = new java.util.LinkedHashMap<>();
     List<int[]> lastArea = new ArrayList<>();
 
+    /** Who wrote a saved area and what it is for; missing = an area from before this existed (treated as manual). */
+    java.util.Map<String, AreaMeta> areaMeta = new java.util.LinkedHashMap<>();
+
+    static final class AreaMeta {
+        String owner = "manual";   // "manual" | "script" | "heavymatica"
+        String role = "custom";    // "dig" | "clear" | "flood" | "fill" | "protect" | "custom"
+        long updated;              // System.currentTimeMillis() of the last write
+    }
+
     /** Capture sheets (the capture menu, key K): folder ("" = <game folder>/manhattan-context), the open set, options. */
     String captureDir = "";
     String captureSet = "main";
@@ -73,6 +82,7 @@ final class Config {
                     if (cfg.presets == null) cfg.presets = Presets.defaults();
                     if (cfg.chests == null) cfg.chests = new java.util.LinkedHashMap<>();
                     if (cfg.areas == null) cfg.areas = new java.util.LinkedHashMap<>();
+                    if (cfg.areaMeta == null) cfg.areaMeta = new java.util.LinkedHashMap<>();
                     if (cfg.captureDir == null) cfg.captureDir = "";
                     if (cfg.captureSet == null || cfg.captureSet.isBlank()) cfg.captureSet = "main";
                     if (cfg.captureType == null) cfg.captureType = "dump";

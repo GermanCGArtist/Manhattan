@@ -35,9 +35,29 @@ final class Zones {
     static void syncEngine(dev.midtown.api.PathEngine engine) {
         engine.clearProtectedAreas();
         if (!cfg.protect) return;
+        java.util.Map<String, java.util.List<dev.midtown.api.Area>> grouped = new java.util.LinkedHashMap<>();
         for (Config.Zone z : cfg.zones) {
-            engine.addProtectedArea(z.name, dev.midtown.api.Area.of(z.x1, z.y1, z.z1, z.x2, z.y2, z.z2));
+            String key = (z.group != null && !z.group.isBlank()) ? z.group : z.name;
+            grouped.computeIfAbsent(key, k -> new java.util.ArrayList<>())
+                    .add(dev.midtown.api.Area.of(z.x1, z.y1, z.z1, z.x2, z.y2, z.z2));
         }
+        for (var e : grouped.entrySet()) {
+            engine.setProtectedArea(e.getKey(), e.getValue());
+        }
+    }
+
+    static void putGroup(String name, java.util.List<int[]> boxes) {
+        cfg.zones.removeIf(z -> name.equalsIgnoreCase(z.group != null ? z.group : z.name));
+        if (boxes != null) {
+            for (int i = 0; i < boxes.size(); i++) {
+                int[] b = boxes.get(i);
+                String zname = boxes.size() == 1 ? name : name + "#" + (i + 1);
+                cfg.zones.add(new Config.Zone(zname, name,
+                        new BlockPos(b[0], b[1], b[2]), new BlockPos(b[3], b[4], b[5])));
+            }
+        }
+        syncEngines();
+        Config.save();
     }
 
     private static String freeName() {
@@ -163,7 +183,7 @@ final class Zones {
     }
 
     static int remove(String name) {
-        if (cfg.zones.removeIf(z -> z.name.equalsIgnoreCase(name))) {
+        if (cfg.zones.removeIf(z -> z.name.equalsIgnoreCase(name) || name.equalsIgnoreCase(z.group))) {
             syncEngines();
             Config.save();
             Util.msg("Safe area '" + name + "' removed.");

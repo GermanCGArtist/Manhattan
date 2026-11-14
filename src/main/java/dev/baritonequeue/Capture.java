@@ -356,9 +356,13 @@ final class Capture {
         }
         for (var e : cfg.areas.entrySet()) {
             if (taken.contains(e.getKey())) continue;
+            var meta = Areas.meta(e.getKey());
+            String roleOwner = (meta != null && ("heavymatica".equalsIgnoreCase(meta.owner) || !"custom".equalsIgnoreCase(meta.role)))
+                    ? (meta.role + ", from " + ("heavymatica".equalsIgnoreCase(meta.owner) ? "Heavymatica" : meta.owner))
+                    : "saved area";
             for (int[] b : e.getValue()) {
                 sheet = CaptureSheet.add(sheet, CaptureSheet.AREAS, "area_box(\"" + e.getKey() + "\", " + CaptureSheet.pos(b[0], b[1], b[2]) + ", "
-                        + CaptureSheet.pos(b[3], b[4], b[5]) + ")   // area: saved area; " + CaptureSheet.box(b));
+                        + CaptureSheet.pos(b[3], b[4], b[5]) + ")   // area: " + roleOwner + "; " + CaptureSheet.box(b));
             }
             taken.add(e.getKey());
             n++;
@@ -505,7 +509,17 @@ final class Capture {
             want.forEach((k, v) -> parts.add(k + " " + v));
             sb.append("// want-list (restock keeps this with you): ").append(String.join(", ", parts)).append('\n');
         }
-        if (!cfg.areas.isEmpty()) sb.append("// areas saved in the game (area(\"name\")): ").append(String.join(", ", cfg.areas.keySet())).append('\n');
+        if (!cfg.areas.isEmpty()) {
+            List<String> names = new ArrayList<>();
+            for (String k : cfg.areas.keySet()) {
+                var meta = Areas.meta(k);
+                String tag = (meta != null && ("heavymatica".equalsIgnoreCase(meta.owner) || !"custom".equalsIgnoreCase(meta.role)))
+                        ? k + " (" + meta.role + ", from " + ("heavymatica".equalsIgnoreCase(meta.owner) ? "Heavymatica" : meta.owner) + ")"
+                        : k;
+                names.add(tag);
+            }
+            sb.append("// areas saved in the game (area(\"name\")): ").append(String.join(", ", names)).append('\n');
+        }
         if (!cfg.chests.isEmpty()) sb.append("// chests saved in the game (chest(\"name\")): ").append(String.join(", ", cfg.chests.keySet())).append('\n');
         List<String> stats = areaStats();
         if (!stats.isEmpty()) {

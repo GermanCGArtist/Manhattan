@@ -201,7 +201,8 @@ final class Runner {
         interruptsHandled = 0;
         deaths = 0;
         hasLastPos = false;
-        var p = net.minecraft.client.Minecraft.getInstance().player;
+        var mc = net.minecraft.client.Minecraft.getInstance();
+        var p = mc != null ? mc.player : null;
         if (p != null) {
             lastX = p.getX();
             lastY = p.getY();

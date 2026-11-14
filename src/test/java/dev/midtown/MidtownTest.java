@@ -57,6 +57,7 @@ public class MidtownTest {
         testHazardCost();
         testMidtownPlanner();
         testItemSaverSettings();
+        testMultiBoxProtectedArea();
 
         System.out.println("\nMidtownTest summary: " + passes + " passed, " + fails + " failed.");
         if (fails > 0) {
@@ -717,6 +718,72 @@ public class MidtownTest {
 
         assertThrows("negative CalculationContext threshold rejects", IllegalArgumentException.class,
                 () -> CalculationContext.builder().itemSaverThreshold(-5));
+    }
+
+    private static void testMultiBoxProtectedArea() {
+        System.out.println("Checking multi-box setProtectedArea in MidtownEngine and MidtownPlanner...");
+        MidtownEngine engine = new MidtownEngine();
+        Area b1 = Area.of(1, 1, -1, 1, 4, -1);
+        Area b2 = Area.of(1, 1, 0, 1, 4, 0);
+        Area b3 = Area.of(1, 1, 1, 1, 4, 1);
+        engine.setProtectedArea("wall_group", List.of(b1, b2, b3));
+
+        assertTrue("engine isProtectedAt b1", engine.isProtectedAt(new BlockPos(1, 1, -1)));
+        assertTrue("engine isProtectedAt b2", engine.isProtectedAt(new BlockPos(1, 1, 0)));
+        assertTrue("engine isProtectedAt b3", engine.isProtectedAt(new BlockPos(1, 2, 1)));
+        assertFalse("engine isProtectedAt outside z=2", engine.isProtectedAt(new BlockPos(1, 1, 2)));
+        assertFalse("engine isProtectedAt start", engine.isProtectedAt(new BlockPos(0, 1, 0)));
+
+        // Multi-box planner test:
+        // World with floor y=0 from x=0..3, z=-2..3.
+        // Wall at x=1, y=1..4 from z=-1..1 (the 3 protected boxes).
+        // Open passage at z=2..3.
+        GridWorldSnapshot detourWorld = GridWorldSnapshot.builder(0, 0, -2, 3, 4, 3)
+                .fillFloor(0, BlockKind.SOLID)
+                .fillBox(1, 1, -1, 1, 4, -1, BlockKind.SOLID)
+                .fillBox(1, 1, 0, 1, 4, 0, BlockKind.SOLID)
+                .fillBox(1, 1, 1, 1, 4, 1, BlockKind.SOLID)
+                .build();
+
+        CalculationContext ctx = CalculationContext.builder()
+                .allowBreak(true)
+                .addProtectedArea("wall_group", b1)
+                .addProtectedArea("wall_group", b2)
+                .addProtectedArea("wall_group", b3)
+                .build();
+
+        MidtownPlanner planner = new MidtownPlanner();
+        try {
+            PlanResult res = planner.planSync(detourWorld, ctx, new BlockPos(0, 1, 0), GoalSpec.exact(new BlockPos(2, 1, 0)));
+            assertTrue("plan with 3 protected boxes complete", res.isComplete());
+            boolean touchesProtected = res.waypoints().stream().anyMatch(p ->
+                    p.getX() == 1 && (p.getZ() == -1 || p.getZ() == 0 || p.getZ() == 1));
+            assertFalse("no waypoints in any of the 3 protected boxes", touchesProtected);
+
+            // When no detour exists (wall spans entire z bounds z=-2..2 from y=1..4), breaking is forbidden so NO_PATH
+            GridWorldSnapshot blockedWorld = GridWorldSnapshot.builder(0, 0, -2, 3, 4, 2)
+                    .fillFloor(0, BlockKind.SOLID)
+                    .fillBox(1, 1, -2, 1, 4, 2, BlockKind.SOLID)
+                    .build();
+            Area b0 = Area.of(1, 1, -2, 1, 4, -2);
+            Area b4 = Area.of(1, 1, 2, 1, 4, 2);
+            CalculationContext fullWallCtx = CalculationContext.builder()
+                    .allowBreak(true)
+                    .addProtectedArea("wall_group", b0)
+                    .addProtectedArea("wall_group", b1)
+                    .addProtectedArea("wall_group", b2)
+                    .addProtectedArea("wall_group", b3)
+                    .addProtectedArea("wall_group", b4)
+                    .build();
+            PlanResult blockedRes = planner.planSync(blockedWorld, fullWallCtx, new BlockPos(0, 1, 0), GoalSpec.exact(new BlockPos(2, 1, 0)));
+            same("fully protected wall blocks break with NO_PATH", blockedRes.status(), PlanResult.Status.NO_PATH);
+        } finally {
+            planner.shutdown();
+        }
+
+        // Test replacement in engine
+        engine.setProtectedArea("wall_group", List.of());
+        assertFalse("empty list clears protection", engine.isProtectedAt(new BlockPos(1, 1, 0)));
     }
 
     // ------------------------------------------------------------------ Assertion Helpers

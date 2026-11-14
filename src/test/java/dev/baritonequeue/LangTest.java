@@ -1,5 +1,7 @@
 package dev.baritonequeue;
 
+import dev.baritonequeue.api.ManhattanAreas;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -58,6 +60,18 @@ public class LangTest {
         if (String.valueOf(got).equals(String.valueOf(expected))) { passes++; return; }
         fails++;
         System.out.println("FAIL " + name + "\n  expected: " + expected + "\n  got:      " + got);
+    }
+
+    static void assertTrue(String name, boolean condition) {
+        if (condition) { passes++; return; }
+        fails++;
+        System.out.println("FAIL " + name + "\n  expected: true\n  got:      false");
+    }
+
+    static void assertFalse(String name, boolean condition) {
+        if (!condition) { passes++; return; }
+        fails++;
+        System.out.println("FAIL " + name + "\n  expected: false\n  got:      true");
     }
 
     /** The capture sheet's text handling. */
@@ -316,7 +330,95 @@ public class LangTest {
         sheet();
         ledger();
         jobs();
+        heavymaticaApi();
         System.out.println(passes + " passed, " + fails + " failed");
         System.exit(fails == 0 ? 0 : 1);
+    }
+
+    /** Heavymatica API & metadata tests. */
+    static void heavymaticaApi() {
+        // 1. Old config without areaMeta loads; every area reads as manual / custom
+        String oldConfigJson = "{\"areas\":{\"old_manual\":[[0,64,0,10,70,10]]}}";
+        Config oldCfg = new com.google.gson.Gson().fromJson(oldConfigJson, Config.class);
+        Config.cfg = oldCfg;
+        same("old config owner", Areas.ownerOf("old_manual"), "manual");
+        same("old config role", Areas.roleOf("old_manual"), "custom");
+
+        // 2. ManhattanAreas.put -> owner HEAVYMATICA; area_box on that name in a run -> owner SCRIPT and warning fires once
+        List<String> listenerEvents = new ArrayList<>();
+        ManhattanAreas.addListener((name, owner) -> listenerEvents.add(name + ":" + owner));
+
+        var putRes = ManhattanAreas.put("heavy1", List.of(new int[]{0, 64, 0, 5, 70, 5}), ManhattanAreas.Role.DIG, false);
+        same("put heavy1", putRes, ManhattanAreas.Result.OK);
+        same("owner heavy1", Areas.ownerOf("heavy1"), "heavymatica");
+        same("role heavy1", Areas.roleOf("heavy1"), "dig");
+        assertTrue("listener fired on put", listenerEvents.contains("heavy1:HEAVYMATICA"));
+
+        // Run script with area_box on heavy1
+        run("area_box(\"heavy1\", pos(0, 64, 0), pos(2, 65, 2))");
+        same("owner heavy1 after script area_box", Areas.ownerOf("heavy1"), "script");
+        assertTrue("listener fired on script overwrite", listenerEvents.contains("heavy1:SCRIPT"));
+        long warningCount = LogBuffer.entries(LogBuffer.Filter.ALL).stream()
+                .filter(e -> e.text().contains("replaces the area Heavymatica sent"))
+                .count();
+        same("warning fired once", warningCount, 1L);
+
+        // Run a second area_box for heavy1 in the same run to ensure warning does NOT fire twice
+        run("area_box(\"heavy1\", pos(0, 64, 0), pos(3, 65, 3))");
+        long warningCount2 = LogBuffer.entries(LogBuffer.Filter.ALL).stream()
+                .filter(e -> e.text().contains("replaces the area Heavymatica sent"))
+                .count();
+        same("warning still fired once", warningCount2, 1L);
+
+        // 3. put on a script-owned name -> SCRIPT_OWNED; with replaceScriptOwned = true -> OK
+        var putScriptOwned = ManhattanAreas.put("heavy1", List.of(new int[]{0, 64, 0, 5, 70, 5}), ManhattanAreas.Role.DIG, false);
+        same("put on script-owned without replace", putScriptOwned, ManhattanAreas.Result.SCRIPT_OWNED);
+
+        var putReplaceScriptOwned = ManhattanAreas.put("heavy1", List.of(new int[]{0, 64, 0, 5, 70, 5}), ManhattanAreas.Role.CLEAR, true);
+        same("put on script-owned with replace", putReplaceScriptOwned, ManhattanAreas.Result.OK);
+        same("role updated", Areas.roleOf("heavy1"), "clear");
+        same("owner updated to heavymatica", Areas.ownerOf("heavy1"), "heavymatica");
+
+        // 4. put on loadedName while running -> IN_USE; selection is unchanged after any put
+        Areas.load("heavy1");
+        List<int[]> selBefore = Areas.read();
+        same("inUse false before runner starts", Areas.inUse("heavy1"), false);
+
+        QueueMod.runner.start(List.of("sleep()"));
+        same("inUse true while runner running", Areas.inUse("heavy1"), true);
+
+        var putInUse = ManhattanAreas.put("heavy1", List.of(new int[]{100, 64, 100, 110, 70, 110}), ManhattanAreas.Role.DIG, true);
+        same("put in use", putInUse, ManhattanAreas.Result.IN_USE);
+
+        same("selection unchanged", Areas.read().size(), selBefore.size());
+        same("selection corner x1", Areas.read().get(0)[0], selBefore.get(0)[0]);
+
+        QueueMod.runner.reset();
+        same("inUse false after runner reset", Areas.inUse("heavy1"), false);
+
+        // 5. invalid input (empty name, "last", no boxes, > MAX_BOXES) -> INVALID
+        same("empty name invalid", ManhattanAreas.put("", List.of(new int[]{0, 64, 0, 1, 65, 1}), ManhattanAreas.Role.CUSTOM, true), ManhattanAreas.Result.INVALID);
+        same("blank name invalid", ManhattanAreas.put("   ", List.of(new int[]{0, 64, 0, 1, 65, 1}), ManhattanAreas.Role.CUSTOM, true), ManhattanAreas.Result.INVALID);
+        same("last name invalid", ManhattanAreas.put("last", List.of(new int[]{0, 64, 0, 1, 65, 1}), ManhattanAreas.Role.CUSTOM, true), ManhattanAreas.Result.INVALID);
+        same("no boxes invalid", ManhattanAreas.put("valid", List.of(), ManhattanAreas.Role.CUSTOM, true), ManhattanAreas.Result.INVALID);
+        same("null boxes invalid", ManhattanAreas.put("valid", null, ManhattanAreas.Role.CUSTOM, true), ManhattanAreas.Result.INVALID);
+
+        List<int[]> tooMany = new ArrayList<>();
+        for (int i = 0; i <= ManhattanAreas.MAX_BOXES; i++) {
+            tooMany.add(new int[]{0, 64, 0, 1, 65, 1});
+        }
+        same("too many boxes invalid", ManhattanAreas.put("overflow", tooMany, ManhattanAreas.Role.CUSTOM, true), ManhattanAreas.Result.INVALID);
+
+        // 6. remove only deletes heavymatica-owned areas, listener fires on changes
+        Areas.save("manual_area");
+        same("manual_area owner", Areas.ownerOf("manual_area"), "manual");
+        assertFalse("remove manual area fails", ManhattanAreas.remove("manual_area"));
+        assertTrue("manual_area still exists", Areas.getBoxes("manual_area") != null);
+
+        ManhattanAreas.put("heavy_to_remove", List.of(new int[]{0, 64, 0, 1, 65, 1}), ManhattanAreas.Role.CUSTOM, false);
+        listenerEvents.clear();
+        assertTrue("remove heavymatica area succeeds", ManhattanAreas.remove("heavy_to_remove"));
+        same("heavy_to_remove no longer exists", Areas.getBoxes("heavy_to_remove"), null);
+        assertTrue("listener fired on delete with null owner", listenerEvents.contains("heavy_to_remove:null"));
     }
 }

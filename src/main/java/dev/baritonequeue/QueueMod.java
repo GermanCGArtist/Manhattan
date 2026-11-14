@@ -336,7 +336,11 @@ public class QueueMod implements ClientModInitializer {
 
     private static int areaList() {
         if (cfg.areas.isEmpty()) Util.msg("No saved areas. Select the area (#sel pos1 / pos2), then /queue area save <name>. In a script: area(\"name\").");
-        cfg.areas.forEach((k, v) -> Util.msg(k + ": " + Areas.describe(v)));
+        cfg.areas.forEach((k, v) -> {
+            var meta = Areas.meta(k);
+            String info = (meta != null ? " [" + meta.owner + ", " + meta.role + "]" : "");
+            Util.msg(k + info + ": " + Areas.describe(v));
+        });
         if (!cfg.lastArea.isEmpty()) Util.msg("last (remembered by itself): " + Areas.describe(cfg.lastArea));
         return 1;
     }

@@ -876,7 +876,9 @@ public final class DockedPanels {
                     }
                 }
                 ImGui.sameLine(0f, 6f);
-                ImGui.text(a.name() + ": " + a.summary());
+                String tagPrefix = a.isLast() ? "" : a.tag() + " ";
+                String roleSuffix = a.role().equalsIgnoreCase("custom") ? "" : " [" + a.role() + "]";
+                ImGui.text(tagPrefix + a.name() + roleSuffix + ": " + a.summary());
             }
         }
 

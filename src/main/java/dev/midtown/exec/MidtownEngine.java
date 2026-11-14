@@ -44,7 +44,7 @@ public final class MidtownEngine implements PathEngine {
     private final MidtownCoordinator coordinator;
     private final MidtownExecutor executor;
     private final MidtownPlanner aStarPlanner = new MidtownPlanner();
-    private final Map<String, Area> protectedAreas = new ConcurrentHashMap<>();
+    private final Map<String, List<Area>> protectedAreas = new ConcurrentHashMap<>();
     private final Set<Block> disallowedBreakBlocks = Collections.synchronizedSet(new LinkedHashSet<>());
 
     private volatile boolean useCustomPlanner;
@@ -298,8 +298,10 @@ public final class MidtownEngine implements PathEngine {
                 builder.addDisallowedBreakBlocks(disallowedBreakBlocks);
             }
         }
-        for (Map.Entry<String, Area> entry : protectedAreas.entrySet()) {
-            builder.addProtectedArea(entry.getKey(), entry.getValue());
+        for (Map.Entry<String, List<Area>> entry : protectedAreas.entrySet()) {
+            for (Area area : entry.getValue()) {
+                builder.addProtectedArea(entry.getKey(), area);
+            }
         }
         return builder.build();
     }
@@ -369,8 +371,27 @@ public final class MidtownEngine implements PathEngine {
     @Override
     public void addProtectedArea(String name, Area area) {
         if (name != null && area != null) {
-            protectedAreas.put(name, area);
+            protectedAreas.compute(name, (k, cur) -> {
+                List<Area> next = cur == null ? new ArrayList<>() : new ArrayList<>(cur);
+                next.add(area);
+                return Collections.unmodifiableList(next);
+            });
         }
+    }
+
+    @Override
+    public void setProtectedArea(String name, List<Area> boxes) {
+        if (name == null) return;
+        if (boxes == null || boxes.isEmpty()) {
+            protectedAreas.remove(name);
+            return;
+        }
+        List<Area> copy = new ArrayList<>();
+        for (Area a : boxes) {
+            if (a != null) copy.add(a);
+        }
+        if (copy.isEmpty()) protectedAreas.remove(name);
+        else protectedAreas.put(name, Collections.unmodifiableList(copy));
     }
 
     @Override
@@ -388,8 +409,10 @@ public final class MidtownEngine implements PathEngine {
     @Override
     public boolean isProtectedAt(BlockPos pos) {
         if (pos == null) return false;
-        for (Area area : protectedAreas.values()) {
-            if (area.contains(pos)) return true;
+        for (List<Area> areas : protectedAreas.values()) {
+            for (Area area : areas) {
+                if (area.contains(pos)) return true;
+            }
         }
         return false;
     }

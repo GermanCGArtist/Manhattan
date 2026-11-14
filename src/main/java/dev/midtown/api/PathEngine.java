@@ -4,6 +4,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.Block;
 
 import java.util.Collection;
+import java.util.List;
 
 /**
  * Abstraction over terrain navigation, mining, pause/resume lifecycle, and safety/setting hooks.
@@ -73,6 +74,13 @@ public interface PathEngine {
     }
 
     default void addProtectedArea(String name, Area area) {}
+
+    default void setProtectedArea(String name, List<Area> boxes) {
+        removeProtectedArea(name);
+        if (boxes != null) {
+            for (Area a : boxes) addProtectedArea(name, a);
+        }
+    }
 
     default void removeProtectedArea(String name) {}
 
