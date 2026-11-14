@@ -1,0 +1,6 @@
+// fill_water_submerged_shaft: a 3x3x2 basin (y -58..-57) with a 1x1x4 shaft below (y -62..-59) at x 105, z 101
+#sel clear
+#sel pos1 104 -62 100
+#sel pos2 106 -57 102
+let left = fill_water("dirt")
+print("TEST fill_water_submerged_shaft left={left}")

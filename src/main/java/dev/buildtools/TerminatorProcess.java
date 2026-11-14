@@ -840,11 +840,12 @@ final class TerminatorProcess extends Feature {
     /** At the surface, towards the water above the dive spot. */
     private void swim(Minecraft mc, LocalPlayer p, Level level) {
         if (diveSpot == null) { setState(State.WORK); releaseKeys(); return; }
+        p.setSprinting(false);
         double dist = face(p, diveSpot.getX() + 0.5, diveSpot.getZ() + 0.5);
-        if (dist < 0.35) {
+        if (dist < 0.2) {
             setState(State.SINK);
             stateTicks = 0;
-            hold(false, false, true);
+            hold(false, false, false);
             return;
         }
         if (dist < lastDist - 0.05) { lastDist = dist; stuckTicks = 0; }
@@ -855,7 +856,7 @@ final class TerminatorProcess extends Feature {
             releaseKeys();
             return;
         }
-        hold(dist > 0.35 && aligned, true, false);
+        hold(dist > 0.2 && aligned, true, false);
     }
 
     /** Straight down to the spot on the bottom. */
@@ -870,6 +871,7 @@ final class TerminatorProcess extends Feature {
             stateTicks = 0;
             return;
         }
+        p.setSprinting(false);
         double dist = face(p, diveSpot.getX() + 0.5, diveSpot.getZ() + 0.5);
         boolean floor = Util.isSolid(level, diveSpot.below());
         boolean down = floor ? p.getY() < diveSpot.getY() + 0.2 && (p.onGround() || p.getDeltaMovement().y > -0.01)
@@ -887,15 +889,19 @@ final class TerminatorProcess extends Feature {
         }
         // not getting deeper (a ledge, something pushing up): another spot
         if (p.getY() < sinkBestY - 0.1) { sinkBestY = p.getY(); sinkStill = 0; }
-        else if (++sinkStill > 40) {
+        else if (++sinkStill > 60) {
+            LOGGER.info("[Terminator] sink stalled: pos=({}, {}, {}) dist={} onGround={} inWater={} swimming={} feet={} diveSpot={}",
+                    String.format("%.2f", p.getX()), String.format("%.2f", p.getY()), String.format("%.2f", p.getZ()),
+                    String.format("%.2f", dist), p.onGround(), p.isInWater(), p.isSwimming(),
+                    level.getBlockState(p.blockPosition()).getBlock().getName().getString(), diveSpot.toShortString());
             markBadDive(diveSpot);
             setState(State.RISE);
             stateTicks = 0;
             return;
         }
-        // over the middle of the hole first; sneaking on a ledge would keep it from slipping in
+        // over the middle of the hole first; sneaking before centered would sink onto a submerged rim
         boolean centered = dist < 0.15;
-        hold(!centered && aligned, false, !p.onGround());
+        hold(!centered && aligned, false, centered && !p.onGround());
     }
 
     /** Swims straight up a column while placing blocks underneath, filling a 1x1 shaft or final column in one trip. */
