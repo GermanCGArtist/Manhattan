@@ -2,7 +2,9 @@ package dev.baritonequeue;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.particles.ParticleTypes;
+import net.minecraft.gizmos.GizmoStyle;
+import net.minecraft.gizmos.Gizmos;
+import net.minecraft.world.phys.AABB;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -19,70 +21,94 @@ public final class Areas {
 
     private static final List<int[]> selection = new ArrayList<>();
     private static BlockPos pos1, pos2;
-    private static int renderTick;
 
     static void tick(Minecraft mc) {
-        if (mc.level == null || mc.player == null) return;
-        if (++renderTick % 5 != 0) return;
-        int[] budget = {600};
-        BlockPos me = mc.player.blockPosition();
-        if (!selection.isEmpty()) {
-            for (int[] b : selection) {
-                if (me.getX() < b[0] - 96 || me.getX() > b[3] + 96 || me.getZ() < b[2] - 96 || me.getZ() > b[5] + 96) continue;
-                Capture.outline(mc.level, b, ParticleTypes.END_ROD, budget);
-            }
-        } else if (pos1 != null && pos2 == null) {
-            if (Math.abs(pos1.getX() - me.getX()) <= 96 && Math.abs(pos1.getZ() - me.getZ()) <= 96) {
-                Capture.outline(mc.level, new int[]{pos1.getX(), pos1.getY(), pos1.getZ(), pos1.getX(), pos1.getY(), pos1.getZ()}, ParticleTypes.END_ROD, budget);
+        // Particle preview replaced with 3D wireframe box in renderWireframe()
+    }
+
+    public static void renderWireframe() {
+        List<int[]> boxes;
+        BlockPos p1;
+        synchronized (selection) {
+            if (selection.isEmpty() && (pos1 == null || pos2 != null)) return;
+            boxes = new ArrayList<>(selection);
+            p1 = pos1;
+        }
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.levelRenderer == null) return;
+        try (var ignored = mc.levelRenderer.collectPerFrameGizmos()) {
+            GizmoStyle style = GizmoStyle.stroke(0xFF00E5FF, 2.0f);
+            if (!boxes.isEmpty()) {
+                for (int[] b : boxes) {
+                    Gizmos.cuboid(new AABB(b[0], b[1], b[2], b[3] + 1, b[4] + 1, b[5] + 1).inflate(0.002), style);
+                }
+            } else if (p1 != null) {
+                Gizmos.cuboid(new AABB(p1).inflate(0.002), style);
             }
         }
     }
 
     public static List<int[]> read() {
-        List<int[]> out = new ArrayList<>(selection.size());
-        for (int[] b : selection) out.add(b.clone());
-        return out;
+        synchronized (selection) {
+            List<int[]> out = new ArrayList<>(selection.size());
+            for (int[] b : selection) out.add(b.clone());
+            return out;
+        }
     }
 
     public static boolean any() {
-        return !selection.isEmpty();
+        synchronized (selection) {
+            return !selection.isEmpty();
+        }
     }
 
     static void clearSelection() {
-        selection.clear();
-        pos1 = null;
-        pos2 = null;
+        synchronized (selection) {
+            selection.clear();
+            pos1 = null;
+            pos2 = null;
+        }
     }
 
     static void setPos1(BlockPos p) {
-        pos1 = p.immutable();
-        if (pos2 != null) setSingleBox(pos1, pos2);
+        synchronized (selection) {
+            pos1 = p.immutable();
+            if (pos2 != null) setSingleBox(pos1, pos2);
+        }
     }
 
     static void setPos2(BlockPos p) {
-        pos2 = p.immutable();
-        if (pos1 != null) setSingleBox(pos1, pos2);
+        synchronized (selection) {
+            pos2 = p.immutable();
+            if (pos1 != null) setSingleBox(pos1, pos2);
+        }
     }
 
     static void setSingleBox(BlockPos a, BlockPos b) {
-        selection.clear();
-        addBox(a, b);
+        synchronized (selection) {
+            selection.clear();
+            addBox(a, b);
+        }
     }
 
     static void addBox(BlockPos a, BlockPos b) {
-        selection.add(new int[]{
-                Math.min(a.getX(), b.getX()), Math.min(a.getY(), b.getY()), Math.min(a.getZ(), b.getZ()),
-                Math.max(a.getX(), b.getX()), Math.max(a.getY(), b.getY()), Math.max(a.getZ(), b.getZ())
-        });
+        synchronized (selection) {
+            selection.add(new int[]{
+                    Math.min(a.getX(), b.getX()), Math.min(a.getY(), b.getY()), Math.min(a.getZ(), b.getZ()),
+                    Math.max(a.getX(), b.getX()), Math.max(a.getY(), b.getY()), Math.max(a.getZ(), b.getZ())
+            });
+        }
     }
 
     static void apply(List<int[]> boxes) {
-        selection.clear();
-        for (int[] b : boxes) {
-            selection.add(new int[]{
-                    Math.min(b[0], b[3]), Math.min(b[1], b[4]), Math.min(b[2], b[5]),
-                    Math.max(b[0], b[3]), Math.max(b[1], b[4]), Math.max(b[2], b[5])
-            });
+        synchronized (selection) {
+            selection.clear();
+            for (int[] b : boxes) {
+                selection.add(new int[]{
+                        Math.min(b[0], b[3]), Math.min(b[1], b[4]), Math.min(b[2], b[5]),
+                        Math.max(b[0], b[3]), Math.max(b[1], b[4]), Math.max(b[2], b[5])
+                });
+            }
         }
     }
 
