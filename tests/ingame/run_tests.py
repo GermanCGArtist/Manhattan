@@ -690,6 +690,50 @@ def test_fill_water_submerged_shaft(t):
     return "filled submerged 1x1x4 shaft + 3x3x2 basin (%d dirt used)" % used
 
 
+def test_fill_water_submerged_pocket(t):
+    """fill_water("dirt") above a submerged air pocket under a solid roof must fill the top without stalling in SINK."""
+    reset_area(t)
+    top_box = (104, -58, 100, 106, -57, 102)
+    bottom_box = (104, -62, 100, 106, -61, 102)
+    t.cmd("/fill 102 -63 98 108 -57 104 stone",
+          "/fill 104 -62 100 106 -61 102 water",
+          "/fill 104 -60 100 106 -60 102 air",
+          "/fill 104 -59 100 106 -59 102 dirt",
+          "/fill 104 -58 100 106 -57 102 water",
+          "/fill 102 -56 98 108 -45 104 air",
+          "/give @s dirt 64",
+          "/tp @s 103 -56 101 90 0")
+    time.sleep(1)
+    top_wet = sum(layers(t, [top_box])["water"])
+    bot_wet = sum(layers(t, [bottom_box])["water"])
+    if top_wet != 18 or bot_wet != 18:
+        raise Fail("submerged pocket setup failed: top=%d/18 bot=%d/18" % (top_wet, bot_wet))
+    dirt0 = t.count("dirt")
+    t.run("fill-water-submerged-pocket.txt")
+    end = time.time() + 120
+    done_at = None
+    while time.time() < end:
+        if not t.b("script")["running"]:
+            done_at = time.time()
+            break
+        time.sleep(0.5)
+    if done_at is None:
+        t.b("stopscript")
+        raise Fail("fill_water_submerged_pocket did not finish within 120 s")
+    top_final = sum(layers(t, [top_box])["water"])
+    if top_final > 0:
+        raise Fail("reachable top water still wet: %d/18" % top_final)
+    if any("sink stalled:" in l for l in t.lines()):
+        raise Fail("sink stalled on submerged air pocket!")
+    msg = next((l for l in t.lines() if "TEST fill_water_submerged_pocket" in l), None)
+    if not msg or "left=18" not in msg:
+        raise Fail("expected left=18 (sealed bottom), got: %s" % msg)
+    used = dirt0 - t.count("dirt")
+    if used < 18:
+        raise Fail("not enough dirt was used: %d used, expected at least 18" % used)
+    return "filled 18 reachable top cells without sink stall (%d dirt used)" % used
+
+
 def test_eat(t):
     """on food < 14 ... eat() fires and eats bread."""
     reset_area(t)
@@ -2121,7 +2165,7 @@ def _forest(group):
 TREE_TESTS = [("trees_small", test_trees_small)] + [("trees_forest_" + g, _forest(g)) for g in FOREST_GROUPS]
 
 
-TESTS = [("smoke", test_smoke), ("imgui_spike", test_imgui_spike), ("viewport", test_viewport), ("docked_shell", test_docked_shell), ("panels", test_panels), ("fill_water", test_fill_water), ("fill_water_deep", test_fill_water_deep), ("fill_water_shaft", test_fill_water_shaft), ("fill_water_submerged_shaft", test_fill_water_submerged_shaft), ("eat", test_eat), ("defend", test_defend), ("clear_resume", test_clear_resume), ("dump", test_dump), ("chest_index", test_chest_index), ("hotbar_tools", test_hotbar_tools), ("air", test_air), ("clear_wet", test_clear_wet),
+TESTS = [("smoke", test_smoke), ("imgui_spike", test_imgui_spike), ("viewport", test_viewport), ("docked_shell", test_docked_shell), ("panels", test_panels), ("fill_water", test_fill_water), ("fill_water_deep", test_fill_water_deep), ("fill_water_shaft", test_fill_water_shaft), ("fill_water_submerged_shaft", test_fill_water_submerged_shaft), ("fill_water_submerged_pocket", test_fill_water_submerged_pocket), ("eat", test_eat), ("defend", test_defend), ("clear_resume", test_clear_resume), ("dump", test_dump), ("chest_index", test_chest_index), ("hotbar_tools", test_hotbar_tools), ("air", test_air), ("clear_wet", test_clear_wet),
          ("schem_list", test_schem_list), ("schem_add", test_schem_add), ("schem_fix", test_schem_fix), ("schem_fix_wrong", test_schem_fix_wrong), ("schem_exact", test_schem_exact),
          ("colossal_schem", test_colossal_schem)]
 

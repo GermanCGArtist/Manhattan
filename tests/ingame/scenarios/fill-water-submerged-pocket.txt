@@ -1,0 +1,6 @@
+// fill_water_submerged_pocket: water y=-62..-61, air pocket y=-60, dirt roof y=-59, reachable water y=-58..-57
+#sel clear
+#sel pos1 104 -62 100
+#sel pos2 106 -57 102
+let left = fill_water("dirt")
+print("TEST fill_water_submerged_pocket left={left}")

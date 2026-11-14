@@ -299,6 +299,7 @@ final class TerminatorProcess extends Feature {
             m.move(Direction.DOWN);
             if (!inSelection(m)) return true;
             if (wet(level, m)) return false;
+            if (Util.isSolid(level, m)) return true;
         }
         return true;
     }
@@ -461,7 +462,34 @@ final class TerminatorProcess extends Feature {
             BlockState st = level.getBlockState(m);
             if (!st.getCollisionShape(level, m).isEmpty()) return null;
             if (st.getBlock() instanceof net.minecraft.world.level.block.BubbleColumnBlock) return null;   // pushes up (or drags down): no diving there
-            if (st.getFluidState().isEmpty()) return m.immutable();
+            if (st.getFluidState().isEmpty()) {
+                BlockPos surface = m.immutable();
+                BlockPos head = surface.above();
+                BlockState hs = level.getBlockState(head);
+                if (!hs.getCollisionShape(level, head).isEmpty() || !hs.getFluidState().isEmpty()) return null;
+                LocalPlayer p = Minecraft.getInstance().player;
+                if (p != null && (int) Math.floor(p.getY()) > surface.getY()) {
+                    int top = (int) Math.floor(p.getY()) + 1;
+                    for (int y = surface.getY() + 1; y <= top; y++) {
+                        BlockPos c = new BlockPos(surface.getX(), y, surface.getZ());
+                        if (!level.getBlockState(c).getCollisionShape(level, c).isEmpty()) return null;
+                    }
+                }
+                // Reject a shallow submerged air pocket under a water-covered roof (even if player is below/null)
+                boolean sawSolid = false;
+                for (int j = 2; j <= 16; j++) {
+                    BlockPos c = surface.above(j);
+                    BlockState cs = level.getBlockState(c);
+                    if (!cs.getFluidState().isEmpty()) {
+                        if (sawSolid || j <= 4) return null;
+                    }
+                    if (!cs.getCollisionShape(level, c).isEmpty()) {
+                        if (j <= 4) sawSolid = true;
+                        else break;
+                    }
+                }
+                return surface;
+            }
         }
         return null;
     }
@@ -478,7 +506,6 @@ final class TerminatorProcess extends Feature {
                         if (!level.hasChunkAt(pos)) break;
                         if (!wet(level, pos)) continue;
                         if (fillable(level, pos)) cand.add(pos);
-                        if (!falling) break;   // the lowest wet cell of the column is the only one that can be next
                     }
                 }
             }
