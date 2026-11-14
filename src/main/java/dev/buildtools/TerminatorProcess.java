@@ -186,12 +186,16 @@ final class TerminatorProcess extends Feature {
         walkTicks = 0;
         noProgress = 0;
         bestGoalDist = Double.MAX_VALUE;
-        boolean useLoS = diveSpot == null && walkTarget != null;
+        LocalPlayer p = Minecraft.getInstance().player;
+        boolean inWet = p != null && (p.isInWater() || p.isUnderWater()
+                || p.blockPosition().equals(walkTarget)
+                || (inSelection(p.blockPosition()) && wet(level, p.blockPosition())));
+        boolean useLoS = diveSpot == null && walkTarget != null && !inWet;
         triedNear = !useLoS;
-        triedExact = false;
+        triedExact = !useLoS && diveSpot == null;
         GoalSpec spec = useLoS
                 ? GoalSpec.lineOfSight(walkTarget, 4.5)
-                : GoalSpec.near(to, 1);
+                : (triedExact ? GoalSpec.exact(to) : GoalSpec.near(to, 1));
         LOGGER.info("[Terminator] startWalk: to={} useLoS={} walkTarget={} goal={}",
                 to.toShortString(), useLoS,
                 (walkTarget == null ? "none" : walkTarget.toShortString()),
@@ -556,6 +560,14 @@ final class TerminatorProcess extends Feature {
             stateTicks = 0;
         }
 
+        if (state == State.UNDER && ++stateTicks > DIVE_TIMEOUT) {
+            abortWork(mc);
+            markBadDive(diveSpot);
+            setState(State.RISE);
+            stateTicks = 0;
+            return;
+        }
+
         // one placement (or a plant to break) in progress
         boolean busyWithCell = workOnCell(mc, p, level);
         if (busyWithCell) return;
@@ -575,7 +587,7 @@ final class TerminatorProcess extends Feature {
             case SWIM -> { swim(mc, p, level); return; }
             case SINK -> { sink(mc, p, level); return; }
             case UNDER -> {
-                if (++stateTicks > DIVE_TIMEOUT) { markBadDive(diveSpot); setState(State.RISE); stateTicks = 0; return; }
+                if (stateTicks > DIVE_TIMEOUT) { markBadDive(diveSpot); setState(State.RISE); stateTicks = 0; return; }
                 holdPosition(p);
                 BlockPos t = findInReach(mc, p, level);
                 if (t != null) { begin(mc, p, level, t); return; }
@@ -595,7 +607,13 @@ final class TerminatorProcess extends Feature {
         // walking to a stand already
         if (state == State.WALK && goal != null) {
             EngineStatus engStatus = EngineSelector.current().status();
-            boolean arrived = p.blockPosition().distSqr(goal) <= 2 || engStatus == EngineStatus.DONE;
+            boolean inLiquid = p.isInWater() || p.isUnderWater();
+            boolean needExactDry = inLiquid && !wet(level, goal);
+            boolean arrived = needExactDry
+                    ? (p.blockPosition().equals(goal) || (!inLiquid && engStatus == EngineStatus.DONE))
+                    : (triedExact
+                        ? (p.blockPosition().equals(goal) || engStatus == EngineStatus.DONE)
+                        : (p.blockPosition().distSqr(goal) <= 2 || engStatus == EngineStatus.DONE));
             boolean engFailed = engStatus == EngineStatus.FAILED;
             double dist = Math.sqrt(p.blockPosition().distSqr(goal));
             if (dist < bestGoalDist - 1) { bestGoalDist = dist; noProgress = 0; }
@@ -717,7 +735,7 @@ final class TerminatorProcess extends Feature {
             done();
             return false;
         }
-        if (st == Placer.Status.FAILED || (++targetTicks > TARGET_TIMEOUT && !placer.canReach(mc, p))) {
+        if (st == Placer.Status.FAILED || (++targetTicks > TARGET_TIMEOUT && !placer.canReach(mc, p)) || targetTicks > TARGET_TIMEOUT * 2) {
             failures.merge(current, 1, Integer::sum);
             current = null;
             return false;
@@ -758,13 +776,20 @@ final class TerminatorProcess extends Feature {
     /** Under water: stay put (sneak keeps it on the bottom), else nothing held. */
     private void holdPosition(LocalPlayer p) {
         if (state != State.UNDER || diveSpot == null) { releaseKeys(); return; }
-        // stay over the spot: sneak sinks, jump rises, nothing drifts down slowly
-        double dist = face(p, diveSpot.getX() + 0.5, diveSpot.getZ() + 0.5);
+        // stay over the spot: sneak sinks, jump rises; do not touch yaw while Placer/breaking is aiming
+        double dx = (diveSpot.getX() + 0.5) - p.getX();
+        double dz = (diveSpot.getZ() + 0.5) - p.getZ();
+        double dist = Math.sqrt(dx * dx + dz * dz);
+        boolean forward = false;
+        if (current == null && breaking == null && dist > 0.4) {
+            face(p, diveSpot.getX() + 0.5, diveSpot.getZ() + 0.5);
+            forward = aligned;
+        }
         boolean floor = Util.isSolid(Minecraft.getInstance().level, diveSpot.below());
         double y = p.getY(), want = diveSpot.getY();
         boolean up = !floor && y < want - 0.15;
         boolean down = floor || y > want + 0.25;
-        hold(dist > 0.4 && aligned, up, down && !up);
+        hold(forward, up, down && !up);
     }
 
     // ------------------------------------------------------------------ diving

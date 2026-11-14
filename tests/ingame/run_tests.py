@@ -36,6 +36,8 @@ TICK_RATE = int(os.environ.get("MANHATTAN_TICK", "20"))
 # a failed test is run again this many times (--retries N, 0 = never) before it counts as failed
 RETRIES = int(os.environ.get("MANHATTAN_RETRIES", "2"))
 POOL = [(x, y, z) for y in (-62, -61) for x in (103, 104, 105) for z in (99, 100, 101)]
+DEEP_POOL = [(x, y, z) for y in range(-62, -56) for x in range(103, 108) for z in range(99, 104)]
+DEEP_BOX = (103, -62, 99, 107, -57, 103)
 
 
 class Fail(Exception):
@@ -569,6 +571,44 @@ def test_fill_water(t):
     if used < 1:
         raise Fail("no dirt was used from the inventory")
     return "18 cells filled bottom-up, %d dirt used" % used
+
+
+def test_fill_water_deep(t):
+    """fill_water("dirt") in a 5x5, 6-deep pool: bot must dive (SWIM -> SINK -> UNDER -> RISE) to fill bottom layers."""
+    reset_area(t)
+    t.cmd("/fill 101 -63 97 109 -57 105 stone",
+          "/fill 103 -62 99 107 -57 103 water",
+          "/fill 101 -56 97 109 -45 105 air",
+          "/give @s dirt 64", "/give @s dirt 64", "/give @s dirt 64", "/give @s dirt 64",
+          "/tp @s 102 -56 101 90 0")
+    time.sleep(1)
+    init_layers = layers(t, [DEEP_BOX])
+    wet_count = sum(init_layers["water"])
+    if wet_count != len(DEEP_POOL):
+        raise Fail("deep pool setup failed: %d of %d cells hold water" % (wet_count, len(DEEP_POOL)))
+    dirt0 = t.count("dirt")
+    t.run("fill-water-deep.txt")
+    end = time.time() + 240
+    done_at = None
+    while time.time() < end:
+        if not t.b("script")["running"]:
+            done_at = time.time()
+            break
+        time.sleep(0.5)
+    if done_at is None:
+        t.b("stopscript")
+        still = sum(layers(t, [DEEP_BOX])["water"])
+        raise Fail("fill_water_deep did not finish within 240 s; still wet: %d cells" % still)
+    final_water = sum(layers(t, [DEEP_BOX])["water"])
+    msg = next((l for l in t.lines() if "TEST fill_water_deep" in l), None)
+    if final_water > 0:
+        raise Fail("cells still wet: %d cells hold water (%s)" % (final_water, msg))
+    if not msg or "left=0" not in msg:
+        raise Fail("script did not report left=0: %s" % msg)
+    used = dirt0 - t.count("dirt")
+    if used < len(DEEP_POOL):
+        raise Fail("not enough dirt was used: %d used, expected at least %d" % (used, len(DEEP_POOL)))
+    return "filled 5x5x6 deep pool (150 cells, %d dirt used)" % used
 
 
 def test_eat(t):
@@ -2002,7 +2042,7 @@ def _forest(group):
 TREE_TESTS = [("trees_small", test_trees_small)] + [("trees_forest_" + g, _forest(g)) for g in FOREST_GROUPS]
 
 
-TESTS = [("smoke", test_smoke), ("imgui_spike", test_imgui_spike), ("viewport", test_viewport), ("docked_shell", test_docked_shell), ("panels", test_panels), ("fill_water", test_fill_water), ("eat", test_eat), ("defend", test_defend), ("clear_resume", test_clear_resume), ("dump", test_dump), ("chest_index", test_chest_index), ("hotbar_tools", test_hotbar_tools), ("air", test_air), ("clear_wet", test_clear_wet),
+TESTS = [("smoke", test_smoke), ("imgui_spike", test_imgui_spike), ("viewport", test_viewport), ("docked_shell", test_docked_shell), ("panels", test_panels), ("fill_water", test_fill_water), ("fill_water_deep", test_fill_water_deep), ("eat", test_eat), ("defend", test_defend), ("clear_resume", test_clear_resume), ("dump", test_dump), ("chest_index", test_chest_index), ("hotbar_tools", test_hotbar_tools), ("air", test_air), ("clear_wet", test_clear_wet),
          ("schem_list", test_schem_list), ("schem_add", test_schem_add), ("schem_fix", test_schem_fix), ("schem_fix_wrong", test_schem_fix_wrong), ("schem_exact", test_schem_exact),
          ("colossal_schem", test_colossal_schem)]
 
