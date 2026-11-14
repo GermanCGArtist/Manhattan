@@ -58,6 +58,7 @@ public class MidtownTest {
         testMidtownPlanner();
         testItemSaverSettings();
         testMultiBoxProtectedArea();
+        testWaterToShoreCrossing();
 
         System.out.println("\nMidtownTest summary: " + passes + " passed, " + fails + " failed.");
         if (fails > 0) {
@@ -784,6 +785,50 @@ public class MidtownTest {
         // Test replacement in engine
         engine.setProtectedArea("wall_group", List.of());
         assertFalse("empty list clears protection", engine.isProtectedAt(new BlockPos(1, 1, 0)));
+    }
+
+    private static void testWaterToShoreCrossing() {
+        System.out.println("Checking water -> shore and island -> shore crossing with allowPlace=false, allowBreak=false...");
+        // Lake: x=0..25, z=0..16, floor at y=58, water from y=59..62; shore ring around outside at y=61 solid (standing y=62).
+        GridWorldSnapshot.Builder b = GridWorldSnapshot.builder(-2, 58, -2, 27, 65, 18)
+                .fillFloor(58, BlockKind.SOLID)
+                .fillBox(0, 59, 0, 25, 62, 16, BlockKind.WATER);
+        // Shore at z=-2..-1, z=17..18, x=-2..-1, x=26..27 has solid ground at y=61 (standing y=62)
+        b.fillBox(-2, 59, -2, 27, 61, -1, BlockKind.SOLID);
+        b.fillBox(-2, 59, 17, 27, 61, 18, BlockKind.SOLID);
+        b.fillBox(-2, 59, 0, -1, 61, 16, BlockKind.SOLID);
+        b.fillBox(26, 59, 0, 27, 61, 16, BlockKind.SOLID);
+        GridWorldSnapshot lakeWorld = b.build();
+
+        CalculationContext ctx = CalculationContext.builder()
+                .allowBreak(false)
+                .allowPlace(false)
+                .build();
+
+        MidtownPlanner planner = new MidtownPlanner();
+        try {
+            // 1. From y=61 in water across lake to shore at y=62
+            PlanResult waterToShore = planner.planSync(
+                    lakeWorld, ctx, new BlockPos(22, 61, 8), GoalSpec.near(new BlockPos(3, 62, 17), 1));
+            assertTrue("water y=61 -> shore y=62 complete (" + waterToShore.status() + ")", waterToShore.isComplete());
+
+            // 2. From 1-block dirt island at (22, 60, 8) (standing y=61) surrounded by y=62 water to shore at y=62
+            GridWorldSnapshot islandWorld = GridWorldSnapshot.builder(-2, 58, -2, 27, 65, 18)
+                    .fillFloor(58, BlockKind.SOLID)
+                    .fillBox(0, 59, 0, 25, 62, 16, BlockKind.WATER)
+                    .fillBox(-2, 59, -2, 27, 61, -1, BlockKind.SOLID)
+                    .fillBox(-2, 59, 17, 27, 61, 18, BlockKind.SOLID)
+                    .fillBox(-2, 59, 0, -1, 61, 16, BlockKind.SOLID)
+                    .fillBox(26, 59, 0, 27, 61, 16, BlockKind.SOLID)
+                    .fillBox(22, 59, 8, 22, 60, 8, BlockKind.SOLID)
+                    .fillBox(22, 61, 8, 22, 62, 8, BlockKind.AIR)
+                    .build();
+            PlanResult islandToShore = planner.planSync(
+                    islandWorld, ctx, new BlockPos(22, 61, 8), GoalSpec.near(new BlockPos(3, 62, 17), 1));
+            assertTrue("1-block island y=61 -> shore y=62 complete (" + islandToShore.status() + ")", islandToShore.isComplete());
+        } finally {
+            planner.shutdown();
+        }
     }
 
     // ------------------------------------------------------------------ Assertion Helpers

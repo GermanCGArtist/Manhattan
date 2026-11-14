@@ -628,6 +628,7 @@ final class TerminatorProcess extends Feature {
             EngineSelector.current().cancel();
             markBadStand(goal);
             if (!arrived && diveSpot != null) {
+                for (Direction d : Direction.Plane.HORIZONTAL) markBadStand(goal.relative(d));
                 markBadDive(diveSpot);
                 diveSpot = null;
             }
