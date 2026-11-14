@@ -173,11 +173,7 @@ final class Estimate {
     }
 
     private static List<int[]> readBoxes() {
-        List<int[]> out = new ArrayList<>();
-        for (var s : Util.baritone().getSelectionManager().getSelections()) {
-            out.add(new int[]{s.min().x, s.min().y, s.min().z, s.max().x, s.max().y, s.max().z});
-        }
-        return out;
+        return Areas.read();
     }
 
     /** Looks at a slice of the selection per tick; a full pass sets "remaining". */

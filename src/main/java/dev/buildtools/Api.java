@@ -121,7 +121,10 @@ public final class Api {
 
     public static boolean unprotect(String name) {
         boolean had = cfg.zones.removeIf(z -> z.name.equalsIgnoreCase(name));
-        if (had) Config.save();
+        if (had) {
+            dev.midtown.api.EngineSelector.current().removeProtectedArea(name);
+            Config.save();
+        }
         return had;
     }
 
@@ -144,6 +147,7 @@ public final class Api {
     /** Inside a safe area (and safe areas are on). */
     public static boolean protectedAt(net.minecraft.core.BlockPos p) {
         if (!cfg.protect) return false;
+        if (dev.midtown.api.EngineSelector.current().isProtectedAt(p)) return true;
         for (var z : cfg.zones) if (z.contains(p)) return true;
         return false;
     }

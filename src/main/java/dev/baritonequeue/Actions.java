@@ -136,7 +136,115 @@ final class Actions {
 
         static boolean execute(String command) {
             try {
-                return Util.baritone().getCommandManager().execute(Util.normalize(command));
+                String norm = Util.normalize(command);
+                String trimmed = norm.trim();
+                if (trimmed.isEmpty()) return false;
+                String[] parts = trimmed.split("\\s+");
+                String cmd = parts[0].toLowerCase();
+                var engine = dev.midtown.api.EngineSelector.current();
+                Util.warn("shim-" + cmd, "Legacy '#" + cmd + "' command is deprecated; use native script functions (goto(), mine(), ...).");
+                switch (cmd) {
+                    case "goto" -> {
+                        if (parts.length >= 4) {
+                            int x = Integer.parseInt(parts[1]);
+                            int y = Integer.parseInt(parts[2]);
+                            int z = Integer.parseInt(parts[3]);
+                            engine.goTo(dev.midtown.api.GoalSpec.exact(new net.minecraft.core.BlockPos(x, y, z)));
+                            return true;
+                        }
+                        if (parts.length >= 3) {
+                            int x = Integer.parseInt(parts[1]);
+                            int z = Integer.parseInt(parts[2]);
+                            engine.goTo(dev.midtown.api.GoalSpec.xz(x, z));
+                            return true;
+                        }
+                        return false;
+                    }
+                    case "mine" -> {
+                        if (parts.length < 2) return false;
+                        String[] targets = java.util.Arrays.copyOfRange(parts, 1, parts.length);
+                        engine.mine(dev.midtown.api.BlockFilter.ofNames(targets));
+                        return true;
+                    }
+                    case "stop", "cancel" -> {
+                        engine.cancel();
+                        return true;
+                    }
+                    case "p", "pause" -> {
+                        PauseWatch.handleCommand("pause");
+                        engine.pause();
+                        return true;
+                    }
+                    case "r", "resume", "unpause" -> {
+                        PauseWatch.handleCommand("resume");
+                        engine.resume();
+                        return true;
+                    }
+                    case "set" -> {
+                        if (parts.length >= 3) {
+                            return engine.setSetting(parts[1], parts[2]);
+                        }
+                        return false;
+                    }
+                    case "sel", "selection" -> {
+                        if (parts.length < 2) return false;
+                        String sub = parts[1].toLowerCase();
+                        if (sub.equals("clear") || sub.equals("c") || sub.equals("clearall")) {
+                            Areas.clearSelection();
+                            return true;
+                        }
+                        if (sub.equals("ca") || sub.equals("cleararea")) {
+                            return QueueMod.clear.begin() == null;
+                        }
+                        if (sub.equals("pos1") || sub.equals("1") || sub.equals("p1")) {
+                            net.minecraft.core.BlockPos p = parts.length >= 5
+                                    ? new net.minecraft.core.BlockPos(Integer.parseInt(parts[2]), Integer.parseInt(parts[3]), Integer.parseInt(parts[4]))
+                                    : Minecraft.getInstance().player.blockPosition();
+                            Areas.setPos1(p);
+                            return true;
+                        }
+                        if (sub.equals("pos2") || sub.equals("2") || sub.equals("p2")) {
+                            net.minecraft.core.BlockPos p = parts.length >= 5
+                                    ? new net.minecraft.core.BlockPos(Integer.parseInt(parts[2]), Integer.parseInt(parts[3]), Integer.parseInt(parts[4]))
+                                    : Minecraft.getInstance().player.blockPosition();
+                            Areas.setPos2(p);
+                            return true;
+                        }
+                        if (sub.equals("set") && parts.length >= 8) {
+                            net.minecraft.core.BlockPos a = new net.minecraft.core.BlockPos(Integer.parseInt(parts[2]), Integer.parseInt(parts[3]), Integer.parseInt(parts[4]));
+                            net.minecraft.core.BlockPos b = new net.minecraft.core.BlockPos(Integer.parseInt(parts[5]), Integer.parseInt(parts[6]), Integer.parseInt(parts[7]));
+                            Areas.setSingleBox(a, b);
+                            return true;
+                        }
+                        if (sub.equals("replace") && parts.length >= 4) {
+                            String to = parts[parts.length - 1].toLowerCase();
+                            if (!to.equals("air") && !to.equals("minecraft:air")) return false;
+                            java.util.List<int[]> boxes = Areas.read();
+                            if (boxes.isEmpty()) return false;
+                            int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
+                            int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
+                            for (int[] b : boxes) {
+                                minX = Math.min(minX, b[0]); minY = Math.min(minY, b[1]); minZ = Math.min(minZ, b[2]);
+                                maxX = Math.max(maxX, b[3]); maxY = Math.max(maxY, b[4]); maxZ = Math.max(maxZ, b[5]);
+                            }
+                            String[] from = java.util.Arrays.copyOfRange(parts, 2, parts.length - 1);
+                            engine.mine(dev.midtown.api.BlockFilter.ofNames(from),
+                                    dev.midtown.api.Area.of(minX, minY, minZ, maxX, maxY, maxZ));
+                            return true;
+                        }
+                        return false;
+                    }
+                    default -> {
+                        if (parts.length >= 2 && engine.setSetting(cmd, parts[1])) return true;
+                        if (parts.length >= 2 && (cmd.equals("acceptablethrowawayitems")
+                                || cmd.equals("allowinventory")
+                                || cmd.equals("buildinlayers")
+                                || cmd.equals("layerorder"))) {
+                            return true;
+                        }
+                        return false;
+                    }
+                }
             } catch (Throwable t) {
                 return false;
             }
@@ -145,22 +253,15 @@ final class Actions {
         void tick() {
             estimate.tick();
             if (++sinceStart < START_WAIT) return;
-            if (Util.baritoneBusy()) {
+            if (Util.baritoneBusy() || QueueMod.clear.working()) {
                 idle = 0;
-                // "#sel ca" / "#build" that hit something it cannot do ("Unable to do it. Pausing") waits forever
-                builderPaused = Util.baritone().getBuilderProcess().isPaused() ? builderPaused + 1 : 0;
-                if (builderPaused > 20 * 10) {
-                    Util.warn("queue", "Baritone gave up on '#" + command + "' (\"Unable to do it\" - usually water or "
-                            + "lava in the way), so I cancelled it and go on with the script.");
-                    Util.baritone().getPathingBehavior().cancelEverything();
-                    finish(false);
-                    return;
-                }
+                builderPaused = 0;
                 if (stuck()) {
                     Util.warn("queue", "'#" + command + "' made no progress for " + cfg.stallMinutes
-                            + " min (Baritone keeps searching and cannot get anywhere), so I stopped it and go on. "
+                            + " min, so I stopped it and go on. "
                             + "Change the limit with stall(minutes) in the script or /queue stall <minutes|off>.");
-                    Util.baritone().getPathingBehavior().cancelEverything();
+                    dev.midtown.api.EngineSelector.current().cancel();
+                    QueueMod.clear.cancel();
                     finish(false);
                 }
                 return;
@@ -186,15 +287,15 @@ final class Actions {
             boolean better = estimate.progressed();
             if (estimate.measurable() ? better : moved) noProgress = 0;
             else noProgress++;
-            // standing still for minutes while Baritone claims to be busy: do what you would do by hand, start it again
+            // standing still for minutes while busy: do what you would do by hand, start it again
             if (moved || better || p.isSleeping() || Minecraft.getInstance().screen != null) still = 0;
             else if (++still > KICK_TICKS && kicks < MAX_KICKS) {
                 kicks++;
                 still = 0;
-                Util.msg("Baritone has stood still for " + KICK_TICKS / 1200 + " min without getting anywhere. Starting '#"
+                Util.msg("The task has stood still for " + KICK_TICKS / 1200 + " min without getting anywhere. Starting '#"
                         + command + "' again (" + kicks + "/" + MAX_KICKS + ").");
-                Util.baritone().getPathingBehavior().cancelEverything();
-                if (!execute(command)) fail("Baritone did not accept '#" + command + "' when restarting it.");
+                dev.midtown.api.EngineSelector.current().cancel();
+                if (!execute(command)) fail("Engine did not accept '#" + command + "' when restarting it.");
                 return false;
             }
             int limit = Runner.stallLimit();
@@ -203,14 +304,17 @@ final class Actions {
 
         @Override
         void cancel() {
-            Util.baritone().getPathingBehavior().cancelEverything();
+            dev.midtown.api.EngineSelector.current().cancel();
         }
 
         @Override
         void suspend() {
-            // Baritone's own task stays: the survival features pause it and it carries on by itself. Only an "on" block
-            // that wants Baritone for itself needs it gone; cancel and start it again afterwards.
-            cancel();
+            dev.midtown.api.EngineSelector.current().pause();
+        }
+
+        @Override
+        void resume() {
+            dev.midtown.api.EngineSelector.current().resume();
         }
     }
 

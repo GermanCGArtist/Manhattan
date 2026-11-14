@@ -9,8 +9,8 @@
       "mods": [
         { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
         { "local_path": "libs/baritone-api-fabric-1.18.0.jar" },
-        { "local_path": "build/libs/baritonequeue.jar" },
-        { "local_path": "build/libs/manhattan-testbridge.jar" }
+        { "local_path": "build/libs/baritonequeue-2.11.3.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.11.3.jar" }
       ],
       "account": { "offline": { "username": "BenchBaritone" } },
       "ram_mb": 4096,
@@ -35,8 +35,8 @@
       "loader_version": "0.20.1",
       "mods": [
         { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
-        { "local_path": "build/libs/baritonequeue.jar" },
-        { "local_path": "build/libs/manhattan-testbridge.jar" }
+        { "local_path": "build/libs/baritonequeue-2.11.3.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.11.3.jar" }
       ],
       "account": { "offline": { "username": "BenchMidtown" } },
       "ram_mb": 4096,

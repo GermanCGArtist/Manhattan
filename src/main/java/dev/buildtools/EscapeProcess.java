@@ -1,9 +1,7 @@
 package dev.buildtools;
 
-import baritone.api.pathing.goals.GoalBlock;
-import baritone.api.process.PathingCommand;
-import baritone.api.process.PathingCommandType;
-import baritone.api.utils.input.Input;
+import dev.midtown.api.EngineSelector;
+import dev.midtown.api.GoalSpec;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
@@ -13,7 +11,7 @@ import net.minecraft.world.phys.Vec3;
 import static dev.buildtools.Config.cfg;
 
 /**
- * Baritone sometimes walks in circles in or next to water (currents, a flooded tunnel, water it cannot plan through).
+ * Midtown or manual swimming when stuck in water (currents, flooded tunnel, water it cannot plan through).
  * This notices "in water, not getting anywhere" while a task runs, swims to the nearest dry land and hands control
  * back. If it keeps ending up in the same water, the task is stopped with an explanation.
  *
@@ -69,6 +67,12 @@ final class EscapeProcess extends Feature {
             Util.msg("Running out of air - swimming up.");
             return;
         }
+
+        if (state != State.IDLE) {
+            stepInternal(mc, p);
+            return;
+        }
+
         if (++sampleTick % 20 != 0) return;
 
         xs[filled % SAMPLES] = p.getX();
@@ -76,7 +80,7 @@ final class EscapeProcess extends Feature {
         zs[filled % SAMPLES] = p.getZ();
         filled++;
 
-        if (state != State.IDLE || !Util.scriptOn("escape", cfg.escape) || cooldown > 0 || filled < SAMPLES) return;
+        if (!Util.scriptOn("escape", cfg.escape) || cooldown > 0 || filled < SAMPLES) return;
         boolean inWater = p.isInWater();
         if (!inWater && !wetRecently) return;
         if (!inWater) { wetRecently = false; return; }   // only act while actually in the water
@@ -85,7 +89,7 @@ final class EscapeProcess extends Feature {
         if (mc.gameMode != null && mc.gameMode.isDestroying()) return;   // mining something underwater is progress
         // Filling or clearing water is the job: standing in it and placing blocks under your feet looks like "stuck".
         String step = System.getProperty("baritonequeue.step");
-        if (step != null && step.toLowerCase().contains("water") && Util.baritone().getBuilderProcess().isActive()) return;
+        if (step != null && step.toLowerCase().contains("water") && EngineSelector.current().isBusy()) return;
 
         double minX = Double.MAX_VALUE, maxX = -Double.MAX_VALUE, minZ = Double.MAX_VALUE, maxZ = -Double.MAX_VALUE;
         double minY = Double.MAX_VALUE, maxY = -Double.MAX_VALUE;
@@ -106,8 +110,8 @@ final class EscapeProcess extends Feature {
         long oldest = escapes[escapeCount % GIVE_UP_AFTER];
         if (escapeCount >= GIVE_UP_AFTER && now - oldest < RECENT) {
             Util.haltQueue("The task was stopped, so the queue stopped too.");
-            Util.baritone().getPathingBehavior().cancelEverything();
-            Util.warn("waterloop", "Baritone keeps ending up stuck in water here (" + GIVE_UP_AFTER
+            EngineSelector.current().cancel();
+            Util.warn("waterloop", "Movement engine keeps ending up stuck in water here (" + GIVE_UP_AFTER
                     + " times in 5 minutes), so I stopped the task. Dam or drain the water first (/buildtools drain now) or choose a different spot.");
             escapeCount = 0;
             cooldown = COOLDOWN;
@@ -121,6 +125,7 @@ final class EscapeProcess extends Feature {
         timer = 0;
         state = State.ESCAPING;
         Util.msg("Stuck in water - swimming to dry land at " + shore.toShortString() + ".");
+        stepInternal(mc, p);
     }
 
     /** Nearest standable spot with no water at feet or head, found by a plain search around the player. */
@@ -158,59 +163,58 @@ final class EscapeProcess extends Feature {
         return state == State.AIR ? 100 : super.priority();   // breathing beats fighting, eating and everything else
     }
 
-    @Override
-    PathingCommand step(boolean calcFailed, boolean isSafeToCancel) {
-        Minecraft mc = Minecraft.getInstance();
-        LocalPlayer p = mc.player;
-        if (state == State.AIR && p != null) return air(mc, p);
-        if (state != State.ESCAPING || p == null) return defer();
+    private void stepInternal(Minecraft mc, LocalPlayer p) {
+        if (state == State.AIR) {
+            air(mc, p);
+            return;
+        }
+        if (state != State.ESCAPING) return;
 
         boolean there = shore.distSqr(p.blockPosition()) <= 2 && !p.isInWater();
-        if (there || p.onGround() && !p.isInWater() && shore.distSqr(p.blockPosition()) <= 9) {
+        if (there || (p.onGround() && !p.isInWater() && shore.distSqr(p.blockPosition()) <= 9)) {
             finish();
             Util.msg("Out of the water - carrying on.");
-            return pause();
+            return;
         }
         if (++timer > TIMEOUT) {
             finish();
             Util.warn("escapefail", "Could not get out of the water in time. Trying again in 20 s.");
-            return pause();
+            return;
         }
-        if (calcFailed) manual = true;   // Baritone found no way: just swim there
 
         if (manual) {
             Util.aimAt(p, Vec3.atCenterOf(shore));
-            var input = Util.baritone().getInputOverrideHandler();
-            input.setInputForceState(Input.MOVE_FORWARD, true);
-            input.setInputForceState(Input.JUMP, true);
-            return pause();
+            mc.options.keyUp.setDown(true);
+            mc.options.keyJump.setDown(true);
+        } else {
+            if (!EngineSelector.current().isBusy()) {
+                EngineSelector.current().goTo(GoalSpec.exact(shore));
+            }
         }
-        return new PathingCommand(new GoalBlock(shore), PathingCommandType.SET_GOAL_AND_PATH);
     }
 
     /** Up to the surface, breathe, then on to dry land. */
-    private PathingCommand air(Minecraft mc, LocalPlayer p) {
-        var input = Util.baritone().getInputOverrideHandler();
+    private void air(Minecraft mc, LocalPlayer p) {
         Level level = mc.level;
         if (!p.isUnderWater()) {
-            input.setInputForceState(Input.JUMP, true);   // keep the head above the water
-            input.setInputForceState(Input.MOVE_FORWARD, false);
-            if (p.getAirSupply() < p.getMaxAirSupply() && ++airTicks <= AIR_TIMEOUT) return pause();
-            input.setInputForceState(Input.JUMP, false);
+            mc.options.keyJump.setDown(true);   // keep the head above the water
+            mc.options.keyUp.setDown(false);
+            if (p.getAirSupply() < p.getMaxAirSupply() && ++airTicks <= AIR_TIMEOUT) return;
+            mc.options.keyJump.setDown(false);
             BlockPos land = p.isInWater() ? findShore(level, p.blockPosition()) : null;
-            if (land == null) { finish(); cooldown = 0; Util.msg("Breathing again - carrying on."); return pause(); }
+            if (land == null) { finish(); cooldown = 0; Util.msg("Breathing again - carrying on."); return; }
             shore = land;   // the same water would pull us back down: get out of it first
             manual = false;
             timer = 0;
             state = State.ESCAPING;
             Util.msg("Breathing again - swimming to dry land at " + shore.toShortString() + ".");
-            return pause();
+            return;
         }
         if (++airTicks > AIR_TIMEOUT) {
             finish();
             cooldown = 0;
             Util.warn("noair", "Could not get up to the air. Help needed!");
-            return pause();
+            return;
         }
         if (mc.gameMode != null && mc.gameMode.isDestroying() && breakingUp == null) mc.gameMode.stopDestroyBlock();
         BlockPos feet = p.blockPosition();
@@ -233,12 +237,12 @@ final class EscapeProcess extends Feature {
         if (column != null && !column.equals(feet)) {
             breakingUp = null;
             Util.aimAt(p, new Vec3(column.getX() + 0.5, p.getEyeY(), column.getZ() + 0.5));
-            input.setInputForceState(Input.MOVE_FORWARD, true);
-            input.setInputForceState(Input.JUMP, true);
-            return pause();
+            mc.options.keyUp.setDown(true);
+            mc.options.keyJump.setDown(true);
+            return;
         }
-        input.setInputForceState(Input.MOVE_FORWARD, false);
-        input.setInputForceState(Input.JUMP, true);
+        mc.options.keyUp.setDown(false);
+        mc.options.keyJump.setDown(true);
         if (column == null) {   // closed in: break the block over the head
             BlockPos head = BlockPos.containing(p.getEyePosition());
             BlockPos up = head.above();
@@ -254,7 +258,6 @@ final class EscapeProcess extends Feature {
             breakingUp = null;
             p.setXRot(-90);   // straight up
         }
-        return pause();
     }
 
     private BlockPos breakingUp;
@@ -287,15 +290,18 @@ final class EscapeProcess extends Feature {
     }
 
     private void finish() {
-        var input = Util.baritone().getInputOverrideHandler();
-        input.setInputForceState(Input.MOVE_FORWARD, false);
-        input.setInputForceState(Input.JUMP, false);
-        if (breakingUp != null && Minecraft.getInstance().gameMode != null) Minecraft.getInstance().gameMode.stopDestroyBlock();
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.options != null) {
+            mc.options.keyUp.setDown(false);
+            mc.options.keyJump.setDown(false);
+        }
+        if (breakingUp != null && mc.gameMode != null) mc.gameMode.stopDestroyBlock();
         breakingUp = null;
         state = State.IDLE;
         cooldown = COOLDOWN;
         filled = 0;          // measure the next stretch from scratch
         wetRecently = false;
+        EngineSelector.current().cancel();
     }
 
     @Override

@@ -1,7 +1,5 @@
 package dev.survivalkit;
 
-import baritone.api.BaritoneAPI;
-import baritone.api.IBaritone;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
@@ -24,29 +22,16 @@ final class Util {
             "rotten_flesh", "spider_eye", "pufferfish", "poisonous_potato", "chorus_fruit",
             "raw_chicken", "golden_apple", "suspicious_stew", "ominous_bottle");
 
-    static IBaritone baritone() {
-        return BaritoneAPI.getProvider().getPrimaryBaritone();
-    }
-
     static void msg(String s) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player != null) mc.player.sendSystemMessage(Component.literal("[SurvivalKit] " + s));
     }
 
-    /** True while any Baritone task other than ours runs (#mine, #farm, #build, #sel ca, #goto, ...). */
+    /** True while any engine task other than ours runs. */
     static boolean baritoneBusy() {
-        IBaritone b = baritone();
-        return b.getMineProcess().isActive() || b.getBuilderProcess().isActive() || b.getFarmProcess().isActive()
-                || b.getExploreProcess().isActive() || b.getGetToBlockProcess().isActive()
-                || b.getFollowProcess().isActive() || b.getCustomGoalProcess().isActive();
+        return dev.midtown.api.EngineSelector.current().isBusy();
     }
 
-    /**
-     * A chest/furnace/... menu is open, or the player is dead. The player's own inventory, the pause menu and chat do
-     * NOT count: everything here works through direct game calls, so the bot keeps going with those open (for example
-     * when the game window sits on a second monitor and the pause menu popped up).
-     */
-    /** The queue's "addons off ..." line: is this feature switched off for now? (names or "all", comma separated) */
     /** The script's enable("eat", ...): this helper runs while the script runs, whatever its saved option says. */
     static boolean scriptOn(String feature, boolean saved) {
         String v = System.getProperty("baritonequeue.helpers.on");
@@ -85,17 +70,15 @@ final class Util {
         msg("PROBLEM: " + text);
     }
 
-    /** Features only start while a Baritone task is running, unless "always" is switched on. */
+    /** Features only start while a task is running, unless "always" is switched on. */
     static boolean mayAct() {
-        // a running queue counts too: its own steps (chest trips, BuildTools' terminator mode, waits) are not Baritone tasks
         boolean queue = System.getProperty("baritonequeue.active") != null || System.getProperty("buildtools.busy") != null;
         return !PauseWatch.paused && (dev.survivalkit.Config.cfg.always || baritoneBusy() || queue || Recovery.waiting);
     }
 
     /** True while LoadChest is walking to / using its chest. */
     static boolean loadChestBusy() {
-        var control = baritone().getPathingControlManager().mostRecentInControl();
-        return control.isPresent() && String.valueOf(control.get().displayName()).contains("LoadChest");
+        return "1".equals(System.getProperty("loadchest.busy"));
     }
 
     private static List<BlockPos> sites = List.of();
@@ -130,33 +113,16 @@ final class Util {
         return false;
     }
 
-    /** Ticks until the current path segment ends, or -1 when Baritone has no path. */
+    /** Ticks until the current path segment ends, or -1 when no path. */
     static double segmentTicks() {
-        return baritone().getPathingBehavior().ticksRemainingInSegment().orElse(-1.0);
+        return -1.0;
     }
 
     /**
-     * True when the next `n` steps of Baritone's path are plain walking: same height, free space to walk into and solid
-     * ground under it. Then eating while it keeps walking cannot make it mine, place or jump wrongly.
+     * True when the next `n` steps of the path are plain walking.
      */
     static boolean easyWalkAhead(LocalPlayer p, int n) {
-        var cur = baritone().getPathingBehavior().getCurrent();
-        var level = Minecraft.getInstance().level;
-        if (cur == null || level == null || !p.onGround() || p.isInWater()) return false;
-        var movements = cur.getPath().movements();
-        int from = cur.getPosition();
-        if (from >= movements.size()) return false;
-        for (int i = from; i < Math.min(movements.size(), from + n); i++) {
-            var m = movements.get(i);
-            BlockPos src = m.getSrc(), dest = m.getDest();
-            if (dest.getY() != src.getY()) return false;
-            if (Math.abs(dest.getX() - src.getX()) + Math.abs(dest.getZ() - src.getZ()) > 2) return false;
-            if (level.getBlockState(dest).blocksMotion() || level.getBlockState(dest.above()).blocksMotion()) return false;
-            if (!level.getBlockState(dest).getFluidState().isEmpty() || !level.getBlockState(dest.above()).getFluidState().isEmpty()) return false;
-            var below = level.getBlockState(dest.below());
-            if (!below.isFaceSturdy(level, dest.below(), net.minecraft.core.Direction.UP)) return false;
-        }
-        return true;
+        return false;
     }
 
     static String pathOf(ItemStack st) {
@@ -183,16 +149,11 @@ final class Util {
     }
 
     /**
-     * Worn-out tools do not count as stock. With Baritone's item saver on (#set itemSaver true) this is exactly the
-     * moment Baritone stops using the tool: damage + itemSaverThreshold >= max damage. Without it: over 80% damage.
+     * Worn-out tools do not count as stock: over 80% damage or 5 uses left.
      */
     static boolean nearlyBroken(ItemStack st) {
         if (!st.isDamageableItem()) return false;
-        var settings = BaritoneAPI.getSettings();
-        if (settings.itemSaver.value) {
-            return st.getMaxDamage() > 1 && st.getDamageValue() + settings.itemSaverThreshold.value >= st.getMaxDamage();
-        }
-        return st.getDamageValue() > st.getMaxDamage() * 0.8;
+        return st.getMaxDamage() > 1 && (st.getMaxDamage() - st.getDamageValue() <= 5 || st.getDamageValue() > st.getMaxDamage() * 0.8);
     }
 
     /** How many worn-out tools matching the rule the player carries. */
@@ -252,13 +213,11 @@ final class Util {
     }
 
     /**
-     * Right-clicking a chest while sneaking, with a block or a bucket in hand, places the block on top of it (or pours
-     * the bucket) instead of opening it - and a block on top of a chest keeps it shut for good. On the live canal a
-     * stone brick ended up on the tools chest that way and every restock after it failed. So: stand up, and hold
-     * something harmless.
+     * Release sneak and hold harmless item before opening chest.
      */
     static void readyToOpen(net.minecraft.client.player.LocalPlayer p) {
-        baritone().getInputOverrideHandler().setInputForceState(baritone.api.utils.input.Input.SNEAK, false);
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.options != null) mc.options.keyShift.setDown(false);
         p.setShiftKeyDown(false);
         var inv = p.getInventory();
         if (!placesSomething(inv.getItem(inv.getSelectedSlot()))) return;
@@ -273,7 +232,7 @@ final class Util {
                 || it instanceof net.minecraft.world.item.SpawnEggItem || it instanceof net.minecraft.world.item.FlintAndSteelItem;
     }
 
-    /** Why a chest at pos may not open: something solid on top of it (a chest, not a barrel or shulker box). */
+    /** Why a chest at pos may not open: something solid on top of it. */
     static String blockedText(net.minecraft.world.level.Level level, net.minecraft.core.BlockPos pos) {
         if (!(level.getBlockState(pos).getBlock() instanceof net.minecraft.world.level.block.ChestBlock)) return "";
         var above = pos.above();

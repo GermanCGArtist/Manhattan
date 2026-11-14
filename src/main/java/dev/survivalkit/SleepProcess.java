@@ -1,8 +1,7 @@
 package dev.survivalkit;
 
-import baritone.api.pathing.goals.GoalNear;
-import baritone.api.process.PathingCommand;
-import baritone.api.process.PathingCommandType;
+import dev.midtown.api.EngineSelector;
+import dev.midtown.api.GoalSpec;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
@@ -47,12 +46,17 @@ final class SleepProcess extends Feature {
         return lvl != null && lvl.dimension() == Level.OVERWORLD && (lvl.isDarkOutside() || (cfg.weather && lvl.isThundering()));
     }
 
-    /** Cheap trigger check, once per client tick. */
     @Override
     void tick() {
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer p = mc.player;
-        if (state != State.IDLE || p == null || mc.level == null) return;
+        if (p == null || mc.level == null) return;
+
+        if (state != State.IDLE) {
+            stepInternal(mc, p);
+            return;
+        }
+
         if (cooldown > 0) { cooldown--; return; }
         if (!Util.scriptOn("sleep", cfg.sleep) || ++check % 20 != 0) return;
         boolean thunder = mc.level.dimension() == Level.OVERWORLD && mc.level.isThundering();
@@ -78,25 +82,18 @@ final class SleepProcess extends Feature {
         return dist * cfg.ticksPerBlock + cfg.bedLead * 20.0;
     }
 
-    /**
-     * True when it is time to leave for the bed to be there by dusk (before mobs spawn): the later in the afternoon
-     * and the further away the bed is, the sooner. Nothing happens while the bed is so close that leaving now would
-     * only mean standing around.
-     */
     private static boolean departureDue(Minecraft mc, LocalPlayer p) {
         Level lvl = mc.level;
         if (lvl == null || lvl.dimension() != Level.OVERWORLD || cfg.bed == null) return false;
         long time = lvl.getOverworldClockTime() % 24000L;
-        if (time < 6000 || time >= SLEEP_FROM) return false;   // morning/noon: far too early; at night the normal trigger applies
+        if (time < 6000 || time >= SLEEP_FROM) return false;
         return ARRIVE_BY - time <= travelTicks(p);
     }
 
-    /** Night (or a thunderstorm), or time to leave to be in bed before dusk. */
     static boolean bedTime(Minecraft mc, LocalPlayer p) {
         return cfg.bed != null && (isNight(mc) || (cfg.bedPlan && departureDue(mc, p)));
     }
 
-    /** /survival sleep now */
     void startNow() {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.level == null) return;
@@ -106,10 +103,8 @@ final class SleepProcess extends Feature {
         start(mc);
     }
 
-    /** Only this close is a missing bed believed: further away the chunk can be unloaded or not yet sent. */
     private static final double TRUST_BED_WITHIN = 48;
 
-    /** The bed is certainly not there: its chunk is loaded, it is close by, and the block is not a bed. */
     private boolean bedGone(Minecraft mc, LocalPlayer p) {
         if (!mc.level.hasChunkAt(bed)) return false;
         if (bed.distSqr(p.blockPosition()) > TRUST_BED_WITHIN * TRUST_BED_WITHIN) return false;
@@ -118,8 +113,6 @@ final class SleepProcess extends Feature {
 
     private void start(Minecraft mc) {
         bed = Util.pos(cfg.bed);
-        // far away the bed's chunk may not be loaded (or not filled in yet) and reads as air: that says nothing,
-        // so walk there and look then
         if (bedGone(mc, mc.player)) {
             Util.msg("No bed at " + bed.toShortString() + " (it was removed?). Checking again in 2 minutes.");
             cooldown = 20 * 120;
@@ -139,6 +132,7 @@ final class SleepProcess extends Feature {
                     + Math.round(Math.sqrt(bed.distSqr(mc.player.blockPosition()))) + " blocks away, about " + Math.round(travel / 20)
                     + " s with slack - leaving now to be there before mobs spawn.");
         }
+        EngineSelector.current().goTo(GoalSpec.near(bed, 2));
     }
 
     @Override
@@ -147,60 +141,57 @@ final class SleepProcess extends Feature {
         return state != State.IDLE;
     }
 
-    @Override
-    PathingCommand step(boolean calcFailed, boolean isSafeToCancel) {
-        Minecraft mc = Minecraft.getInstance();
-        LocalPlayer p = mc.player;
-        if (p == null || mc.gameMode == null) { state = State.IDLE; return defer(); }
+    private void stepInternal(Minecraft mc, LocalPlayer p) {
+        if (p == null || mc.gameMode == null) { state = State.IDLE; return; }
         timer++;
 
         switch (state) {
             case PATHING -> {
-                if (timer > pathTimeout) return fail("Could not reach the bed in time.");
+                if (timer > pathTimeout) { fail("Could not reach the bed in time."); return; }
                 if (bedGone(mc, p)) {
-                    return fail("There is no bed at " + bed.toShortString() + ".");
+                    fail("There is no bed at " + bed.toShortString() + ".");
+                    return;
                 }
-                if (calcFailed) return fail("Baritone found no path to the bed.");
-                GoalNear goal = new GoalNear(bed, 2);
-                if (goal.isInGoal(p.blockPosition())) {
+                double dist = Math.sqrt(bed.distSqr(p.blockPosition()));
+                if (dist <= 2.5) {
+                    EngineSelector.current().cancel();
                     learnPace();
                     state = isNight(mc) ? State.ENTERING : State.WAITING;
                     timer = 0;
                     if (state == State.WAITING) Util.msg("At the bed, waiting for nightfall.");
-                    return pause();
+                    return;
                 }
-                return new PathingCommand(goal, PathingCommandType.SET_GOAL_AND_PATH);
+                if (!EngineSelector.current().isBusy()) {
+                    EngineSelector.current().goTo(GoalSpec.near(bed, 2));
+                }
             }
             case WAITING -> {
-                // early at the bed: hold still until it can be slept in (the mobs outside cannot reach us in a house)
                 if (isNight(mc)) {
                     state = State.ENTERING;
                     timer = 0;
-                    return pause();
+                    return;
                 }
-                if (timer > WAIT_NIGHT_TIMEOUT) return fail("Waited five minutes at the bed and it never got dark.");
-                return pause();
+                if (timer > WAIT_NIGHT_TIMEOUT) { fail("Waited five minutes at the bed and it never got dark."); return; }
             }
             case ENTERING -> {
-                if (!isNight(mc)) {   // the storm passed while we walked
+                if (!isNight(mc)) {
                     state = State.IDLE;
                     cooldown = 20 * 10;
                     Util.msg("It is not night any more - no need to sleep.");
-                    return pause();
+                    return;
                 }
                 if (p.isSleeping()) {
                     state = State.SLEEPING;
                     timer = 0;
                     Util.msg("Sleeping...");
-                    return pause();
+                    return;
                 }
-                if (timer % 15 == 1) {   // try every 0.75 s, the server answers a tick or two later
-                    if (tries++ >= MAX_TRIES) return fail("Could not sleep (monsters nearby, or the server refused).");
-                    Util.readyToOpen(p);   // sneaking with a block in hand would place it on the bed
+                if (timer % 15 == 1) {
+                    if (tries++ >= MAX_TRIES) { fail("Could not sleep (monsters nearby, or the server refused)."); return; }
+                    Util.readyToOpen(p);
                     BlockHitResult hit = new BlockHitResult(Vec3.atCenterOf(bed), Direction.UP, bed, false);
                     mc.gameMode.useItemOn(p, InteractionHand.MAIN_HAND, hit);
                 }
-                return pause();
             }
             case SLEEPING -> {
                 if (!p.isSleeping() || timer > SLEEP_TIMEOUT) {
@@ -208,15 +199,11 @@ final class SleepProcess extends Feature {
                     cooldown = 20 * 10;
                     Util.msg("Awake - carrying on.");
                 }
-                return pause();
             }
-            default -> {
-                return defer();
-            }
+            default -> { }
         }
     }
 
-    /** After a trip of a useful length: the pace actually walked becomes the plan for the next departure. */
     private void learnPace() {
         if (startDist < 15 || timer < 40) return;
         double sample = timer / startDist;
@@ -227,15 +214,16 @@ final class SleepProcess extends Feature {
                 Math.round(startDist), timer / 20, sample, cfg.ticksPerBlock));
     }
 
-    private PathingCommand fail(String why) {
+    private void fail(String why) {
         Util.msg(why + " Trying again in 1 minute.");
         state = State.IDLE;
         cooldown = 20 * 60;
-        return pause();
+        EngineSelector.current().cancel();
     }
 
     @Override
-    public void onLostControl() {   // e.g. #stop
+    public void onLostControl() {
         state = State.IDLE;
+        EngineSelector.current().cancel();
     }
 }

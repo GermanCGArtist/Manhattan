@@ -57,6 +57,7 @@ final class Modules {
             }
         }
         out.put("ui.mode", Config.cfg.uiMode);
+        out.put("engine", dev.midtown.api.EngineSelector.selectedName());
         return out;
     }
 
@@ -92,6 +93,11 @@ final class Modules {
     }
 
     static Object get(String key, int line) {
+        String k = key.trim();
+        if (k.equalsIgnoreCase("engine") || k.equalsIgnoreCase("queue.engine")) {
+            String opt = dev.midtown.api.EngineSelector.getOption();
+            return opt != null ? opt : dev.midtown.api.EngineSelector.selectedName();
+        }
         Object[] r = find(key, line);
         try {
             Object v = ((Field) r[1]).get(r[0]);
@@ -104,6 +110,20 @@ final class Modules {
     }
 
     static void set(String key, Object value, int line) {
+        String k = key.trim();
+        if (k.equalsIgnoreCase("engine") || k.equalsIgnoreCase("queue.engine")) {
+            if (value == null) {
+                dev.midtown.api.EngineSelector.clearOption();
+                return;
+            }
+            String s = Values.str(value);
+            try {
+                dev.midtown.api.EngineSelector.setOption(s);
+            } catch (IllegalArgumentException e) {
+                throw Values.error(e.getMessage(), line);
+            }
+            return;
+        }
         Object[] r = find(key, line);
         Field f = (Field) r[1];
         Class<?> t = f.getType();

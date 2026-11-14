@@ -1,9 +1,10 @@
 # How Manhattan is built
 
-Minecraft 26.1.1, Fabric (Mojang names, unobfuscated), Java 25, Baritone API 1.18.0. Client-only, with client mixins (`baritonequeue.mixins.json`) for Dear ImGui rendering and input routing.
+Minecraft 26.1.1, Fabric (Mojang names, unobfuscated), Java 25, Midtown navigation & movement engine (`dev.midtown`). Client-only, with client mixins (`baritonequeue.mixins.json`) for Dear ImGui rendering and input routing.
 
 ## Packages
-- `dev.baritonequeue` – the language, the editor and the runner. Entry point `QueueMod`.
+- `dev.baritonequeue` – the language, the editor, runner, and native movement integration. Entry point `QueueMod`.
+- `dev.midtown` – the native pathing, execution, and movement engine (A* pathfinder, cost model, movement executor, `dev.midtown.api.*`).
 - `dev.survivalkit` – eat, defence, sleep, restock, respawn/resume/reconnect. Entry point `SurvivalKitMod`.
 - `dev.buildtools` – water fill (`TerminatorProcess`), drain, flood, scaffold, escape, safe areas. `BuildToolsMod`.
 - `dev.loadchest` – unloading into chests and picking up drops. `LoadChestMod`.
@@ -64,9 +65,9 @@ acts on its own: the script starts them. The packages talk through small `Api` c
 - A wet cell is any cell with a water fluid that does not block movement (seagrass, kelp, bubble columns count).
 - A cell is filled only when its column below is dry inside the selection: strictly bottom-up.
 - States WORK, WALK, SWIM, SINK, UNDER, RISE. It plans over the whole selection with a time budget; for each cell
-  a stand on the shore (checked with `Placer.placeableFrom`) or a dive spot. Walking uses Baritone with `GoalNear`,
+  a stand on the shore (checked with `Placer.placeableFrom`) or a dive spot. Walking uses Midtown with `GoalSpec`,
   digging only when the stand needs it; swimming and diving use its own key holds.
-- Safe areas (`RegionRules`) force Baritone's allowBreak/allowPlace off near a protected box every tick;
+- Safe areas (`RegionRules`) force allowBreak/allowPlace off near a protected box every tick;
   `Api.setOwnBreak` changes the player's own wish, applied after leaving.
 
 ## Area clearing (`dev.baritonequeue.ClearProcess`)

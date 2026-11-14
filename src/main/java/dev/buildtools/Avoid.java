@@ -1,6 +1,6 @@
 package dev.buildtools;
 
-import baritone.api.BaritoneAPI;
+import dev.midtown.api.EngineSelector;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.level.block.Block;
 
@@ -10,10 +10,8 @@ import java.util.List;
 import static dev.buildtools.Config.cfg;
 
 /**
- * Tells Baritone's planner never to break the blocks that make a base work: chests, hoppers, beds, furnaces,
- * redstone parts ... Unlike the safe-area veto (which only stops a break at the last moment), this is Baritone's own
- * "blocksToDisallowBreaking" setting, so it plans AROUND them from the start and nothing stalls.
- * It is applied while safe areas are on and removed again when they are switched off.
+ * Tells the path engine never to break the blocks that make a base work: chests, hoppers, beds, furnaces,
+ * redstone parts ...
  */
 final class Avoid {
     private Avoid() {}
@@ -23,7 +21,7 @@ final class Avoid {
             "observer", "piston", "crafter", "beacon", "composter"};
 
     private static List<Block> functional;
-    private static final List<Block> added = new ArrayList<>();
+    private static final List<Block> applied = new ArrayList<>();
 
     private static List<Block> functional() {
         if (functional == null) {
@@ -34,7 +32,7 @@ final class Avoid {
                 for (String p : PARTS) {
                     if (path.contains(p)) { match = true; break; }
                 }
-                if (match && !path.equals("chiseled_bookshelf")) out.add(b);
+                if (!path.equals("chiseled_bookshelf") && match) out.add(b);
             }
             functional = out;
         }
@@ -43,24 +41,15 @@ final class Avoid {
 
     /** Called about once a second. */
     static void sync() {
-        var setting = BaritoneAPI.getSettings().blocksToDisallowBreaking;
         boolean want = cfg.protect && cfg.avoidBlocks;
         if (want) {
-            List<Block> now = new ArrayList<>(setting.value);
-            boolean changed = false;
-            for (Block b : functional()) {
-                if (!now.contains(b)) {
-                    now.add(b);
-                    added.add(b);
-                    changed = true;
-                }
+            if (applied.isEmpty()) {
+                applied.addAll(functional());
+                EngineSelector.current().setDisallowedBreakBlocks(applied);
             }
-            if (changed) setting.value = now;
-        } else if (!added.isEmpty()) {
-            List<Block> now = new ArrayList<>(setting.value);
-            now.removeAll(added);
-            setting.value = now;
-            added.clear();
+        } else if (!applied.isEmpty()) {
+            applied.clear();
+            EngineSelector.current().setDisallowedBreakBlocks(applied);
         }
     }
 }

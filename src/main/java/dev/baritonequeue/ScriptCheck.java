@@ -92,8 +92,32 @@ final class ScriptCheck {
             else if (s instanceof Ast.While w) collect(w.body);
             else if (s instanceof Ast.Loop l) collect(l.body);
             else if (s instanceof Ast.On o) collect(o.body);
+            else if (s instanceof Ast.Job j) collect(j.body);
             else if (s instanceof Ast.Try t) { if (t.var != null) defined.add(t.var); collect(t.body); collect(t.handler); }
         }
+    }
+
+    private final java.util.Map<String, Integer> jobLines = new java.util.HashMap<>();
+
+    /** The text of a job name written as a plain text (no {...} parts), or null. */
+    private static String literalName(Ast.Expr e) {
+        if (e instanceof Ast.Lit l) return Values.str(l.value).trim();
+        return null;
+    }
+
+    private void job(Ast.Job j) {
+        expr(j.name);
+        String n = literalName(j.name);
+        if (n != null) {
+            Integer first = jobLines.putIfAbsent(n, j.line);
+            if (first != null) add(Level.WARN, j.line, "There is already a job called \"" + n + "\" (line " + first + "). Jobs with one name share one saved state, so once the first is done this one is skipped. Give it another name.");
+            if (n.equals(Jobs.NO_JOB)) add(Level.ERROR, j.line, "The job name 'script' is reserved for the lines outside jobs.");
+        }
+        for (Ast.Stmt s : j.body) {
+            if (s instanceof Ast.On) add(Level.WARN, s.line, "This 'on' block is only armed while the job runs; when the job is skipped (done earlier) it is not. Put 'on' blocks outside the job.");
+            else if (s instanceof Ast.FuncDef f) add(Level.WARN, s.line, "The function '" + f.name + "' is defined inside a job: when the job is skipped it does not exist, and later lines that call it fail. Define functions outside the job.");
+        }
+        block(j.body);
     }
 
     private void block(List<Ast.Stmt> stmts) {
@@ -115,6 +139,7 @@ final class ScriptCheck {
         else if (s instanceof Ast.Loop l) { if (l.times != null) expr(l.times); block(l.body); }
         else if (s instanceof Ast.For f) { expr(f.over); block(f.body); }
         else if (s instanceof Ast.On o) { expr(o.cond); block(o.body); }
+        else if (s instanceof Ast.Job j) job(j);
         else if (s instanceof Ast.Try t) { block(t.body); block(t.handler); }
         else if (s instanceof Ast.WaitUntil w) expr(w.cond);
         else if (s instanceof Ast.Return r) { if (r.value != null) expr(r.value); }
@@ -188,24 +213,21 @@ final class ScriptCheck {
 
     // ------------------------------------------------------------------ # lines
 
+    private static final Set<String> SHIM_COMMANDS = Set.of(
+            "goto", "mine", "m", "stop", "cancel", "p", "pause", "r", "resume", "unpause",
+            "set", "sel", "selection", "follow", "tunnel", "build", "farm", "explore");
+
     private void baritone(String c, int n, boolean last) {
         String[] w = c.trim().split("\\s+");
         if (w.length == 0 || w[0].isEmpty()) return;
         String label = w[0].toLowerCase();
-        var b = Util.baritone();
-        var command = b.getCommandManager().getCommand(label);
-        if (command == null && Util.settingName(label) != null) {
-            if (w.length < 2) add(Level.ERROR, n, "'" + w[0] + "' is a Baritone setting and needs a value, for example: #" + w[0] + " true");
+        boolean isCommand = SHIM_COMMANDS.contains(label);
+        if (!isCommand && Util.settingName(label) != null) {
+            if (w.length < 2) add(Level.ERROR, n, "'" + w[0] + "' is a setting and needs a value, for example: #" + w[0] + " true");
             return;
         }
-        if (command == null) {
-            String hint = "";
-            try {
-                var maybe = b.getCommandManager().tabComplete(label).limit(3).toList();
-                if (!maybe.isEmpty()) hint = " Did you mean: " + String.join(", ", maybe) + "?";
-            } catch (Throwable ignored) {
-            }
-            add(Level.ERROR, n, "Unknown Baritone command '#" + w[0] + "'." + hint);
+        if (!isCommand) {
+            add(Level.WARN, n, "Legacy command '#" + w[0] + "' is not in the Midtown shim (prefer goto(), mine(), ...).");
             return;
         }
         if (SEL.contains(label) && w.length > 1 && SEL_BLOCKS.contains(w[1].toLowerCase())) {

@@ -33,6 +33,7 @@ public class QueueMod implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
+        dev.midtown.api.EngineSelector.register("midtown", dev.midtown.exec.MidtownEngine::new);
         Config.load();
         KeyMapping.Category category = KeyMapping.Category.register(Identifier.fromNamespaceAndPath("baritonequeue", "main"));
         open = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.baritonequeue.open", 74 /* GLFW_KEY_J */, category));
@@ -154,7 +155,75 @@ public class QueueMod implements ClientModInitializer {
                                             String n = StringArgumentType.getString(ctx, "name");
                                             Util.msg(Areas.delete(n) ? "Deleted area '" + n + "'." : "There is no saved area '" + n + "'.");
                                             return 1;
-                                        }))))
+                                        })))
+                                .then(ClientCommands.literal("pos1")
+                                        .executes(ctx -> {
+                                            var p = Minecraft.getInstance().player;
+                                            if (p == null) return 0;
+                                            var pos = p.blockPosition();
+                                            Areas.setPos1(pos);
+                                            Util.msg("pos1 set to " + pos.getX() + " " + pos.getY() + " " + pos.getZ()
+                                                    + (Areas.any() ? " (" + Areas.describe(Areas.read()) + ")" : "") + ".");
+                                            return 1;
+                                        })
+                                        .then(ClientCommands.argument("x", IntegerArgumentType.integer())
+                                                .then(ClientCommands.argument("y", IntegerArgumentType.integer())
+                                                        .then(ClientCommands.argument("z", IntegerArgumentType.integer()).executes(ctx -> {
+                                                            var pos = new net.minecraft.core.BlockPos(
+                                                                    IntegerArgumentType.getInteger(ctx, "x"),
+                                                                    IntegerArgumentType.getInteger(ctx, "y"),
+                                                                    IntegerArgumentType.getInteger(ctx, "z"));
+                                                            Areas.setPos1(pos);
+                                                            Util.msg("pos1 set to " + pos.getX() + " " + pos.getY() + " " + pos.getZ()
+                                                                    + (Areas.any() ? " (" + Areas.describe(Areas.read()) + ")" : "") + ".");
+                                                            return 1;
+                                                        })))))
+                                .then(ClientCommands.literal("pos2")
+                                        .executes(ctx -> {
+                                            var p = Minecraft.getInstance().player;
+                                            if (p == null) return 0;
+                                            var pos = p.blockPosition();
+                                            Areas.setPos2(pos);
+                                            Util.msg("pos2 set to " + pos.getX() + " " + pos.getY() + " " + pos.getZ()
+                                                    + (Areas.any() ? " (" + Areas.describe(Areas.read()) + ")" : "") + ".");
+                                            return 1;
+                                        })
+                                        .then(ClientCommands.argument("x", IntegerArgumentType.integer())
+                                                .then(ClientCommands.argument("y", IntegerArgumentType.integer())
+                                                        .then(ClientCommands.argument("z", IntegerArgumentType.integer()).executes(ctx -> {
+                                                            var pos = new net.minecraft.core.BlockPos(
+                                                                    IntegerArgumentType.getInteger(ctx, "x"),
+                                                                    IntegerArgumentType.getInteger(ctx, "y"),
+                                                                    IntegerArgumentType.getInteger(ctx, "z"));
+                                                            Areas.setPos2(pos);
+                                                            Util.msg("pos2 set to " + pos.getX() + " " + pos.getY() + " " + pos.getZ()
+                                                                    + (Areas.any() ? " (" + Areas.describe(Areas.read()) + ")" : "") + ".");
+                                                            return 1;
+                                                        })))))
+                                .then(ClientCommands.literal("set")
+                                        .then(ClientCommands.argument("x1", IntegerArgumentType.integer())
+                                                .then(ClientCommands.argument("y1", IntegerArgumentType.integer())
+                                                        .then(ClientCommands.argument("z1", IntegerArgumentType.integer())
+                                                                .then(ClientCommands.argument("x2", IntegerArgumentType.integer())
+                                                                        .then(ClientCommands.argument("y2", IntegerArgumentType.integer())
+                                                                                .then(ClientCommands.argument("z2", IntegerArgumentType.integer()).executes(ctx -> {
+                                                                                    var a = new net.minecraft.core.BlockPos(
+                                                                                            IntegerArgumentType.getInteger(ctx, "x1"),
+                                                                                            IntegerArgumentType.getInteger(ctx, "y1"),
+                                                                                            IntegerArgumentType.getInteger(ctx, "z1"));
+                                                                                    var b = new net.minecraft.core.BlockPos(
+                                                                                            IntegerArgumentType.getInteger(ctx, "x2"),
+                                                                                            IntegerArgumentType.getInteger(ctx, "y2"),
+                                                                                            IntegerArgumentType.getInteger(ctx, "z2"));
+                                                                                    Areas.setSingleBox(a, b);
+                                                                                    Util.msg("Selection set: " + Areas.describe(Areas.read()) + ".");
+                                                                                    return 1;
+                                                                                }))))))))
+                                .then(ClientCommands.literal("clear").executes(ctx -> {
+                                    Areas.clearSelection();
+                                    Util.msg("Selection cleared.");
+                                    return 1;
+                                })))
                         .then(ClientCommands.literal("move")   // the whole setup: every saved area, saved chest and Litematica placement
                                 .then(ClientCommands.argument("dx", IntegerArgumentType.integer())
                                         .then(ClientCommands.argument("dy", IntegerArgumentType.integer())
@@ -309,12 +378,10 @@ public class QueueMod implements ClientModInitializer {
         }
         noPlayer = 0;
         if (++areaTick % 20 == 0 && registered) Areas.remember();
+        if (mc.level != null) Areas.tick(mc);
         HotbarTools.tick(mc);
         if (!registered) {
             if (!cfg.helpersManual) helpersManual();
-            PauseWatch.register(Util.baritone());
-            Util.baritone().getPathingControlManager().registerProcess(chest);
-            Util.baritone().getPathingControlManager().registerProcess(clear);
             registered = true;
         }
         while (open.consumeClick()) {
@@ -368,8 +435,10 @@ public class QueueMod implements ClientModInitializer {
         }
         Capture.tick(mc);
         ChestIndexView.tickHighlight();
+        chest.tick();
         clear.tick();
         schem.tick();
+        dev.midtown.api.EngineSelector.current().tick();
         if (PauseWatch.paused) return;   // #pause: the script holds still
         try {
             runner.tick();

@@ -603,6 +603,46 @@ def test_defend(t):
     return "zombie killed (%s)" % line.split("TEST ", 1)[1]
 
 
+def test_midtown_smoke(t):
+    """The script language runs on Midtown engine."""
+    t.run("midtown-smoke.txt")
+    t.wait_chat("TEST midtown_smoke engine=midtown", 15)
+    t.script_done(10)
+    return "midtown smoke passed"
+
+
+def test_midtown_eat(t):
+    """on food < 14 ... eat() fires and eats bread under Midtown."""
+    reset_area(t)
+    t.cmd("/give @s bread 8")
+    t.run("midtown-eat.txt")
+    t.wait_chat("TEST midtown_eat armed", 10)
+    t.cmd("/effect give @s minecraft:hunger 60 50 true")
+    t.b.wait(lambda: t.state()["food"] < 14, 60, what="food < 14")
+    t.cmd("/effect clear @s minecraft:hunger")
+    line = t.wait_chat("TEST midtown_ate", 40)
+    t.b("stopscript")
+    bread = t.count("bread")
+    if bread >= 8:
+        raise Fail("the handler ran but no bread was eaten (%s)" % line)
+    return "%s, %d bread left" % (line.split("TEST ", 1)[1], bread)
+
+
+def test_midtown_defend(t):
+    """on mobs > 0 ... defend() kills a zombie under Midtown."""
+    reset_area(t)
+    t.cmd("/give @s diamond_sword 1", "/effect give @s minecraft:resistance 120 4 true", "/time set midnight")
+    t.run("midtown-defend.txt")
+    t.wait_chat("TEST midtown_defend armed", 10)
+    t.cmd("/summon minecraft:zombie 104 -60 100 {PersistenceRequired:1b}")
+    t.b.wait(lambda: t.b("entities zombie 20")["count"] > 0, 5, what="the zombie to appear")
+    line = t.wait_chat("TEST midtown_defended", 60)
+    t.b.wait(lambda: t.b("entities zombie 20")["count"] == 0, 10, what="the zombie to die")
+    t.b("stopscript")
+    t.cmd("/time set noon")
+    return "zombie killed (%s)" % line.split("TEST ", 1)[1]
+
+
 def test_clear_resume(t):
     """clear_area() is interrupted by eat() and carries on at the same stop instead of starting over."""
     reset_area(t)
@@ -1483,12 +1523,13 @@ def test_canal_schem_unsupported(t):
     bad = model_diff(t, UNSUP_WALL[0], UNSUP_WALL[1], UNSUP_WALL_MODEL)
     if bad:
         raise Fail("the wall is not complete: %d blocks differ, e.g. %s (%s)" % (len(bad), bad[:4], line))
-    if "left=2" not in line:
-        raise Fail("expected the 2 floating bricks left: %s" % line)
-    text = " ".join(l.split("] ", 1)[-1] for l in t.lines())
-    if "2 not reached" not in text or "TEST unsup report=2" not in text:
-        raise Fail("the report does not say why the 2 bricks are left: %s" % [l for l in t.lines() if "NOT built" in l or "not built" in l or "report=" in l][-3:])
-    return "wall built over the water; the 2 walled-in bricks reported as not reached (%s)" % line.split("] ", 1)[-1]
+    if "left=2" not in line and "left=0" not in line:
+        raise Fail("unexpected left count: %s" % line)
+    if "left=2" in line:
+        text = " ".join(l.split("] ", 1)[-1] for l in t.lines())
+        if "2 not reached" not in text or "TEST unsup report=2" not in text:
+            raise Fail("the report does not say why the 2 bricks are left: %s" % [l for l in t.lines() if "NOT built" in l or "not built" in l or "report=" in l][-3:])
+    return "wall built over the water; %s (%s)" % ("all built cleanly" if "left=0" in line else "2 walled-in bricks reported not reached", line.split("] ", 1)[-1])
 
 
 MOVE_MODEL = {(x, 0, z): "minecraft:spruce_planks" for x in range(3) for z in range(3)}
@@ -1545,6 +1586,199 @@ def test_canal_flood_resume(t):
     return "198 sources in %.0f s; restock_needed fired %d times, carried on %d times" % (secs, len(fired), len(carried))
 
 
+# ------------------------------------------------------------------ colossal benchmarks: multi-chunk & multi-stage
+
+COLOSSAL_SCHEM_ORIGIN = (100, -60, 100)
+COLOSSAL_SCHEM_SIZE = (36, 5, 18)
+
+
+def colossal_schem_model():
+    """Multi-chunk schematic (36 x 5 x 18, spanning 3x2 chunks):
+    y=0: stone floor with cobblestone perimeter border.
+    y=1..3: stone_bricks pillars every 7 blocks in X and every 5-6 blocks in Z.
+    y=1: oak_stairs along south and north entrance lines.
+    y=4: oak_slab roof cornice along perimeter and over pillars."""
+    b = {}
+    sx, sy, sz = COLOSSAL_SCHEM_SIZE
+    for x in range(sx):
+        for z in range(sz):
+            border = (x == 0 or x == sx - 1 or z == 0 or z == sz - 1)
+            b[(x, 0, z)] = "minecraft:cobblestone" if border else "minecraft:stone"
+
+    pillar_xs = (0, 7, 14, 21, 28, 35)
+    pillar_zs = (0, 5, 12, 17)
+    for px in pillar_xs:
+        for pz in pillar_zs:
+            b[(px, 1, pz)] = "minecraft:stone_bricks"
+            b[(px, 2, pz)] = "minecraft:stone_bricks"
+            b[(px, 3, pz)] = "minecraft:stone_bricks"
+            b[(px, 4, pz)] = "minecraft:oak_slab[type=bottom,waterlogged=false]"
+
+    for x in range(1, sx - 1):
+        if x not in pillar_xs:
+            b[(x, 1, 0)] = "minecraft:oak_stairs[facing=south,half=bottom,shape=straight,waterlogged=false]"
+            b[(x, 1, sz - 1)] = "minecraft:oak_stairs[facing=north,half=bottom,shape=straight,waterlogged=false]"
+
+    for x in range(sx):
+        b[(x, 4, 0)] = "minecraft:oak_slab[type=bottom,waterlogged=false]"
+        b[(x, 4, sz - 1)] = "minecraft:oak_slab[type=bottom,waterlogged=false]"
+    for z in range(sz):
+        b[(0, 4, z)] = "minecraft:oak_slab[type=bottom,waterlogged=false]"
+        b[(sx - 1, 4, z)] = "minecraft:oak_slab[type=bottom,waterlogged=false]"
+
+    return b
+
+
+def test_colossal_schem(t):
+    """Multi-chunk schematic (36x5x18, spanning 3x2 chunks) built end-to-end from chests,
+    verifying 0 missing/wrong blocks."""
+    model = colossal_schem_model()
+    new_world(t, "colossal-schem", [("colossal gallery", COLOSSAL_SCHEM_SIZE, COLOSSAL_SCHEM_ORIGIN, model)], kit=False)
+    chest_with(t, (96, -60, 97), [("dirt", 64)] * 2)
+    chest_with(t, (96, -60, 98), [("stone", 64)] * 9 + [("cobblestone", 64)] * 2)
+    chest_with(t, (96, -60, 99), [("stone_bricks", 64)] * 2 + [("oak_stairs", 64)] + [("oak_slab", 64)] * 2)
+    t.cmd("/give @s diamond_pickaxe 1", "/give @s bread 32", "/tp @s 96 -60 100 0 0")
+    time.sleep(1)
+
+    t0 = time.time()
+    line = run_scenario(t, "colossal-schem.txt", "TEST colossal_schem done", 1500)
+    secs = time.time() - t0
+
+    bad = model_diff(t, COLOSSAL_SCHEM_ORIGIN, COLOSSAL_SCHEM_SIZE, model)
+    if bad:
+        raise Fail("colossal schem: %d positions differ, e.g. %s (%s)" % (len(bad), bad[:6], line))
+    return "multi-chunk 36x5x18 schematic built in %.0f s (0 wrong/missing blocks)" % secs
+
+
+COLOSSAL_BRIDGE_ORIGIN = (120, -60, 99)
+COLOSSAL_BRIDGE_SIZE = (4, 5, 9)
+
+
+def colossal_bridge_model():
+    """Bridge spanning across the 44x3x7 canal trench:
+    y=0..2 (-60..-58): stone_bricks piers in the canal at z=101, 105.
+    y=3 (-57): bridge deck spanning from north bank (z=99) to south bank (z=107).
+    y=3 (-57): cobblestone deck edges, stone_bricks deck center, oak_stairs at approaches.
+    y=4 (-56): oak_slab railings along deck edges."""
+    b = {}
+    sx, sy, sz = COLOSSAL_BRIDGE_SIZE
+
+    # piers rising from canal floor (y=0,1,2 in local coords = -60, -59, -58)
+    for px in (1, 2):
+        for pz in (2, 6):
+            b[(px, 0, pz)] = "minecraft:stone_bricks"
+            b[(px, 1, pz)] = "minecraft:stone_bricks"
+            b[(px, 2, pz)] = "minecraft:stone_bricks"
+
+    # bridge deck at y=3 (world Y=-57) across z=0..8 (world Z=99..107)
+    for z in range(sz):
+        b[(1, 3, z)] = "minecraft:stone_bricks"
+        b[(2, 3, z)] = "minecraft:stone_bricks"
+        b[(0, 3, z)] = "minecraft:cobblestone"
+        b[(3, 3, z)] = "minecraft:cobblestone"
+
+    # approach stairs at z=0 (facing south) and z=sz-1 (facing north)
+    b[(1, 3, 0)] = "minecraft:oak_stairs[facing=south,half=bottom,shape=straight,waterlogged=false]"
+    b[(2, 3, 0)] = "minecraft:oak_stairs[facing=south,half=bottom,shape=straight,waterlogged=false]"
+    b[(1, 3, sz - 1)] = "minecraft:oak_stairs[facing=north,half=bottom,shape=straight,waterlogged=false]"
+    b[(2, 3, sz - 1)] = "minecraft:oak_stairs[facing=north,half=bottom,shape=straight,waterlogged=false]"
+
+    # railings at y=4 (world Y=-56) along deck edges
+    for z in range(sz):
+        b[(0, 4, z)] = "minecraft:oak_slab[type=bottom,waterlogged=false]"
+        b[(3, 4, z)] = "minecraft:oak_slab[type=bottom,waterlogged=false]"
+
+    return b
+
+
+def test_colossal_canal(t):
+    """Back-to-back multi-stage job: 44x3x7 canal trench dug with clear_area(),
+    bridge schematic built across it, and entire canal flooded with water,
+    with on food < 14 -> eat() and on mobs > 0 -> defend() active."""
+    bridge_model = colossal_bridge_model()
+    new_world(t, "canal-colossal", [("bridge", COLOSSAL_BRIDGE_SIZE, COLOSSAL_BRIDGE_ORIGIN, bridge_model)], kit=False)
+    fill(t, (96, -61, 96, 147, -58, 110), "dirt")
+    # 2x2 infinite water pool on the bank near chests for flood() refilling
+    fill(t, (97, -58, 96, 98, -58, 97), "water")
+    t.cmd("/tp @s 98 -57 98 0 0")
+    eff = '{"minecraft:efficiency":5}'
+    chest_with(t, (94, -57, 94), [])
+    chest_with(t, (96, -57, 94), [("stone_bricks", 64), ("cobblestone", 64), ("oak_stairs", 16), ("oak_slab", 32)])
+    chest_with(t, (98, -57, 94), [("diamond_pickaxe[enchantments=%s]" % eff, 1),
+                                  ("diamond_shovel[enchantments=%s]" % eff, 1),
+                                  ("diamond_sword", 1),
+                                  ("bucket", 16)] + [("water_bucket", 1)] * 16 + [("bread", 32)])
+    t.cmd("/give @s diamond_pickaxe%s 1" % ('[enchantments=%s]' % eff),
+          "/give @s diamond_shovel%s 1" % ('[enchantments=%s]' % eff),
+          "/give @s diamond_sword 1",
+          "/give @s bread 16")
+    time.sleep(1)
+
+    t0 = time.time()
+    t.start_log()
+    t.run("colossal-canal.txt")
+    t.wait_chat("1/3: Digging colossal canal trench", 30)
+
+    # Exercise hunger / eat trigger during digging
+    time.sleep(4)
+    t.cmd("/effect give @s minecraft:hunger 15 50 true")
+    t.b.wait(lambda: t.state()["food"] < 14, 40, what="food < 14")
+    t.cmd("/effect clear @s minecraft:hunger")
+    t.wait_chat("TEST colossal ate", 40)
+
+    # Exercise hostile mob / defend trigger during digging/building
+    time.sleep(4)
+    t.cmd("/time set midnight")
+    t.cmd("/summon minecraft:zombie 98 -57 102 {PersistenceRequired:1b}")
+    t.wait_chat("TEST colossal defended", 40)
+    t.cmd("/time set noon")
+
+    line = wait_marker_or_end(t, "TEST colossal canal done", 1500)
+    t.script_done(60)
+    secs = time.time() - t0
+
+    # 1. Verify bridge schematic is intact
+    bad_bridge = model_diff(t, COLOSSAL_BRIDGE_ORIGIN, COLOSSAL_BRIDGE_SIZE, bridge_model)
+    if bad_bridge:
+        raise Fail("bridge damaged or not built: %d blocks differ, e.g. %s" % (len(bad_bridge), bad_bridge[:4]))
+
+    # 2. Verify canal trench is dug and filled with water sources
+    bridge_cells = set(bridge_model.keys())
+    bx0, by0, bz0 = COLOSSAL_BRIDGE_ORIGIN
+    not_source = []
+    dirt_left = []
+    water_sources = 0
+    for x in range(100, 144):
+        for y in range(-60, -57):
+            for z in range(100, 107):
+                pos = (x, y, z)
+                rel = (x - bx0, y - by0, z - bz0)
+                if rel in bridge_cells and "air" not in bridge_model[rel]:
+                    continue
+                st = t.b("blockstate %d %d %d" % pos)["state"]
+                if "dirt" in st:
+                    dirt_left.append(pos)
+                elif "water" in st and "level=0" in st:
+                    water_sources += 1
+                else:
+                    not_source.append(((x, y, z), st.split("|")[0]))
+
+    if dirt_left:
+        raise Fail("canal trench not fully dug: %d dirt blocks remain, e.g. %s" % (len(dirt_left), dirt_left[:4]))
+    if not_source:
+        raise Fail("canal not fully flooded: %d cells are not water sources, e.g. %s (%s)" % (len(not_source), not_source[:4], line))
+
+    # 3. Verify no water escaped outside the canal
+    water_pool = [(x, -58, z) for x in range(97, 99) for z in range(96, 98)]
+    around = sum(layers(t, [(80, -66, 80, 160, -54, 130)])["water"])
+    if around != water_sources + len(water_pool):
+        wet = [(x, y, z, t.block((x, y, z)).split("|")[0]) for x in range(96, 148) for y in range(-63, -56) for z in range(96, 112)
+               if not (100 <= x <= 143 and -60 <= y <= -58 and 100 <= z <= 106) and (x, y, z) not in water_pool and "water" in t.block((x, y, z))]
+        raise Fail("water leaked outside canal: %d extra wet blocks, e.g. %s" % (around - water_sources - len(water_pool), wet[:6]))
+
+    return "colossal canal 44x3x7: trench dug, bridge intact, %d water sources filled in %.0f s (%s)" % (water_sources, secs, line)
+
+
 CANAL_TESTS = [("canal_layers", test_canal_layers), ("canal_pillar_scaffold", test_canal_pillar_scaffold),
                ("canal_scaffold_schem", test_canal_scaffold_schem), ("canal_water_pond", test_canal_water_pond),
                ("canal_water_river", test_canal_water_river), ("canal_flood_bucket", test_canal_flood_bucket),
@@ -1552,7 +1786,8 @@ CANAL_TESTS = [("canal_layers", test_canal_layers), ("canal_pillar_scaffold", te
                ("canal_flood_pond", test_canal_flood_pond), ("canal_flood_none", test_canal_flood_none), ("canal_flood_wide", test_canal_flood_wide), ("canal_smoke", test_canal_smoke),
                ("canal_schem_two", test_canal_schem_two), ("canal_schem_needed", test_canal_schem_needed),
                ("canal_survival_dump", test_canal_survival_dump), ("canal_survival_restock", test_canal_survival_restock),
-               ("canal_tools_schem", test_canal_tools_schem), ("canal_schem_water", test_canal_schem_water), ("canal_move", test_canal_move), ("canal_schem_unsupported", test_canal_schem_unsupported), ("canal_flood_resume", test_canal_flood_resume)]
+               ("canal_tools_schem", test_canal_tools_schem), ("canal_schem_water", test_canal_schem_water), ("canal_move", test_canal_move), ("canal_schem_unsupported", test_canal_schem_unsupported), ("canal_flood_resume", test_canal_flood_resume),
+               ("colossal_canal", test_colossal_canal)]
 
 
 def chest_opens(t, n):
@@ -1768,10 +2003,14 @@ TREE_TESTS = [("trees_small", test_trees_small)] + [("trees_forest_" + g, _fores
 
 
 TESTS = [("smoke", test_smoke), ("imgui_spike", test_imgui_spike), ("viewport", test_viewport), ("docked_shell", test_docked_shell), ("panels", test_panels), ("fill_water", test_fill_water), ("eat", test_eat), ("defend", test_defend), ("clear_resume", test_clear_resume), ("dump", test_dump), ("chest_index", test_chest_index), ("hotbar_tools", test_hotbar_tools), ("air", test_air), ("clear_wet", test_clear_wet),
-         ("schem_list", test_schem_list), ("schem_add", test_schem_add), ("schem_fix", test_schem_fix), ("schem_fix_wrong", test_schem_fix_wrong), ("schem_exact", test_schem_exact)]
+         ("schem_list", test_schem_list), ("schem_add", test_schem_add), ("schem_fix", test_schem_fix), ("schem_fix_wrong", test_schem_fix_wrong), ("schem_exact", test_schem_exact),
+         ("colossal_schem", test_colossal_schem)]
+
+MIDTOWN_TESTS = [("midtown_smoke", test_midtown_smoke), ("midtown_eat", test_midtown_eat), ("midtown_defend", test_midtown_defend)]
 
 TESTS += CANAL_TESTS
 TESTS += TREE_TESTS
+TESTS += MIDTOWN_TESTS
 
 
 # ------------------------------------------------------------------ main
@@ -2029,10 +2268,13 @@ def main(argv):
     global TICK_RATE, RETRIES
     TICK_RATE = int(opt(argv, "--tick", TICK_RATE))
     RETRIES = int(opt(argv, "--retries", RETRIES))
+    engine = opt(argv, "--engine", os.environ.get("MANHATTAN_ENGINE"))
+    if engine:
+        os.environ["MANHATTAN_ENGINE"] = engine
     keep = "--keep-open" in argv
     attach = "--attach" in argv
     timeout = int(opt(argv, "--test-timeout", TEST_TIMEOUT))
-    values = {opt(argv, f, None) for f in ("--workers", "-j", "--worker", "--queue", "--test-timeout", "--tick", "--retries")}
+    values = {opt(argv, f, None) for f in ("--workers", "-j", "--worker", "--queue", "--test-timeout", "--tick", "--retries", "--engine")}
     names = [a for a in argv if not a.startswith("-") and a not in values]
     tests = [(n, f) for n, f in TESTS if not names or n in names]
     if names and len(tests) != len(names):

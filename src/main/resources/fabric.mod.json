@@ -17,7 +17,6 @@
     "fabricloader": ">=0.19.3",
     "fabric-api": "*",
     "minecraft": "~26.1.1",
-    "baritone": "*",
     "java": ">=25"
   }
 }

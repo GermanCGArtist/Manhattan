@@ -1,6 +1,5 @@
 package dev.baritonequeue;
 
-import baritone.api.pathing.goals.GoalBlock;
 import dev.baritonequeue.Schem.Mode;
 import dev.baritonequeue.Schem.Phase;
 import dev.baritonequeue.Schem.Plan;
@@ -94,7 +93,7 @@ final class SchemPlacer {
     }
 
     void stop() {
-        Util.baritone().getPathingBehavior().cancelEverything();
+        dev.midtown.api.EngineSelector.current().cancel();
         stopBreaking();
         cur = null;
         queue.clear();
@@ -318,15 +317,15 @@ final class SchemPlacer {
                 if (cands == null && !clearing && !Schem.replaceable(level.getBlockState(cur)) && !wantsMerge(level)) {
                     // a block in the cell (scaffolding put there during the build): take it away first, then aim
                     if (p.getEyePosition().distanceTo(Vec3.atCenterOf(cur)) <= REACH - 0.3) {
-                        Util.baritone().getPathingBehavior().cancelEverything();
+                        dev.midtown.api.EngineSelector.current().cancel();
                         breakPos = cur;
                         stage = Stage.BREAK;
                         stageTicks = 0;
                         return false;
                     }
                     if (stageTicks > 20 * 40) { fail("could not get into reach to take away what is in the way"); return false; }
-                    if (stageTicks % 100 == 1 && !Util.baritone().getCustomGoalProcess().isActive()) {
-                        Util.baritone().getCustomGoalProcess().setGoalAndPath(new baritone.api.pathing.goals.GoalNear(cur, 2));
+                    if (stageTicks % 100 == 1 && !dev.midtown.api.EngineSelector.current().isBusy()) {
+                        dev.midtown.api.EngineSelector.current().goTo(dev.midtown.api.GoalSpec.near(cur, 2));
                     }
                     return false;
                 }
@@ -345,7 +344,7 @@ final class SchemPlacer {
                     BlockHitResult r = level.clip(new ClipContext(p.getEyePosition(), Vec3.atCenterOf(cur), ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, p));
                     breakPos = r.getType() == HitResult.Type.BLOCK ? r.getBlockPos() : cur;
                     if (dev.buildtools.Api.protectedAt(breakPos)) { fail("a safe area is in the way at " + breakPos.toShortString()); return false; }
-                    Util.baritone().getPathingBehavior().cancelEverything();
+                    dev.midtown.api.EngineSelector.current().cancel();
                     chosen = null;
                     stage = Stage.BREAK;
                     stageTicks = 0;
@@ -356,17 +355,17 @@ final class SchemPlacer {
                 chosen = inside ? null : clearing ? null : reachable(level, p);
                 if (chosen == null) {
                     if (stageTicks > 20 * 40) { fail("could not get into reach"); return false; }
-                    if (stageTicks % 100 == 1 && !Util.baritone().getCustomGoalProcess().isActive()) {
+                    if (stageTicks % 100 == 1 && !dev.midtown.api.EngineSelector.current().isBusy()) {
                         if (lastSpot != null) badSpots.add(lastSpot);   // it walked there (or tried) and still no reach: not that one
                         BlockPos spot = standSpot(level, p);
                         lastSpot = spot;
                         if (spot == null) { fail("no spot to stand on with a clear line to it"); return false; }
                         System.out.println("[Queue] schem: " + what() + " at " + cur.toShortString() + ": walking to " + spot.toShortString());
-                        Util.baritone().getCustomGoalProcess().setGoalAndPath(new GoalBlock(spot));
+                        dev.midtown.api.EngineSelector.current().goTo(dev.midtown.api.GoalSpec.exact(spot));
                     }
                     return false;
                 }
-                Util.baritone().getPathingBehavior().cancelEverything();
+                dev.midtown.api.EngineSelector.current().cancel();
                 breakPos = cur;
                 stage = !Schem.replaceable(level.getBlockState(cur)) && !wantsMerge(level) ? Stage.BREAK : Stage.AIM;
                 stageTicks = 0;

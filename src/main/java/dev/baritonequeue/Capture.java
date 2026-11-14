@@ -451,7 +451,7 @@ final class Capture {
     }
 
     /** The 12 edges of a box, at most about 40 particles an edge. */
-    private static void outline(Level level, int[] b, ParticleOptions kind, int[] budget) {
+    static void outline(Level level, int[] b, ParticleOptions kind, int[] budget) {
         double x0 = b[0], y0 = b[1], z0 = b[2], x1 = b[3] + 1, y1 = b[4] + 1, z1 = b[5] + 1;
         double[][] edges = {
                 {x0, y0, z0, x1, y0, z0}, {x0, y1, z0, x1, y1, z0}, {x0, y0, z1, x1, y0, z1}, {x0, y1, z1, x1, y1, z1},

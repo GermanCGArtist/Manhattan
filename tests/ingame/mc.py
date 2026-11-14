@@ -111,8 +111,6 @@ def install():
     os.makedirs(mods, exist_ok=True)
     wanted = {
         FABRIC_API: _fabric_api_jar(),
-        "baritone-api-fabric-1.18.0.jar": os.path.join(AFK_MODS, "baritone-api-fabric-1.18.0.jar"),
-        "baritoneui-1.10.1.jar": os.path.join(AFK_MODS, "baritoneui-1.10.1.jar"),
         "baritonequeue-%s.jar" % ver: os.path.join(REPO, "build", "libs", "baritonequeue-%s.jar" % ver),
         "manhattan-testbridge-%s.jar" % ver: os.path.join(REPO, "build", "libs", "manhattan-testbridge-%s.jar" % ver),
     }
@@ -125,7 +123,7 @@ def install():
             raise RuntimeError("missing %s (looked for %s). Build first: build.bat" % (name, src))
     for f in os.listdir(mods):
         low = f.lower()
-        stale = (low.startswith(("baritonequeue-", "manhattan-testbridge-", "fabric-api-", "litematica-fabric-", "malilib-fabric-")) and f not in wanted) \
+        stale = (low.startswith(("baritonequeue-", "manhattan-testbridge-", "fabric-api-", "litematica-fabric-", "malilib-fabric-", "baritone-", "baritoneui-")) and f not in wanted) \
             or low.startswith(FORBIDDEN)
         if stale and low.endswith(".jar"):
             os.remove(os.path.join(mods, f))
@@ -270,6 +268,9 @@ def launch():
             "-Dminecraft.launcher.brand=manhattan-tests", "-Dminecraft.launcher.version=1",
             "-Dmanhattan.testbridge.port=%d" % PORT, "-Dmanhattan.tests=true",
             "-DFabricMcEmu= net.minecraft.client.main.Main "]
+    engine = os.environ.get("MANHATTAN_ENGINE")
+    if engine:
+        args.append("-Dmanhattan.engine=" + engine)
     if os.path.isfile(log_cfg):
         args.append("-Dlog4j.configurationFile=" + log_cfg)
     args += ["-cp", os.pathsep.join(cp), v["mainClass"],

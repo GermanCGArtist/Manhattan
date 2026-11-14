@@ -88,6 +88,106 @@ public class LangTest {
         }
     }
 
+    /** The ledger file: save, load, states, reset, retry; the job queue's description and ids. */
+    static void ledger() {
+        try {
+            java.nio.file.Path dir = java.nio.file.Files.createTempDirectory("manhattan-ledger");
+            java.nio.file.Path f = Ledger.fileFor(dir, "my_world", "main");
+            Ledger l = Ledger.load(f);
+            same("ledger starts empty", l.size(), 0);
+            String a = "script/schem_build@12(all,add)#1";
+            l.set(a + "/0,0", Ledger.State.DONE, 1, 0, null, "sig1");
+            l.set(a + "/32,0", Ledger.State.DEFERRED, 2, 7, "attached: 7 left", "sig1");
+            l.set(a + "/64,0", Ledger.State.RUNNING, 1, 30, null, "sig1");
+            l.putVars("build", java.util.Map.of("n", 5.0));
+            same("ledger file written", java.nio.file.Files.exists(f), true);
+            same("ledger no temp file left", java.nio.file.Files.exists(f.resolveSibling(f.getFileName() + ".tmp")), false);
+            Ledger r = Ledger.load(f);
+            same("ledger size", r.size(), 4);
+            same("ledger state", r.state(a + "/0,0", "sig1") + " " + r.state(a + "/32,0", "sig1") + " " + r.state(a + "/64,0", "sig1"), "DONE DEFERRED RUNNING");
+            var e = r.get(a + "/32,0");
+            same("ledger fields", e.tries + " " + e.left + " " + e.reason + " " + e.sig, "2 7 attached: 7 left sig1");
+            same("ledger vars", r.get("build").vars, "{n=5.0}");
+            same("ledger stale signature is ignored", r.state(a + "/0,0", "other"), "PENDING");
+            same("ledger unknown id", r.state("nope", null), "PENDING");
+            same("ledger ids by state", r.ids(a, Ledger.State.DONE), "[" + a + "/0,0]");
+            same("ledger under", Ledger.under(a + "/0,0", a) + " " + Ledger.under(a + "#2/0,0", a), "true false");
+            same("ledger retry", r.retry(a), 2);
+            same("ledger retried states", r.state(a + "/32,0", null) + " " + r.get(a + "/32,0").tries + " " + r.get(a + "/0,0").state, "PENDING 0 DONE");
+            same("ledger reset one", r.reset(a + "/0,0"), 1);
+            same("ledger reset job", r.reset(a), 2);
+            same("ledger reset all", r.reset(null), 1);
+            same("ledger reset saved", Ledger.load(f).size(), 0);
+            // the start of a run reports what is done
+            Ledger g = Ledger.load(f);
+            g.set(a + "/0,0", Ledger.State.DONE, 1, 0, null, null);
+            g.set(a + "/32,0", Ledger.State.PENDING, 0, 0, null, null);
+            g.set("canal", Ledger.State.DONE, 1, 0, null, null);
+            g.set("walls", Ledger.State.FAILED, 1, 0, "boom", null);
+            Jobs.useLedger(g);
+            same("resume text", Jobs.startRun(), "Resuming: 1 of 2 jobs done (1 of 2 chunks).");
+            Jobs.useLedger(Ledger.load(dir.resolve("none.json")));
+            same("no resume text on a fresh ledger", Jobs.startRun(), null);
+        } catch (Exception ex) {
+            fails++;
+            System.out.println("FAIL ledger: " + ex);
+            ex.printStackTrace(System.out);
+        }
+    }
+
+    /** job "name" ... end: skip when done, restore variables, FAILED on error, duplicate-name warning. */
+    static void jobs() {
+        try {
+            java.nio.file.Path dir = java.nio.file.Files.createTempDirectory("manhattan-jobs");
+            java.nio.file.Path f = dir.resolve("jobs.json");
+            Jobs.useLedger(Ledger.load(f));
+            Jobs.startRun();
+            String script = "let total = 0\nlet spot = null\nlet names = []\nlet fn = null\n"
+                    + "job \"a\"\n  out(\"ran a\")\n  total = 5\n  total += 2\n  spot = pos(1, 2, 3)\n  push(names, \"x\")\n  let m = {k: [1, 2.5, \"t\"]}\n  fn = func() return 1 end\nend\n"
+                    + "out(total, spot, names, m, type(fn))";
+            same("job first run", run(script), "ran a | 7 1 2 3 [\"x\"] {k: [1, 2.5, \"t\"]} function");
+            same("job done in ledger", Jobs.ledger().state("a", null), "DONE");
+            same("job saved vars", new java.util.TreeSet<>(Jobs.ledger().get("a").vars.keySet()), "[m, names, spot, total]");
+            // a second run (the ledger is read back from the file): the body is skipped, the variables come back
+            Jobs.useLedger(Ledger.load(f));
+            Jobs.startRun();
+            same("job skip and restore", run(script), "7 1 2 3 [\"x\"] {k: [1, 2.5, \"t\"]} null");
+            same("restored position is a position", run("let spot = null\njob \"a\"\n  out(\"no\")\nend\nout(spot.x + spot.y + spot.z, type(spot))"), "6 pos");
+            // reset: it runs again
+            Jobs.reset("a");
+            Jobs.startRun();
+            same("job after reset runs again", run("job \"a\"\n  out(\"ran a\")\nend"), "ran a");
+            // an error: FAILED with the message, the script stops, the next run goes into the job again
+            Jobs.useLedger(Ledger.load(dir.resolve("fail.json")));
+            Jobs.startRun();
+            String bad = "job \"one\"\n  out(\"one\")\nend\njob \"two\"\n  out(\"two\")\n  let x = nothing\nend\nout(\"after\")";
+            same("job error stops the script", run(bad), "one | two | ERROR line 6: 'nothing' is not defined. Give it a value first (let nothing = ...).");
+            same("job failed state", Jobs.ledger().state("one", null) + " " + Jobs.ledger().state("two", null), "DONE FAILED");
+            same("job failed reason", Jobs.ledger().get("two").reason, "line 6: 'nothing' is not defined. Give it a value first (let nothing = ...).");
+            Jobs.startRun();
+            same("next run continues at the failed job", run("job \"one\"\n  out(\"one\")\nend\njob \"two\"\n  out(\"two\")\nend\nout(\"after\")"), "two | after");
+            // lines outside jobs always run
+            Jobs.startRun();
+            same("lines outside jobs run again", run("out(\"top\")\njob \"one\"\n  out(\"never\")\nend\nout(\"end\")"), "top | end");
+            same("job names", Jobs.jobName(" a/b ", 1), "a-b");
+            same("script name for the ledger file", Jobs.fileSafe("my build.txt") + " " + Jobs.fileSafe(null) + " " + Jobs.fileSafe("main"), "my_build main main");
+            // parse errors and the check
+            same("job needs a name", run("job\nend"), "PARSE line 1: 'job' needs a name in quotes: job \"build\" ... end");
+            same("job not closed", run("job \"a\"\n  out(1)\n"), "PARSE line 1: 'job' (line 1) is never closed with 'end'.");
+            same("no nested jobs", run("job \"a\"\n  job \"b\"\n  end\nend"), "PARSE line 2: A 'job' cannot be inside another job (line 2). Put them one after the other.");
+            same("reserved job name", run("job \"script\"\nend"), "ERROR line 1: The job name 'script' is reserved for the lines outside jobs. Pick another name.");
+            List<ScriptCheck.Entry> chk = ScriptCheck.run(List.of("job \"a\"", "  out(1)", "end", "job \"a\"", "  out(2)", "end", "job \"b\"", "  func f()", "  end", "end"));
+            String warnings = chk.stream().filter(e -> e.level() != ScriptCheck.Level.OK).map(e -> e.line() + ": " + e.text()).toList().toString();
+            same("duplicate job name warning", warnings.contains("4: There is already a job called \"a\" (line 1)"), true);
+            same("function in a job warning", warnings.contains("8: The function 'f' is defined inside a job"), true);
+            same("job is a keyword", Lexer.KEYWORDS.contains("job"), true);
+        } catch (Exception ex) {
+            fails++;
+            System.out.println("FAIL jobs: " + ex);
+            ex.printStackTrace(System.out);
+        }
+    }
+
     public static void main(String[] a) {
         check("arith", "out(1 + 2 * 3, (1 + 2) * 3, 7 / 2, 7 % 3, -2 * 3)", "7 9 3.5 1 -6");
         check("strings", "let n = 5\nout(\"n is {n}, twice {n * 2}\", 'x{y}', \"a\" + 1)", "n is 5, twice 10 x{y} a1");
@@ -115,6 +215,16 @@ public class LangTest {
         check("comments", "// top\nlet x = 2 // after\n/* block\ncomment */ out(x)", "2");
         check("semicolons", "let a = 1; let b = 2; out(a + b)", "3");
         check("baritone line", "let p = pos(1, 2, 3)\n#goto {p}\nout(\"done\")", "done");
+        check("shim goto", "#goto 100 64 200\nout(\"done\")", "done");
+        check("shim mine", "#mine iron_ore\nout(\"done\")", "done");
+        check("shim stop", "#stop\nout(\"done\")", "done");
+        check("shim cancel", "#cancel\nout(\"done\")", "done");
+        check("native goto pos", "let p = pos(1, 2, 3)\ngoto(p)\nout(\"done\")", "done");
+        check("native goto xz", "goto(10, 20)\nout(\"done\")", "done");
+        check("native mine", "mine(\"diamond_ore\", \"iron_ore\")\nout(\"done\")", "done");
+        check("native follow error", "follow()\nout(\"done\")", "ERROR line 1: Not in a world.");
+        check("native tunnel error", "tunnel()\nout(\"done\")", "ERROR line 1: Not in a world.");
+        check("native cancel", "cancel()\nout(\"done\")", "done");
         check("pos", "let p = pos(1, 2, 3)\nout(p.x + p.y + p.z, p + pos(1, 1, 1), \"{p}\")", "6 2 3 4 1 2 3");
         check("wait stmt", "wait 2\nout(\"w\")", "w");
         check("long loop yields", "let s = 0\nfor i in range(100000)\n  s += 1\nend\nout(s)", "100000");
@@ -204,6 +314,8 @@ public class LangTest {
             System.out.println("FAIL converted script does not parse: line " + e.line + ": " + e.getMessage());
         }
         sheet();
+        ledger();
+        jobs();
         System.out.println(passes + " passed, " + fails + " failed");
         System.exit(fails == 0 ? 0 : 1);
     }

@@ -1,6 +1,5 @@
 package dev.baritonequeue;
 
-import baritone.api.schematic.ISchematic;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.item.Item;
@@ -311,53 +310,6 @@ final class Schem {
     static boolean replaceable(BlockState cur) {
         return cur.isAir() || cur.canBeReplaced() || cur.getBlock() instanceof LiquidBlock;
     }
-
-    // ------------------------------------------------------------------ the wrapper Baritone builds
-
-    static final class Wrapper implements ISchematic {
-        final Plan plan;
-        final Mode mode;
-        final Phase phase;
-        /** Items not in the inventory right now; their blocks are left out (skip mode). null = all or nothing. */
-        final java.util.function.Supplier<java.util.Set<Item>> missing;
-        /** Cells (plan indices) to ignore for now: the builder stalled on them. null = none. */
-        final java.util.function.IntPredicate skip;
-
-        Wrapper(Plan plan, Mode mode, Phase phase, java.util.function.Supplier<java.util.Set<Item>> missing, java.util.function.IntPredicate skip) {
-            this.skip = skip;
-            this.plan = plan;
-            this.mode = mode;
-            this.phase = phase;
-            this.missing = missing;
-        }
-
-        @Override
-        public boolean inSchematic(int x, int y, int z, BlockState current) {
-            BlockState d = plan.at(x, y, z);
-            if (d == null || plan.excluded.get(plan.idx(x, y, z))) return false;
-            if (phase == Phase.CLEAR || phase == Phase.ORIENTED) return false;   // our own placer does these
-            if (skip != null && skip.test(plan.idx(x, y, z))) return false;
-            if (d.isAir() || phaseAt(plan, plan.idx(x, y, z), d, current) != phase) return false;
-            if (!(mode != Mode.ADD || norm(current).equals(d) || replaceable(current) || plan.wasOpen(plan.idx(x, y, z)))) return false;
-            if (missing != null && !norm(current).equals(d)) {
-                Object[] cost = cost(d);
-                if (cost != null && missing.get().contains((Item) cost[0])) return false;   // no item for it: build the rest
-            }
-            return true;
-        }
-
-        @Override
-        public BlockState desiredState(int x, int y, int z, BlockState current, List<BlockState> approxPlaceable) {
-            BlockState d = plan.at(x, y, z);
-            if (phase == Phase.CLEAR || d == null) return Blocks.AIR.defaultBlockState();
-            return d;
-        }
-
-        @Override public int widthX() { return plan.sx; }
-        @Override public int heightY() { return plan.sy; }
-        @Override public int lengthZ() { return plan.sz; }
-    }
-
 
     // ------------------------------------------------------------------ why a block is still missing
 

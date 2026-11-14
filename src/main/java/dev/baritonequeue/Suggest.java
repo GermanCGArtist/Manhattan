@@ -1,7 +1,5 @@
 package dev.baritonequeue;
 
-import baritone.api.command.ICommand;
-
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -36,7 +34,7 @@ final class Suggest {
             Map.entry("if", "if <condition> ... elif ... else ... end"),
             Map.entry("elif", "another case of an if"),
             Map.entry("else", "the other case of an if"),
-            Map.entry("end", "closes if / while / for / repeat / loop / func / on / try"),
+            Map.entry("end", "closes if / while / for / repeat / loop / func / on / job / try"),
             Map.entry("while", "while <condition> ... end"),
             Map.entry("for", "for item in list ... end   /   for i in range(10) ... end"),
             Map.entry("repeat", "repeat 3 ... end"),
@@ -45,6 +43,7 @@ final class Suggest {
             Map.entry("continue", "next round of the loop"),
             Map.entry("return", "leave the function (with a value)"),
             Map.entry("on", "on <condition> ... end   runs whenever it becomes true, interrupting what runs"),
+            Map.entry("job", "job \"name\" ... end   a saved part: finished jobs are skipped on the next Run"),
             Map.entry("try", "try ... catch err ... end   carry on after an error"),
             Map.entry("catch", "what to do when the try part failed"),
             Map.entry("wait", "wait 30   /   wait until day"),
@@ -206,10 +205,7 @@ final class Suggest {
         switch (fn) {
             case "set", "setting" -> {
                 if (arg != 0) return List.of();
-                List<String> out = new ArrayList<>();
-                for (var s : baritone.api.BaritoneAPI.getSettings().allSettings) out.add(s.getName());
-                out.sort(String.CASE_INSENSITIVE_ORDER);
-                return out;
+                return List.of("allowBreak", "allowParkourPlace", "allowPlace");
             }
             case "option" -> { return arg == 0 ? new ArrayList<>(Modules.all().keySet()) : List.of(); }
             case "area", "save_area" -> {
@@ -262,46 +258,41 @@ final class Suggest {
         if (target != null && lower.contains(" ") && (partial.isEmpty() || partial.matches("-?\\d*"))) {
             out.add(coords(" "));
         }
-        String settingFirst = lower.contains(" ") ? Util.settingName(lower.substring(0, lower.indexOf(' '))) : null;
-        String asked = line.stripLeading();
-        if (settingFirst != null && Util.baritone().getCommandManager().getCommand(lower.substring(0, lower.indexOf(' '))) == null) {
-            asked = "set " + settingFirst + asked.substring(asked.indexOf(' '));
-        }
         if (!lower.contains(" ")) {
             if (lower.isEmpty() && !force) return Result.NONE;
             return new Result(firstWords(lower, force), cursor - partial.length());
         }
         if (partial.isEmpty() && !force) return new Result(out, cursor);
-        try {
-            List<String> got = Util.baritone().getCommandManager().tabComplete(asked)
-                    .filter(s -> s != null && !s.isBlank()).distinct().limit(MAX).collect(Collectors.toList());
-            if (!(got.size() == 1 && got.get(0).equalsIgnoreCase(partial) && !force)) for (String g : got) out.add(new Item(g, ""));
-        } catch (Throwable t) {
-            // odd half-typed input: no suggestions rather than an error
+        if (lower.startsWith("mine ")) {
+            List<String> blocks = registry(net.minecraft.core.registries.BuiltInRegistries.BLOCK.keySet(), partial, List.of());
+            for (String b : blocks) out.add(new Item(b, ""));
         }
         return new Result(out, cursor - partial.length());
     }
 
-    /** Every Baritone command (and setting) that starts with the partial word, with Baritone's description. */
+    /** Legacy `#` shim commands and Midtown settings matching the partial word. */
     private static List<Item> firstWords(String partial, boolean force) {
         Map<String, String> all = new TreeMap<>();
-        try {
-            for (ICommand c : Util.baritone().getCommandManager().getRegistry().entries) {
-                if (c.hiddenFromHelp()) continue;
-                for (String name : c.getNames()) {
-                    if (name.toLowerCase().startsWith(partial)) all.put(name, c.getShortDesc());
-                }
-            }
-        } catch (Throwable ignored) {
-        }
+        Map<String, String> cmds = Map.of(
+                "goto", "Navigate to x y z or x z (Midtown shim; prefer goto())",
+                "mine", "Mine block(s) (Midtown shim; prefer mine())",
+                "follow", "Follow entity (Midtown shim; prefer follow())",
+                "tunnel", "Dig a tunnel (Midtown shim; prefer tunnel())",
+                "stop", "Cancel active navigation",
+                "cancel", "Cancel active navigation",
+                "pause", "Pause active navigation",
+                "resume", "Resume paused navigation",
+                "sel", "Selection command (pos1, pos2, clear, ca)",
+                "set", "Configure engine setting"
+        );
+        cmds.forEach((k, v) -> {
+            if (k.startsWith(partial)) all.put(k, v);
+        });
         if (!partial.isEmpty()) {
-            try {
-                for (var s : baritone.api.BaritoneAPI.getSettings().allSettings) {
-                    if (s.getName().toLowerCase().startsWith(partial) && !all.containsKey(s.getName())) {
-                        all.put(s.getName(), "setting, now " + s.value + " (default " + s.defaultValue + ")");
-                    }
+            for (String s : List.of("allowBreak", "allowPlace", "allowParkourPlace")) {
+                if (s.toLowerCase().startsWith(partial) && !all.containsKey(s)) {
+                    all.put(s, "Midtown setting");
                 }
-            } catch (Throwable ignored) {
             }
         }
         if (all.size() == 1 && all.containsKey(partial) && !force) return List.of();

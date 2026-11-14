@@ -1,7 +1,5 @@
 package dev.baritonequeue;
 
-import baritone.api.BaritoneAPI;
-import baritone.api.utils.BetterBlockPos;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
@@ -160,10 +158,16 @@ final class TreeClear {
         return p;
     }
 
+    private static final List<Item> THROWAWAY_ITEMS = List.of(
+            net.minecraft.world.item.Items.DIRT,
+            net.minecraft.world.item.Items.COBBLESTONE,
+            net.minecraft.world.item.Items.NETHERRACK,
+            net.minecraft.world.item.Items.STONE,
+            net.minecraft.world.item.Items.COBBLED_DEEPSLATE,
+            net.minecraft.world.item.Items.SANDSTONE);
+
     private static void select(int x0, int y0, int z0, int x1, int y1, int z1) {
-        var sm = Util.baritone().getSelectionManager();
-        sm.removeAllSelections();
-        sm.addSelection(new BetterBlockPos(x0, y0, z0), new BetterBlockPos(x1, y1, z1));
+        Areas.setSingleBox(new BlockPos(x0, y0, z0), new BlockPos(x1, y1, z1));
     }
 
     private static final int AROUND = 5;   // how far from the tree Baritone may stand on a pillar
@@ -177,7 +181,7 @@ final class TreeClear {
      */
     private static Set<BlockPos> throwaway(Interp in, Level level, List<int[]> boxes, Set<BlockPos> except) {
         Set<Block> kinds = new HashSet<>();
-        for (Item it : BaritoneAPI.getSettings().acceptableThrowawayItems.value) {
+        for (Item it : THROWAWAY_ITEMS) {
             if (it instanceof net.minecraft.world.item.BlockItem bi) kinds.add(bi.getBlock());
         }
         Set<BlockPos> out = new HashSet<>();
@@ -262,7 +266,7 @@ final class TreeClear {
             Map<Item, Integer> before = inventory(p);
             List<String> added = new ArrayList<>();
             var rules = dev.loadchest.LoadChestMod.keepRules();
-            for (Item it : BaritoneAPI.getSettings().acceptableThrowawayItems.value) {
+            for (Item it : THROWAWAY_ITEMS) {
                 String n = ChestOp.name(it);
                 if (before.containsKey(it) && !rules.containsKey(n)) {
                     rules.put(n, 128);
@@ -304,11 +308,9 @@ final class TreeClear {
 
         Run r = new Run(in, line, chest, chestText);
         Map<Item, Integer> start = inventory(p);
-        var s = BaritoneAPI.getSettings();
-        boolean oldLayers = s.buildInLayers.value;
         boolean throwaway = false;
-        for (Item it : s.acceptableThrowawayItems.value) if (start.containsKey(it)) throwaway = true;
-        if (!throwaway) Util.msg("clear_trees: you carry no scaffolding blocks (#acceptableThrowawayItems, e.g. dirt): tall trees may be out of reach.");
+        for (Item it : THROWAWAY_ITEMS) if (start.containsKey(it)) throwaway = true;
+        if (!throwaway) Util.msg("clear_trees: you carry no scaffolding blocks (e.g. dirt): tall trees may be out of reach.");
 
         List<Tree> trees = scan(in, level, boxes);
         Set<BlockPos> ground = throwaway(in, level, boxes, null);   // what is there before: never taken for scaffolding
@@ -316,7 +318,6 @@ final class TreeClear {
         List<BlockPos> spots = new ArrayList<>();
         Util.msg("clear_trees: " + total + " trees in the selection.");
         try {
-            s.buildInLayers.value = false;
             while (true) {
                 // the nearest tree that still stands and has tries left
                 BlockPos me = player(line).blockPosition();
@@ -367,10 +368,7 @@ final class TreeClear {
                 r.dumpIfFull();
             }
         } finally {
-            s.buildInLayers.value = oldLayers;
-            var sm = Util.baritone().getSelectionManager();
-            sm.removeAllSelections();
-            for (int[] b : boxes) sm.addSelection(new BetterBlockPos(b[0], b[1], b[2]), new BetterBlockPos(b[3], b[4], b[5]));
+            Areas.apply(boxes);
         }
 
         // leaves: give them a while to fall apart, then one sweep over the area for what they dropped

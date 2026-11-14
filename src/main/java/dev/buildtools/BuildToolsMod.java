@@ -28,8 +28,6 @@ public class BuildToolsMod implements ClientModInitializer {
     static final ScaffoldProcess scaffold = new ScaffoldProcess();
     static final TerminatorProcess terminator = new TerminatorProcess();
     private boolean busyMarked;
-
-    private boolean registered = false;
     private int syncTick;
 
     @Override
@@ -275,16 +273,6 @@ public class BuildToolsMod implements ClientModInitializer {
 
     private void tick(Minecraft mc) {
         if (mc.player == null) { RegionRules.release(); return; }
-        if (!registered) {
-            var control = Util.baritone().getPathingControlManager();
-            control.registerProcess(drain);
-            control.registerProcess(fill);
-            control.registerProcess(escape);
-            control.registerProcess(scaffold);
-            control.registerProcess(terminator);
-            PauseWatch.register(Util.baritone());
-            registered = true;
-        }
         if (PauseWatch.paused) return;   // #pause: nothing starts or continues
         try {
             drain.tick();

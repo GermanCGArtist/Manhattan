@@ -1,6 +1,5 @@
 package dev.buildtools;
 
-import baritone.api.BaritoneAPI;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
@@ -22,27 +21,27 @@ final class RegionRules {
 
     /** Sets allowBreak as if the player had; near a safe area it only takes effect once you leave it. Returns the old value. */
     static boolean setOwnBreak(boolean v) {
-        var s = BaritoneAPI.getSettings();
+        var engine = dev.midtown.api.EngineSelector.current();
         if (forcedBreak) {
             boolean old = origBreak;
             origBreak = v;
             return old;
         }
-        boolean old = s.allowBreak.value;
-        s.allowBreak.value = v;
+        boolean old = engine.allowBreak();
+        engine.setAllowBreak(v);
         return old;
     }
 
     /** Sets allowPlace as if the player had (see setOwnBreak). Returns the old value. */
     static boolean setOwnPlace(boolean v) {
-        var s = BaritoneAPI.getSettings();
+        var engine = dev.midtown.api.EngineSelector.current();
         if (forcedPlace) {
             boolean old = origPlace;
             origPlace = v;
             return old;
         }
-        boolean old = s.allowPlace.value;
-        s.allowPlace.value = v;
+        boolean old = engine.allowPlace();
+        engine.setAllowPlace(v);
         return old;
     }
 
@@ -60,39 +59,39 @@ final class RegionRules {
                 if ((!z.allowBreak || !z.allowPlace) && zone.isEmpty()) zone = z.name;
             }
         }
-        var s = BaritoneAPI.getSettings();
+        var engine = dev.midtown.api.EngineSelector.current();
         boolean announce = false;
 
-        if (noBreak && !forcedBreak && s.allowBreak.value) {
+        if (noBreak && !forcedBreak && engine.allowBreak()) {
             origBreak = true;
-            s.allowBreak.value = false;
+            engine.setAllowBreak(false);
             forcedBreak = true;
             announce = true;
-        } else if (noBreak && forcedBreak && s.allowBreak.value) {
+        } else if (noBreak && forcedBreak && engine.allowBreak()) {
             // switched on again while we are here (#set, a script's set("allowBreak", true) ...): that is the wish for
             // later; here it stays off
             origBreak = true;
-            s.allowBreak.value = false;
+            engine.setAllowBreak(false);
         } else if (!noBreak && forcedBreak) {
-            if (!s.allowBreak.value) s.allowBreak.value = origBreak;
+            if (!engine.allowBreak()) engine.setAllowBreak(origBreak);
             forcedBreak = false;
         }
 
-        if (noPlace && !forcedPlace && (s.allowPlace.value || s.allowParkourPlace.value)) {
-            origPlace = s.allowPlace.value;
-            origParkour = s.allowParkourPlace.value;
-            s.allowPlace.value = false;
-            s.allowParkourPlace.value = false;
+        if (noPlace && !forcedPlace && (engine.allowPlace() || engine.allowParkourPlace())) {
+            origPlace = engine.allowPlace();
+            origParkour = engine.allowParkourPlace();
+            engine.setAllowPlace(false);
+            engine.setAllowParkourPlace(false);
             forcedPlace = true;
             announce = true;
-        } else if (noPlace && forcedPlace && (s.allowPlace.value || s.allowParkourPlace.value)) {
-            if (s.allowPlace.value) origPlace = true;   // switched on again while we are here: later, not here
-            if (s.allowParkourPlace.value) origParkour = true;
-            s.allowPlace.value = false;
-            s.allowParkourPlace.value = false;
+        } else if (noPlace && forcedPlace && (engine.allowPlace() || engine.allowParkourPlace())) {
+            if (engine.allowPlace()) origPlace = true;   // switched on again while we are here: later, not here
+            if (engine.allowParkourPlace()) origParkour = true;
+            engine.setAllowPlace(false);
+            engine.setAllowParkourPlace(false);
         } else if (!noPlace && forcedPlace) {
-            if (!s.allowPlace.value) s.allowPlace.value = origPlace;
-            if (!s.allowParkourPlace.value) s.allowParkourPlace.value = origParkour;
+            if (!engine.allowPlace()) engine.setAllowPlace(origPlace);
+            if (!engine.allowParkourPlace()) engine.setAllowParkourPlace(origParkour);
             forcedPlace = false;
         }
 
@@ -103,17 +102,17 @@ final class RegionRules {
         }
     }
 
-    /** Gives Baritone its settings back (safe areas off, disconnected, ...). */
+    /** Gives the path engine its settings back (safe areas off, disconnected, ...). */
     static void release() {
         if (!forcedBreak && !forcedPlace) return;
-        var s = BaritoneAPI.getSettings();
+        var engine = dev.midtown.api.EngineSelector.current();
         if (forcedBreak) {
-            if (!s.allowBreak.value) s.allowBreak.value = origBreak;
+            if (!engine.allowBreak()) engine.setAllowBreak(origBreak);
             forcedBreak = false;
         }
         if (forcedPlace) {
-            if (!s.allowPlace.value) s.allowPlace.value = origPlace;
-            if (!s.allowParkourPlace.value) s.allowParkourPlace.value = origParkour;
+            if (!engine.allowPlace()) engine.setAllowPlace(origPlace);
+            if (!engine.allowParkourPlace()) engine.setAllowParkourPlace(origParkour);
             forcedPlace = false;
         }
     }

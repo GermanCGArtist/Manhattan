@@ -273,14 +273,13 @@ public final class ChestIndexView {
         return lastCopiedPos;
     }
 
-    /** Detail action 3: paths to the chest with Baritone (#goto x y z / GoalNear). */
+    /** Detail action 3: paths to the chest with the active engine (#goto x y z / GoalNear). */
     public static void goThere(int x, int y, int z) {
         Util.msg("#goto " + x + " " + y + " " + z);
         try {
-            Util.baritone().getCustomGoalProcess().setGoalAndPath(
-                    new baritone.api.pathing.goals.GoalNear(new BlockPos(x, y, z), 2));
+            dev.midtown.api.EngineSelector.current().goTo(dev.midtown.api.GoalSpec.near(new BlockPos(x, y, z), 2));
         } catch (Throwable t) {
-            Util.warn("chest-goto", "Could not start Baritone #goto: " + t.getMessage());
+            Util.warn("chest-goto", "Could not start #goto: " + t.getMessage());
         }
     }
 }
