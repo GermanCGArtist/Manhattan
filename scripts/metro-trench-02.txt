@@ -1,7 +1,7 @@
 // Metro trench 02: expand selection 1-block outward for fill_water, then mine exact selection.
 
 // --- places
-let bed            = pos(1870, 66, 1214)   // white_bed
+let bed            = pos(1870, 66, 1216)   // white_bed
 let tool_chest     = pos(1868, 71, 1217)   // supply: tools and food
 let return_chest   = pos(1866, 71, 1216)   // return: worn-out tools
 let dump_chest     = pos(1863, 72, 1211)   // dump: mined items
