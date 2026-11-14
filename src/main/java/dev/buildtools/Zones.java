@@ -20,11 +20,24 @@ final class Zones {
     private static void put(Config.Zone zone) {
         cfg.zones.removeIf(z -> z.name.equalsIgnoreCase(zone.name));   // same name = replace
         cfg.zones.add(zone);
-        dev.midtown.api.EngineSelector.current().addProtectedArea(
-                zone.name,
-                dev.midtown.api.Area.of(
-                        new BlockPos(zone.x1, zone.y1, zone.z1),
-                        new BlockPos(zone.x2, zone.y2, zone.z2)));
+        syncEngines();
+    }
+
+    /**
+     * Hands the saved safe areas to the path engine's planner: all of them, or none while safe areas are off. Called
+     * once at start (engines created later get them through EngineSelector.onCreate) and after every change, so the
+     * planner never keeps one that was removed, and still has them all after a restart.
+     */
+    static void syncEngines() {
+        dev.midtown.api.EngineSelector.forEachCreated(Zones::syncEngine);
+    }
+
+    static void syncEngine(dev.midtown.api.PathEngine engine) {
+        engine.clearProtectedAreas();
+        if (!cfg.protect) return;
+        for (Config.Zone z : cfg.zones) {
+            engine.addProtectedArea(z.name, dev.midtown.api.Area.of(z.x1, z.y1, z.z1, z.x2, z.y2, z.z2));
+        }
     }
 
     private static String freeName() {
@@ -151,7 +164,7 @@ final class Zones {
 
     static int remove(String name) {
         if (cfg.zones.removeIf(z -> z.name.equalsIgnoreCase(name))) {
-            dev.midtown.api.EngineSelector.current().removeProtectedArea(name);
+            syncEngines();
             Config.save();
             Util.msg("Safe area '" + name + "' removed.");
             return 1;

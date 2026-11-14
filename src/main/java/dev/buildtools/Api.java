@@ -122,7 +122,7 @@ public final class Api {
     public static boolean unprotect(String name) {
         boolean had = cfg.zones.removeIf(z -> z.name.equalsIgnoreCase(name));
         if (had) {
-            dev.midtown.api.EngineSelector.current().removeProtectedArea(name);
+            Zones.syncEngines();
             Config.save();
         }
         return had;

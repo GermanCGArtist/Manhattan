@@ -1,9 +1,12 @@
 package dev.midtown.api;
 
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 /**
@@ -25,6 +28,7 @@ public final class EngineSelector {
 
     private static final Map<String, Supplier<PathEngine>> FACTORIES = new ConcurrentHashMap<>();
     private static final Map<String, PathEngine> INSTANCES = new ConcurrentHashMap<>();
+    private static final List<Consumer<PathEngine>> CREATED = new CopyOnWriteArrayList<>();
     private static volatile String optionOverride;
 
     private EngineSelector() {}
@@ -75,7 +79,25 @@ public final class EngineSelector {
     /** Returns the cached {@link PathEngine} for {@code engineName}. */
     public static PathEngine get(String engineName) {
         String key = normalizeAndValidate(engineName);
-        return INSTANCES.computeIfAbsent(key, EngineSelector::create);
+        return INSTANCES.computeIfAbsent(key, k -> {
+            PathEngine engine = create(k);
+            // The listeners only get the new engine: they must not call get()/current() (same map, same key).
+            for (Consumer<PathEngine> l : CREATED) l.accept(engine);
+            return engine;
+        });
+    }
+
+    /**
+     * Runs {@code listener} on every engine created from now on (before anyone else gets it), e.g. to hand it state
+     * kept elsewhere such as the saved safe areas. It must not call {@link #get} or {@link #current}.
+     */
+    public static void onCreate(Consumer<PathEngine> listener) {
+        CREATED.add(Objects.requireNonNull(listener, "listener"));
+    }
+
+    /** Runs {@code action} on every engine created so far (not only the current one), creating none. */
+    public static void forEachCreated(Consumer<PathEngine> action) {
+        INSTANCES.values().forEach(action);
     }
 
     /** Instantiates a fresh {@link PathEngine} for {@code engineName}. */

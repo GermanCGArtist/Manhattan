@@ -221,9 +221,17 @@ public class MidtownTest {
 
             // Register a custom mock engine factory
             MockEngine mock = new MockEngine("midtown");
+            java.util.List<Object> created = new java.util.ArrayList<>();
+            EngineSelector.onCreate(created::add);
             EngineSelector.register("midtown", () -> mock);
             EngineSelector.setOption("midtown");
             same("current() returns registered mock", EngineSelector.current(), mock);
+            EngineSelector.current();
+            same("onCreate ran once for the new engine", created.size(), 1);
+            same("onCreate got the new engine", created.get(0), mock);
+            java.util.List<Object> seen = new java.util.ArrayList<>();
+            EngineSelector.forEachCreated(seen::add);
+            assertTrue("forEachCreated visits the created engine", seen.contains(mock));
         } finally {
             EngineSelector.clearOption();
             if (prevProp != null) {

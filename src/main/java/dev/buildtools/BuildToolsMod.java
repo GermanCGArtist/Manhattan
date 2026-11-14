@@ -33,6 +33,9 @@ public class BuildToolsMod implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         Config.load();
+        // The planner keeps its own list of safe areas; give every engine the saved ones (not only those made this run).
+        dev.midtown.api.EngineSelector.onCreate(Zones::syncEngine);
+        Zones.syncEngines();
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> {
                 dispatcher.register(ClientCommands.literal("buildtools")
 
@@ -156,12 +159,14 @@ public class BuildToolsMod implements ClientModInitializer {
                         .then(ClientCommands.literal("protect")
                                 .then(ClientCommands.literal("on").executes(ctx -> {
                                     cfg.protect = true;
+                                    Zones.syncEngines();
                                     Config.save();
                                     Util.msg("Safe areas on: Baritone can't break or place blocks inside them.");
                                     return 1;
                                 }))
                                 .then(ClientCommands.literal("off").executes(ctx -> {
                                     cfg.protect = false;
+                                    Zones.syncEngines();
                                     Config.save();
                                     Util.msg("Safe areas off (they are kept, just not enforced).");
                                     return 1;
@@ -251,6 +256,7 @@ public class BuildToolsMod implements ClientModInitializer {
                                                 .executes(ctx -> Zones.remove(StringArgumentType.getString(ctx, "name")))))
                                 .then(ClientCommands.literal("clear").executes(ctx -> {
                                     cfg.zones.clear();
+                                    Zones.syncEngines();
                                     Config.save();
                                     Util.msg("All safe areas removed.");
                                     return 1;
