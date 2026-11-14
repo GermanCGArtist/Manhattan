@@ -283,7 +283,7 @@ final class TerminatorProcess extends Feature {
     private static boolean stand(Level level, BlockPos c) {
         BlockState feet = level.getBlockState(c);
         boolean feetOk = feet.getCollisionShape(level, c).isEmpty() && (feet.getFluidState().isEmpty() || wet(level, c));
-        return feetOk && dry(level, c.above()) && Util.isSolid(level, c.below());
+        return feetOk && dry(level, c.above()) && (!wet(level, c) || dry(level, c.above(2))) && Util.isSolid(level, c.below());
     }
 
     /** No wet cell below this one in its column (inside the selection): filling it can never trap water. */
@@ -550,7 +550,18 @@ final class TerminatorProcess extends Feature {
         }
         // under water without a plan (after an interruption, or a dive that went wrong): come up first
         if (p.isUnderWater() && state != State.SINK && state != State.UNDER && state != State.RISE) {
-            if (state == State.WALK) EngineSelector.current().cancel();
+            if (state == State.WALK) {
+                EngineSelector.current().cancel();
+                if (goal != null) {
+                    markBadStand(goal);
+                    goal = null;
+                }
+                if (diveSpot != null) {
+                    markBadDive(diveSpot);
+                    diveSpot = null;
+                }
+                giveBackBreak();
+            }
             setState(State.RISE);
             stateTicks = 0;
         }
