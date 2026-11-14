@@ -67,10 +67,14 @@ public final class DockedPanels {
     private static boolean imguiPicking = false;
     private static boolean editorInputActive = false;
     private static int editorCursorPos = 0;
+    private static int editorSelStart = 0;
+    private static int editorSelEnd = 0;
     private static final imgui.callback.ImGuiInputTextCallback EDITOR_CALLBACK = new imgui.callback.ImGuiInputTextCallback() {
         @Override
         public void accept(imgui.ImGuiInputTextCallbackData data) {
             editorCursorPos = data.getCursorPos();
+            editorSelStart = data.getSelectionStart();
+            editorSelEnd = data.getSelectionEnd();
         }
     };
 
@@ -578,14 +582,17 @@ public final class DockedPanels {
             ImGui.pushStyleColor(ImGuiCol.FrameBg, 0f, 0f, 0f, 0f);
             ImGui.pushStyleColor(ImGuiCol.Border, 0f, 0f, 0f, 0f);
             ImGui.pushStyleColor(ImGuiCol.Text, 0f, 0f, 0f, 0f);
+            ImGui.pushStyleColor(ImGuiCol.TextSelectedBg, 0f, 0f, 0f, 0f);
             if (ImGui.inputTextMultiline("##ScriptEditorInput", editorBuffer, availW, contentH,
                     ImGuiInputTextFlags.AllowTabInput | ImGuiInputTextFlags.CallbackAlways, EDITOR_CALLBACK)) {
                 setCurrentScriptText(editorBuffer.get());
             }
-            ImGui.popStyleColor(3);
+            ImGui.popStyleColor(4);
 
             editorInputActive = ImGui.isItemActive();
             if (!editorInputActive) {
+                editorSelStart = 0;
+                editorSelEnd = 0;
                 ScriptTab t = tabs.get(activeTabIndex);
                 if (!t.text.equals(editorBuffer.get())) {
                     editorBuffer.set(t.text);
@@ -597,11 +604,26 @@ public final class DockedPanels {
                 recomputeSyntaxAndSuggestions(renderSrc);
             }
             String[] renderLines = renderSrc.split("\n", -1);
+            int selMin = Math.min(editorSelStart, editorSelEnd);
+            int selMax = Math.max(editorSelStart, editorSelEnd);
+            int selBgCol = ImGui.colorConvertFloat4ToU32(0.22f, 0.44f, 0.72f, 0.55f);
             int charOffset = 0;
             for (int i = 0; i < renderLines.length; i++) {
+                String line = renderLines[i];
                 float lineY = startY + padY + i * lineHeight;
-                drawSyntaxLine(dl, codeStartX + padX, lineY, renderLines[i], charOffset, cachedSyntaxColors);
-                charOffset += renderLines[i].length() + 1;
+                if (editorInputActive && selMin < selMax && selMax >= charOffset && selMin <= charOffset + line.length()) {
+                    int s = Math.max(0, selMin - charOffset);
+                    int e = Math.min(line.length(), selMax - charOffset);
+                    if (s <= e) {
+                        float x0 = codeStartX + padX + (s == 0 ? 0f : ImGui.calcTextSizeX(line.substring(0, s)));
+                        float x1 = codeStartX + padX + (e == 0 ? 0f : ImGui.calcTextSizeX(line.substring(0, e))) + (selMax > charOffset + line.length() ? 5f : 0f);
+                        if (x1 > x0) {
+                            dl.addRectFilled(x0, lineY, x1, lineY + lineHeight, selBgCol);
+                        }
+                    }
+                }
+                drawSyntaxLine(dl, codeStartX + padX, lineY, line, charOffset, cachedSyntaxColors);
+                charOffset += line.length() + 1;
             }
 
             if (editorInputActive && ((System.currentTimeMillis() / 500L) % 2L == 0L)) {
