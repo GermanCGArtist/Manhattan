@@ -114,6 +114,11 @@ final class SleepProcess extends Feature {
     private void start(Minecraft mc) {
         bed = Util.pos(cfg.bed);
         if (bedGone(mc, mc.player)) {
+            if (cfg.logoffOnMissingBed) {
+                Util.warn("nobed", "Bed missing at " + bed.toShortString() + "; disconnecting.");
+                Api.disconnect("Bed missing at " + bed.toShortString());
+                return;
+            }
             Util.msg("No bed at " + bed.toShortString() + " (it was removed?). Checking again in 2 minutes.");
             cooldown = 20 * 120;
             return;
@@ -149,6 +154,12 @@ final class SleepProcess extends Feature {
             case PATHING -> {
                 if (timer > pathTimeout) { fail("Could not reach the bed in time."); return; }
                 if (bedGone(mc, p)) {
+                    if (cfg.logoffOnMissingBed) {
+                        state = State.IDLE;
+                        EngineSelector.current().cancel();
+                        Api.disconnect("Bed missing at " + bed.toShortString());
+                        return;
+                    }
                     fail("There is no bed at " + bed.toShortString() + ".");
                     return;
                 }

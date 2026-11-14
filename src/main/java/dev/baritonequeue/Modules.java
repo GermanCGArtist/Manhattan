@@ -47,7 +47,10 @@ final class Modules {
             Object cfg = g.config.get();
             for (Field f : cfg.getClass().getDeclaredFields()) {
                 if (!settable(f)) continue;
-                if (g.name.equals("queue") && !f.getName().equals("stallMinutes")) continue;
+                if (g.name.equals("queue")
+                        && !f.getName().equals("stallMinutes")
+                        && !f.getName().equals("logoffOnDone")
+                        && !f.getName().equals("logoffOnError")) continue;
                 try {
                     f.setAccessible(true);
                     Object v = f.get(cfg);

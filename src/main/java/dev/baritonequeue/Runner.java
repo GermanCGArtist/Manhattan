@@ -210,6 +210,7 @@ final class Runner {
             hasLastPos = true;
         }
         awaitRecovery = false;
+        dev.survivalkit.Api.onBeforeDisconnect = () -> { if (running) halt("Disconnected."); };
         Areas.scripted.clear();
         Areas.restoreIfNeeded(text);
         String resume = Jobs.startRun(scriptName);   // the saved ledger of this world: what an earlier run finished
@@ -388,6 +389,9 @@ final class Runner {
             Util.msg("Script finished (" + summary + ").");
             System.setProperty("baritonequeue.finished", summary + "|" + System.currentTimeMillis());
             emitBenchmark(true, elapsedMs);
+            if (Config.cfg.logoffOnDone) {
+                dev.survivalkit.Api.disconnect("Script complete.");
+            }
             return;
         }
         if (f.wanted != null && f.action == null) {   // the script waits for a new action: make it and start it
@@ -419,6 +423,9 @@ final class Runner {
         endAll();
         Util.msg("PROBLEM in line " + line + (line > 0 && line <= lines.length ? " (" + lineText(line) + ")" : "") + ": " + text);
         Util.msg("The script stopped. Fix it and press Run again.");
+        if (Config.cfg.logoffOnError) {
+            dev.survivalkit.Api.disconnect("Script stopped: " + text);
+        }
     }
 
     private void checkHandlers() {
@@ -438,6 +445,9 @@ final class Runner {
                 running = false;
                 endAll();
                 Util.msg("PROBLEM in the 'on' condition of line " + h.on.line + ": " + e.getMessage());
+                if (Config.cfg.logoffOnError) {
+                    dev.survivalkit.Api.disconnect("Script stopped: " + e.getMessage());
+                }
                 return;
             }
             // when it becomes true; and again a minute after it last ran if it is still true (no food, a mob left ...)
@@ -489,7 +499,8 @@ final class Runner {
 
     /** After a death or a reconnect the respawn helper gets you back and then signals; the action is run again. */
     private boolean recovering() {
-        var p = Minecraft.getInstance().player;
+        var mc = Minecraft.getInstance();
+        var p = mc == null ? null : mc.player;
         if (p != null && p.isDeadOrDying()) {
             if (!awaitRecovery) {
                 deaths++;

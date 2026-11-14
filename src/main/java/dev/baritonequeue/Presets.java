@@ -13,7 +13,7 @@ import java.util.Map;
 final class Presets {
     private Presets() {}
 
-    static final int VERSION = 10;
+    static final int VERSION = 11;
 
     /** The current default presets (2.5.0). */
     static Map<String, List<String>> defaults() {
@@ -147,6 +147,9 @@ final class Presets {
                 "option(\"survival.reconnect\", true)",
                 "option(\"survival.bedLead\", 5)",
                 "option(\"survival.eatBelow\", 18)",
+                "option(\"survival.logoffOnMissingBed\", true)",
+                "option(\"queue.logoffOnDone\", true)",
+                "option(\"queue.logoffOnError\", true)",
                 "",
                 "enable(\"escape\", \"pickup\")",
                 "",
@@ -185,6 +188,7 @@ final class Presets {
                 "",
                 "// --- 1. expand metro_trench_02 outward by 1 block on all 4 horizontal sides and fill water with dirt",
                 "job \"fill_water_metro_trench_02\"",
+                "  keep(\"dirt\", 512)",
                 "  set(\"allowPlace\", false)   // don't bridge over water while filling",
                 "  set(\"allowBreak\", false)   // don't break terrain while filling",
                 "  area(\"metro_trench_02\")",
@@ -217,6 +221,7 @@ final class Presets {
                 "",
                 "// --- 2. mine metro_trench_02 top-down (exact selection, no inset)",
                 "job \"mine_metro_trench_02\"",
+                "  keep(\"dirt\", 0)",
                 "  set(\"allowPlace\", true)",
                 "  set(\"allowBreak\", true)",
                 "  area(\"metro_trench_02\")",

@@ -331,6 +331,14 @@ final class GameBuiltins {
             dev.midtown.api.EngineSelector.current().cancel();
             return null;
         });
+        def(g, "disconnect", 0, 1, "disconnect([reason])", "stop the script cleanly and disconnect from the server", (in, a, l) -> {
+            String reason = a.isEmpty() || a.get(0) == null ? "Script disconnected." : str(a.get(0));
+            if (in.runner() != null) {
+                in.runner().reset();
+            }
+            dev.survivalkit.Api.disconnect(reason);
+            return null;
+        });
 
         // --- water
         def(g, "fill_water", 0, 3, "fill_water([\"block\" [, chest [, per_trip]]])", "fill the water of the selection from dry ground, every column from the bottom up; with a chest it fetches more blocks whenever they run out (per_trip, default 512); returns the water left (0 = all done)", (in, a, l) -> {

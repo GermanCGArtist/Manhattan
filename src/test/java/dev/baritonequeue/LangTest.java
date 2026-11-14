@@ -331,6 +331,7 @@ public class LangTest {
         ledger();
         jobs();
         heavymaticaApi();
+        logoffAndDisconnect();
         System.out.println(passes + " passed, " + fails + " failed");
         System.exit(fails == 0 ? 0 : 1);
     }
@@ -503,5 +504,50 @@ public class LangTest {
         same("entryM owner", entryM.owner(), "manual");
         same("entryM role", entryM.role(), "custom");
         same("entryM tag", entryM.tag(), "[M]");
+    }
+
+    /** Logoff options and disconnect() builtin tests. */
+    static void logoffAndDisconnect() {
+        check("option queue.logoffOnDone", "option(\"queue.logoffOnDone\", true)\nout(option(\"queue.logoffOnDone\"))", "true");
+        same("cfg.logoffOnDone is true", Config.cfg.logoffOnDone, true);
+
+        check("option queue.logoffOnError", "option(\"queue.logoffOnError\", true)\nout(option(\"queue.logoffOnError\"))", "true");
+        same("cfg.logoffOnError is true", Config.cfg.logoffOnError, true);
+
+        check("option survival.logoffOnMissingBed", "option(\"survival.logoffOnMissingBed\", true)\nout(option(\"survival.logoffOnMissingBed\"))", "true");
+        same("survival logoffOnMissingBed is true", dev.survivalkit.Api.isLogoffOnMissingBed(), true);
+
+        dev.survivalkit.Api.resetDisconnectSuppression();
+        assertFalse("disconnect suppression initially false", dev.survivalkit.Api.isDisconnectSuppressed());
+        run("disconnect(\"user requested\")");
+        assertTrue("disconnect suppressed reconnect", dev.survivalkit.Api.isDisconnectSuppressed());
+
+        dev.survivalkit.Api.resetDisconnectSuppression();
+        boolean[] disconnected = {false};
+        Config.cfg.logoffOnDone = true;
+        QueueMod.runner.start(List.of("let x = 1"));
+        dev.survivalkit.Api.onBeforeDisconnect = () -> disconnected[0] = true;
+        while (QueueMod.runner.running()) {
+            QueueMod.runner.tick();
+        }
+        assertTrue("runner called disconnect on done", disconnected[0]);
+        assertTrue("runner disconnect on done set suppression", dev.survivalkit.Api.isDisconnectSuppressed());
+
+        dev.survivalkit.Api.resetDisconnectSuppression();
+        disconnected[0] = false;
+        Config.cfg.logoffOnError = true;
+        QueueMod.runner.start(List.of("error(\"test fatal error\")"));
+        dev.survivalkit.Api.onBeforeDisconnect = () -> disconnected[0] = true;
+        while (QueueMod.runner.running()) {
+            QueueMod.runner.tick();
+        }
+        assertTrue("runner called disconnect on error", disconnected[0]);
+        assertTrue("runner disconnect on error set suppression", dev.survivalkit.Api.isDisconnectSuppressed());
+
+        dev.survivalkit.Api.onBeforeDisconnect = null;
+        dev.survivalkit.Api.resetDisconnectSuppression();
+        Config.cfg.logoffOnDone = false;
+        Config.cfg.logoffOnError = false;
+        Modules.set("survival.logoffOnMissingBed", false, 0);
     }
 }

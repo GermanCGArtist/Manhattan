@@ -19,6 +19,12 @@ final class Config {
     /** A step that makes no progress for this many minutes is stopped and skipped (0 = never). */
     int stallMinutes = 30;
 
+    /** Disconnect from the server when a script finishes normally. */
+    boolean logoffOnDone = false;
+
+    /** Disconnect from the server when a script stops due to an error. */
+    boolean logoffOnError = false;
+
     /** Named chests for the chest lines of a script: name -> {x, y, z}. */
     java.util.Map<String, int[]> chests = new java.util.LinkedHashMap<>();
 

@@ -120,7 +120,13 @@ final class Config {
     }
 
     static void save() {
-        try (Writer w = Files.newBufferedWriter(path())) {
+        Path p;
+        try {
+            p = path();
+        } catch (Throwable ignored) {
+            return;   // offline tests outside Fabric
+        }
+        try (Writer w = Files.newBufferedWriter(p)) {
             GSON.toJson(cfg, w);
         } catch (Exception e) {
             e.printStackTrace();
