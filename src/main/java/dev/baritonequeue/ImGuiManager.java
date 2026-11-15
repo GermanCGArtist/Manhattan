@@ -358,7 +358,7 @@ public final class ImGuiManager {
         boolean textActive = !unfocusRequested && Backend.wantsTextInput();
         boolean uiHasKeys = !gameFocused || focused || textActive;
         if (action == GLFW.GLFW_PRESS) {
-            boolean ctrl = (mods & GLFW.GLFW_MOD_CONTROL) != 0;
+            boolean ctrl = Platform.shortcutDown(mods);   // Cmd on macOS
             if (ctrl && key == GLFW.GLFW_KEY_P) {
                 CommandPalette.toggle();
                 setGameFocused(false);

@@ -477,7 +477,8 @@ public final class DockedPanels {
      */
     static boolean handleEditorKey(int key, int mods) {
         if (!editorInputActive) return false;
-        boolean ctrl = (mods & GLFW.GLFW_MOD_CONTROL) != 0;
+        boolean ctrl = (mods & GLFW.GLFW_MOD_CONTROL) != 0;   // Ctrl+Space stays Ctrl: Cmd+Space is Spotlight on macOS
+        boolean shortcut = Platform.shortcutDown(mods);
         boolean popup = popupVisible();
         if (key == GLFW.GLFW_KEY_TAB && mods == 0 && !suggestions.isEmpty() && (popup || ghostSuffix() != null)) {
             acceptSuggestion(selectedSuggestion);
@@ -490,7 +491,7 @@ public final class DockedPanels {
             updateSuggestions(currentScriptText(), false);
             return true;
         }
-        if (ctrl && key == GLFW.GLFW_KEY_SLASH) {
+        if (shortcut && key == GLFW.GLFW_KEY_SLASH) {
             toggleComment();
             return true;
         }
@@ -1017,7 +1018,7 @@ public final class DockedPanels {
         } else if (!editorStatus.isEmpty()) {
             UiTheme.textColored(UiTheme.DIM, editorStatus);
         } else {
-            UiTheme.textColored(UiTheme.DIM, "Tab completes · Ctrl+Space shows all · Ctrl+/ comments · Ctrl+P commands");
+            UiTheme.textColored(UiTheme.DIM, "Tab completes · Ctrl+Space shows all · " + Platform.shortcutName() + "+/ comments · " + Platform.shortcutName() + "+P commands");
         }
     }
 
