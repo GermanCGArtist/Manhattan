@@ -24,7 +24,7 @@ public abstract class MouseHandlerMixin {
 
     @Inject(method = "grabMouse", at = @At("HEAD"), cancellable = true)
     private void manhattan$onGrabMouse(CallbackInfo ci) {
-        if (ImGuiManager.isActive()) {
+        if (ImGuiManager.capturesInput()) {
             this.mouseGrabbed = false;
             ci.cancel();
         }
@@ -32,7 +32,7 @@ public abstract class MouseHandlerMixin {
 
     @Inject(method = "turnPlayer", at = @At("HEAD"), cancellable = true)
     private void manhattan$onTurnPlayer(double movementTime, CallbackInfo ci) {
-        if (ImGuiManager.isActive()) {
+        if (ImGuiManager.capturesInput()) {
             this.accumulatedDX = 0.0;
             this.accumulatedDY = 0.0;
             ci.cancel();

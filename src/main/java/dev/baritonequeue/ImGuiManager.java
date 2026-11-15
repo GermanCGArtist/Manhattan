@@ -4,26 +4,12 @@ import com.mojang.blaze3d.opengl.GlStateManager;
 import com.mojang.blaze3d.opengl.GlTexture;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.platform.Window;
-import imgui.ImDrawList;
-import imgui.ImFont;
 import imgui.ImGui;
 import imgui.ImGuiIO;
-import imgui.ImGuiStyle;
-import imgui.flag.ImGuiCol;
-import imgui.flag.ImGuiCond;
 import imgui.flag.ImGuiConfigFlags;
-import imgui.flag.ImGuiDir;
-import imgui.flag.ImGuiDockNodeFlags;
-import imgui.flag.ImGuiFocusedFlags;
-import imgui.flag.ImGuiStyleVar;
-import imgui.flag.ImGuiWindowFlags;
 import imgui.gl3.ImGuiImplGl3;
 import imgui.glfw.ImGuiImplGlfw;
 import imgui.internal.ImGuiContext;
-import imgui.internal.ImGuiDockNode;
-import imgui.type.ImBoolean;
-import imgui.type.ImInt;
-import imgui.type.ImString;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
@@ -36,107 +22,106 @@ import org.lwjgl.opengl.GL30;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.List;
 
 import static dev.baritonequeue.Config.cfg;
 
 /**
- * Dear ImGui lifecycle, input routing, Stage 0 spike window (key F9), Stage 1 Game Viewport (top-right quarter
- * with mouse remapping, keyboard focus gating, and F8 fullscreen game toggle), and Stage 2 Docked Shell & Dashboard
- * (ImGui DockSpace with default 2x2 DockBuilder layout, Reset layout, Top Bar with status/Skip/Stop/F8, and
- * ProgressModel segmented step bar + player telemetry).
+ * Dear ImGui lifecycle and input routing for the workspace ({@link Shell}, key J) and the closed-state
+ * {@link Overlay}. While the workspace is open the game is drawn into {@link Shell}'s game area (letterboxed to the
+ * window's aspect ratio): a click there gives the game the keyboard and mouse buttons, Esc gives them back to the
+ * panels. While it is closed nothing here takes input; the overlay is only drawn.
  */
 public final class ImGuiManager {
-    public static float TOP_BAR_H = 30f;
-
     private static boolean nativesPrepared;
     private static boolean initialized;
     private static boolean initFailed;
-    private static boolean spikeOpen;
-    private static boolean fullscreenGame;
     private static boolean gameFocused = true;
     private static boolean focused;
-    private static boolean focusRequested;
     private static boolean unfocusRequested;
-    private static String pendingWindowFocus = null;
     private static boolean stopRequested;
-    private static boolean resetLayoutRequested;
-    private static int layoutResetCount;
     private static long framesRendered;
     private static int lastDisplayW, lastDisplayH;
-    private static float winX = 24, winY = 24, winW = 340, winH = 220;
     private static float stopBtnX, stopBtnY, stopBtnW, stopBtnH;
-    private static float fsBtnX, fsBtnY, fsBtnW, fsBtnH;
-    private static float resetBtnX, resetBtnY, resetBtnW, resetBtnH;
     private static float vpX, vpY, vpW, vpH;
-    private static boolean customDockedViewport;
     private static double lastMouseX, lastMouseY;
+    private static volatile Path shotPath;
+    private static volatile String shotDone = "";
 
     private ImGuiManager() {}
 
-    /** Whether any ImGui UI should be drawn this frame. */
+    /** Saves the next frame ImGui draws as a PNG at {@code p} (tests); {@link #lastShot()} says when it is written. */
+    public static void requestScreenshot(Path p) {
+        shotDone = "";
+        shotPath = p;
+    }
+
+    public static String lastShot() {
+        return shotDone;
+    }
+
+    /** Whether ImGui draws this frame (workspace open, or the overlay has something to show). */
     public static boolean isActive() {
-        return spikeOpen || isDockedViewportActive();
+        return Shell.isOpen() || Overlay.visible();
     }
 
-    /** Whether the game is currently rendered into the docked top-right quarter (ui.mode = docked and F8 fullscreen off). */
+    /** Whether the workspace is open and the game is drawn into its game area. */
     public static boolean isDockedViewportActive() {
-        return "docked".equals(cfg.uiMode) && !fullscreenGame;
+        return Shell.isOpen();
     }
 
-    public static boolean isFullscreenGame() {
-        return fullscreenGame;
+    /** Whether ImGui takes mouse and keyboard input (only while the workspace is open). */
+    public static boolean capturesInput() {
+        return Shell.isOpen();
     }
 
-    public static void toggleFullscreenGame() {
-        setFullscreenGame(!fullscreenGame);
+    // ------------------------------------------------------------------ workspace open / close
+
+    public static void toggleShell() {
+        if (Shell.isOpen()) closeShell();
+        else openShell(Shell.lastMode());
     }
 
-    public static void setFullscreenGame(boolean fullscreen) {
-        if (fullscreenGame == fullscreen) return;
-        fullscreenGame = fullscreen;
+    public static void openShell(Shell.Mode mode) {
+        boolean wasOpen = Shell.isOpen();
+        Shell.setMode(mode == Shell.Mode.CLOSED ? Shell.lastMode() : mode);
         Minecraft mc = Minecraft.getInstance();
-        if (fullscreen) {
-            gameFocused = true;
-            focused = false;
-            unfocusRequested = true;
-            if (mc != null && mc.screen == null && mc.level != null && !"true".equals(System.getProperty("manhattan.tests"))) {
-                mc.mouseHandler.grabMouse();
-            }
-        } else {
+        if (!wasOpen) {
+            gameFocused = false;
+            focused = true;
+            unfocusRequested = false;
+            KeyMapping.releaseAll();
             if (mc != null && mc.mouseHandler != null && mc.mouseHandler.isMouseGrabbed()) {
                 mc.mouseHandler.releaseMouse();
             }
         }
-        if (mc != null && mc.getWindow() != null) {
-            updateViewportMetrics(mc.getWindow());
-        }
+        if (mc != null && mc.getWindow() != null) updateViewportMetrics(mc.getWindow());
     }
 
-    /** Requests a reset of the ImGui DockSpace back to the default 2x2 layout and saves it to config/manhattan-imgui.ini. */
-    public static void resetLayout() {
-        resetLayoutRequested = true;
-        customDockedViewport = false;
+    public static void closeShell() {
+        if (!Shell.isOpen()) return;
+        Shell.setMode(Shell.Mode.CLOSED);
+        CommandPalette.close();
+        DockedPanels.flushConfig(true);
+        gameFocused = true;
+        focused = false;
+        unfocusRequested = true;
         Minecraft mc = Minecraft.getInstance();
-        if (mc != null && mc.getWindow() != null) {
-            updateViewportMetrics(mc.getWindow());
+        if (mc != null && mc.screen == null && mc.level != null && !"true".equals(System.getProperty("manhattan.tests"))) {
+            mc.mouseHandler.grabMouse();
         }
-    }
-
-    public static int layoutResetCount() {
-        return layoutResetCount;
+        if (mc != null && mc.getWindow() != null) updateViewportMetrics(mc.getWindow());
     }
 
     public static String layoutLabel() {
-        return "2x2 Docked";
+        return Shell.mode.name().toLowerCase();
     }
 
-    /** Whether keyboard input currently goes to the Minecraft game view rather than ImGui panels. */
+    /** Whether keyboard input currently goes to the game rather than the panels. */
     public static boolean isGameFocused() {
-        if (isDockedViewportActive()) {
+        if (Shell.isOpen()) {
             return gameFocused && !focused && (unfocusRequested || !(initialized && Backend.wantsTextInput()));
         }
-        return !isFocused();
+        return true;
     }
 
     public static void setGameFocused(boolean focusGame) {
@@ -151,23 +136,19 @@ public final class ImGuiManager {
         }
     }
 
-    public static void requestWindowFocus(String windowName) {
-        pendingWindowFocus = windowName;
-        gameFocused = false;
-        focused = true;
-        unfocusRequested = false;
+    public static boolean isFocused() {
+        if (Shell.isOpen()) {
+            return !gameFocused || focused || (!unfocusRequested && initialized && Backend.wantsTextInput());
+        }
+        return false;
     }
 
     public static void pushMonoFont() {
-        if (initialized && Backend.monoFont != null) {
-            ImGui.pushFont(Backend.monoFont);
-        }
+        if (initialized) UiTheme.push(UiTheme.mono);
     }
 
     public static void popMonoFont() {
-        if (initialized && Backend.monoFont != null) {
-            ImGui.popFont();
-        }
+        if (initialized) ImGui.popFont();
     }
 
     public static float getUiScale() {
@@ -177,26 +158,12 @@ public final class ImGuiManager {
     public static void setUiScale(float scale) {
         cfg.uiScale = scale > 0.5f ? scale : 1.0f;
         Config.save();
-        TOP_BAR_H = Math.round(30f * cfg.uiScale);
         Minecraft mc = Minecraft.getInstance();
-        if (mc != null && mc.getWindow() != null) {
-            updateViewportMetrics(mc.getWindow());
-        }
+        if (mc != null && mc.getWindow() != null) updateViewportMetrics(mc.getWindow());
     }
 
     public static boolean isInitialized() {
         return initialized;
-    }
-
-    public static boolean isSpikeOpen() {
-        return spikeOpen;
-    }
-
-    public static boolean isFocused() {
-        if (isDockedViewportActive()) {
-            return !gameFocused || focused || (!unfocusRequested && initialized && Backend.wantsTextInput());
-        }
-        return spikeOpen && !unfocusRequested && (focused || (initialized && Backend.wantsKeyboard()));
     }
 
     public static long framesRendered() {
@@ -215,20 +182,15 @@ public final class ImGuiManager {
         return lastDisplayH;
     }
 
-    public static float[] windowRect() {
-        return new float[]{winX, winY, winW, winH};
+    static void recordStopRect(float x, float y, float w, float h) {
+        stopBtnX = x;
+        stopBtnY = y;
+        stopBtnW = w;
+        stopBtnH = h;
     }
 
     public static float[] stopButtonRect() {
         return new float[]{stopBtnX, stopBtnY, stopBtnW, stopBtnH};
-    }
-
-    public static float[] fullscreenButtonRect() {
-        return new float[]{fsBtnX, fsBtnY, fsBtnW, fsBtnH};
-    }
-
-    public static float[] resetButtonRect() {
-        return new float[]{resetBtnX, resetBtnY, resetBtnW, resetBtnH};
     }
 
     public static float[] viewportRect() {
@@ -237,15 +199,14 @@ public final class ImGuiManager {
         return new float[]{vpX, vpY, vpW, vpH};
     }
 
+    /** The game area shrunk to the window's aspect ratio and centred (where the game image actually is). */
     public static float[] fittedViewportRect() {
         Minecraft mc = Minecraft.getInstance();
         if (mc != null && mc.getWindow() != null) updateViewportMetrics(mc.getWindow());
-        if (!isDockedViewportActive() || vpW <= 0f || vpH <= 0f) {
+        if (!Shell.isOpen() || vpW <= 0f || vpH <= 0f) {
             return new float[]{vpX, vpY, vpW, vpH};
         }
-        float sw = Math.max(1f, lastDisplayW);
-        float sh = Math.max(1f, lastDisplayH);
-        float aspect = sw / sh;
+        float aspect = Math.max(1f, lastDisplayW) / Math.max(1f, lastDisplayH);
         float fw = vpW;
         float fh = fw / aspect;
         if (fh > vpH) {
@@ -254,13 +215,7 @@ public final class ImGuiManager {
         }
         float fx = (float) Math.floor(vpX + (vpW - fw) * 0.5f);
         float fy = (float) Math.floor(vpY + (vpH - fh) * 0.5f);
-        fw = Math.max(1f, (float) Math.floor(fw));
-        fh = Math.max(1f, (float) Math.floor(fh));
-        return new float[]{fx, fy, fw, fh};
-    }
-
-    public static String noteText() {
-        return initialized ? Backend.note.get() : "";
+        return new float[]{fx, fy, Math.max(1f, (float) Math.floor(fw)), Math.max(1f, (float) Math.floor(fh))};
     }
 
     public static double lastMouseX() {
@@ -273,68 +228,44 @@ public final class ImGuiManager {
 
     public static void updateViewportMetrics(Window win) {
         if (win == null) return;
-        TOP_BAR_H = Math.round(30f * (cfg.uiScale > 0.5f ? cfg.uiScale : 1.0f));
         int sw = Math.max(1, win.getScreenWidth());
         int sh = Math.max(1, win.getScreenHeight());
-        boolean sizeChanged = sw != lastDisplayW || sh != lastDisplayH;
         lastDisplayW = sw;
         lastDisplayH = sh;
-        if (isDockedViewportActive()) {
-            if (!customDockedViewport || sizeChanged || vpW <= 0f || vpH <= 0f) {
-                float contentY = TOP_BAR_H;
-                float contentH = Math.max(2f, sh - contentY);
-                float halfW = (float) Math.floor(sw * 0.5f);
-                float halfH = (float) Math.floor(contentH * 0.5f);
-                vpX = halfW;
-                vpY = contentY;
-                vpW = Math.max(1f, sw - halfW);
-                vpH = Math.max(1f, halfH);
-                customDockedViewport = false;
-            }
-        } else {
-            vpX = 0f;
-            vpY = 0f;
-            vpW = sw;
-            vpH = sh;
-            customDockedViewport = false;
-        }
+        Shell.layout(sw, sh, getUiScale());
+        vpX = Shell.gameX;
+        vpY = Shell.gameY;
+        vpW = Math.max(1f, Shell.gameW);
+        vpH = Math.max(1f, Shell.gameH);
     }
 
     public static boolean insideViewport(double x, double y) {
-        Minecraft mc = Minecraft.getInstance();
-        if (mc != null && mc.getWindow() != null) updateViewportMetrics(mc.getWindow());
-        return x >= vpX && x <= vpX + vpW && y >= vpY && y <= vpY + vpH;
+        float[] f = fittedViewportRect();
+        return x >= f[0] && x <= f[0] + f[2] && y >= f[1] && y <= f[1] + f[3];
     }
 
     public static double remapMouseX(double rawX) {
         Minecraft mc = Minecraft.getInstance();
-        if (mc == null || mc.getWindow() == null) return rawX;
-        Window win = mc.getWindow();
-        updateViewportMetrics(win);
-        if (!isDockedViewportActive()) return rawX;
+        if (mc == null || mc.getWindow() == null || !Shell.isOpen()) return rawX;
         float[] fit = fittedViewportRect();
         if (fit[2] <= 0f) return rawX;
-        return (rawX - fit[0]) * (double) win.getScreenWidth() / (double) fit[2];
+        return (rawX - fit[0]) * (double) mc.getWindow().getScreenWidth() / (double) fit[2];
     }
 
     public static double remapMouseY(double rawY) {
         Minecraft mc = Minecraft.getInstance();
-        if (mc == null || mc.getWindow() == null) return rawY;
-        Window win = mc.getWindow();
-        updateViewportMetrics(win);
-        if (!isDockedViewportActive()) return rawY;
+        if (mc == null || mc.getWindow() == null || !Shell.isOpen()) return rawY;
         float[] fit = fittedViewportRect();
         if (fit[3] <= 0f) return rawY;
-        return (rawY - fit[1]) * (double) win.getScreenHeight() / (double) fit[3];
+        return (rawY - fit[1]) * (double) mc.getWindow().getScreenHeight() / (double) fit[3];
     }
 
     public static double guiToWindowX(double guiX) {
         Minecraft mc = Minecraft.getInstance();
         if (mc == null || mc.getWindow() == null) return guiX;
         Window win = mc.getWindow();
-        updateViewportMetrics(win);
         double normX = guiX / Math.max(1, win.getGuiScaledWidth());
-        if (!isDockedViewportActive()) return normX * win.getScreenWidth();
+        if (!Shell.isOpen()) return normX * win.getScreenWidth();
         float[] fit = fittedViewportRect();
         return fit[0] + normX * fit[2];
     }
@@ -343,52 +274,13 @@ public final class ImGuiManager {
         Minecraft mc = Minecraft.getInstance();
         if (mc == null || mc.getWindow() == null) return guiY;
         Window win = mc.getWindow();
-        updateViewportMetrics(win);
         double normY = guiY / Math.max(1, win.getGuiScaledHeight());
-        if (!isDockedViewportActive()) return normY * win.getScreenHeight();
+        if (!Shell.isOpen()) return normY * win.getScreenHeight();
         float[] fit = fittedViewportRect();
         return fit[1] + normY * fit[3];
     }
 
-    public static double viewportCenterX() {
-        Minecraft mc = Minecraft.getInstance();
-        if (mc != null && mc.getWindow() != null) updateViewportMetrics(mc.getWindow());
-        return vpX + vpW * 0.5;
-    }
-
-    public static double viewportCenterY() {
-        Minecraft mc = Minecraft.getInstance();
-        if (mc != null && mc.getWindow() != null) updateViewportMetrics(mc.getWindow());
-        return vpY + vpH * 0.5;
-    }
-
-    public static void toggleSpike() {
-        setSpikeOpen(!spikeOpen);
-    }
-
-    public static void setSpikeOpen(boolean open) {
-        if (spikeOpen == open) return;
-        spikeOpen = open;
-        Minecraft mc = Minecraft.getInstance();
-        if (open) {
-            focused = true;
-            focusRequested = true;
-            unfocusRequested = false;
-            KeyMapping.releaseAll();
-            if (mc != null && mc.mouseHandler != null && mc.mouseHandler.isMouseGrabbed()) {
-                mc.mouseHandler.releaseMouse();
-            }
-        } else {
-            focused = false;
-            focusRequested = false;
-            unfocusRequested = true;
-            if (mc != null && mc.screen == null && mc.level != null && !"true".equals(System.getProperty("manhattan.tests"))) {
-                mc.mouseHandler.grabMouse();
-            }
-        }
-    }
-
-    /** Triggers the Stop button action (used by the UI button and testable via TestBridge). */
+    /** Stop button action (also used by the in-game tests). */
     public static void triggerStop() {
         stopRequested = true;
         RunnerView.stop();
@@ -403,7 +295,7 @@ public final class ImGuiManager {
         if (win == null || win.isMinimized() || win.getWidth() <= 0 || win.getHeight() <= 0) return;
         updateViewportMetrics(win);
         if (!isActive() || initFailed) return;
-        if (mc.mouseHandler != null && mc.mouseHandler.isMouseGrabbed()) {
+        if (Shell.isOpen() && mc.mouseHandler != null && mc.mouseHandler.isMouseGrabbed()) {
             mc.mouseHandler.releaseMouse();
         }
         if (!initialized) {
@@ -457,75 +349,63 @@ public final class ImGuiManager {
 
     // ------------------------------------------------------------------ input hooks
 
-    private static boolean insideSpikeWindow(double x, double y) {
-        return spikeOpen && x >= winX && x <= winX + winW && y >= winY && y <= winY + winH;
-    }
-
     public static boolean onKey(long window, int key, int scancode, int action, int mods) {
         Minecraft mc = Minecraft.getInstance();
         if (mc == null || mc.getWindow() == null || window != mc.getWindow().handle()) return false;
+        if (!capturesInput() || !initialized) return false;
 
         KeyEvent ev = new KeyEvent(key, scancode, mods);
-        boolean textActive = initialized && !unfocusRequested && Backend.wantsTextInput();
-        if (action == GLFW.GLFW_PRESS && !textActive) {
-            if ((QueueMod.spike != null && QueueMod.spike.matches(ev)) || key == GLFW.GLFW_KEY_F9) {
-                toggleSpike();
+        boolean textActive = !unfocusRequested && Backend.wantsTextInput();
+        boolean uiHasKeys = !gameFocused || focused || textActive;
+        if (action == GLFW.GLFW_PRESS) {
+            boolean ctrl = (mods & GLFW.GLFW_MOD_CONTROL) != 0;
+            if (ctrl && key == GLFW.GLFW_KEY_P) {
+                CommandPalette.toggle();
+                setGameFocused(false);
+                Backend.onKey(window, key, scancode, GLFW.GLFW_RELEASE, mods);
                 return true;
             }
-            if ((QueueMod.fullscreen != null && QueueMod.fullscreen.matches(ev)) || key == GLFW.GLFW_KEY_F8) {
-                toggleFullscreenGame();
+            if (uiHasKeys && !textActive && QueueMod.open != null && QueueMod.open.matches(ev)) {
+                closeShell();
+                return true;
+            }
+            if (uiHasKeys && !textActive && QueueMod.capture != null && QueueMod.capture.matches(ev)) {
+                Shell.toggleDrawer(Shell.Drawer.CAPTURE);
                 return true;
             }
         }
-        if (!isActive() || !initialized) return false;
-
-        if (isDockedViewportActive()) {
-            if (!gameFocused || focused || textActive) {
-                if (action == GLFW.GLFW_PRESS && key == GLFW.GLFW_KEY_ESCAPE && !textActive) {
+        if (uiHasKeys) {
+            if ((action == GLFW.GLFW_PRESS || action == GLFW.GLFW_REPEAT) && DockedPanels.handleEditorKey(key, mods)) {
+                return true;
+            }
+            if (action == GLFW.GLFW_PRESS && key == GLFW.GLFW_KEY_ESCAPE && !textActive) {
+                if (CommandPalette.isOpen()) {
+                    CommandPalette.close();
+                } else if (Shell.drawer != Shell.Drawer.NONE) {
+                    Shell.drawer = Shell.Drawer.NONE;
+                } else {
                     gameFocused = true;
                     focused = false;
                     unfocusRequested = true;
-                    Backend.onKey(window, key, scancode, action, mods);
-                    if (mc.screen == null && mc.level != null && !"true".equals(System.getProperty("manhattan.tests"))) {
-                        mc.mouseHandler.grabMouse();
-                    }
-                    return true;
                 }
                 Backend.onKey(window, key, scancode, action, mods);
                 return true;
             }
-            return false;
+            Backend.onKey(window, key, scancode, action, mods);
+            return true;
         }
-
-        if (action == GLFW.GLFW_PRESS && key == GLFW.GLFW_KEY_ESCAPE && (focused || Backend.wantsKeyboard())) {
-            if (!textActive) {
-                focused = false;
-                unfocusRequested = true;
-                Backend.onKey(window, key, scancode, action, mods);
-                if (mc.screen == null && mc.level != null && !"true".equals(System.getProperty("manhattan.tests"))) {
-                    mc.mouseHandler.grabMouse();
-                }
-                return true;
-            }
-        }
-
-        Backend.onKey(window, key, scancode, action, mods);
-        return focused || Backend.wantsKeyboard();
+        return false;
     }
 
     public static boolean onChar(long window, int codepoint) {
         Minecraft mc = Minecraft.getInstance();
         if (mc == null || mc.getWindow() == null || window != mc.getWindow().handle()) return false;
-        if (!isActive() || !initialized) return false;
-        if (isDockedViewportActive()) {
-            if (!gameFocused || focused || (!unfocusRequested && Backend.wantsTextInput())) {
-                Backend.onChar(window, codepoint);
-                return true;
-            }
-            return false;
+        if (!capturesInput() || !initialized) return false;
+        if (!gameFocused || focused || (!unfocusRequested && Backend.wantsTextInput())) {
+            Backend.onChar(window, codepoint);
+            return true;
         }
-        Backend.onChar(window, codepoint);
-        return focused || Backend.wantsKeyboard();
+        return false;
     }
 
     public static boolean onMouseMove(long window, double xpos, double ypos) {
@@ -533,7 +413,7 @@ public final class ImGuiManager {
         if (mc == null || mc.getWindow() == null || window != mc.getWindow().handle()) return false;
         lastMouseX = xpos;
         lastMouseY = ypos;
-        if (!isActive() || !initialized) return false;
+        if (!capturesInput() || !initialized) return false;
         if (mc.mouseHandler.isMouseGrabbed()) return false;
         Backend.onMouseMove(window, xpos, ypos);
         return false;
@@ -542,61 +422,44 @@ public final class ImGuiManager {
     public static boolean onMouseButton(long window, int button, int action, int mods) {
         Minecraft mc = Minecraft.getInstance();
         if (mc == null || mc.getWindow() == null || window != mc.getWindow().handle()) return false;
-        if (!isActive() || !initialized) return false;
+        if (!capturesInput() || !initialized) return false;
         if (mc.mouseHandler.isMouseGrabbed()) return false;
+        if (action == GLFW.GLFW_PRESS && button == GLFW.GLFW_MOUSE_BUTTON_LEFT && DockedPanels.handlePopupClick(lastMouseX, lastMouseY)) {
+            return true;
+        }
 
-        if (isDockedViewportActive()) {
-            boolean inSpike = insideSpikeWindow(lastMouseX, lastMouseY);
-            boolean inGame = insideViewport(lastMouseX, lastMouseY) && !inSpike;
-            if (inGame) {
-                if (action == GLFW.GLFW_PRESS) {
-                    gameFocused = true;
-                    focused = false;
-                    unfocusRequested = true;
-                }
-                Backend.onMouseButton(window, button, action, mods);
-                return false;
-            }
-            if (action == GLFW.GLFW_RELEASE && gameFocused && !inSpike) {
-                Backend.onMouseButton(window, button, action, mods);
-                return false;
+        boolean overPopup =CommandPalette.isOpen() || Shell.drawer != Shell.Drawer.NONE && Backend.wantsMouse();
+        boolean inGame = insideViewport(lastMouseX, lastMouseY) && !overPopup;
+        if (inGame) {
+            if (action == GLFW.GLFW_PRESS) {
+                gameFocused = true;
+                focused = false;
+                unfocusRequested = true;
             }
             Backend.onMouseButton(window, button, action, mods);
-            if (action == GLFW.GLFW_PRESS) {
-                gameFocused = false;
-                focused = inSpike;
-                unfocusRequested = false;
-                KeyMapping.releaseAll();
-            }
-            return true;
+            return false;
         }
-
+        if (action == GLFW.GLFW_RELEASE && gameFocused) {
+            Backend.onMouseButton(window, button, action, mods);
+            return false;
+        }
         Backend.onMouseButton(window, button, action, mods);
-        boolean overImGui = Backend.wantsMouse() || insideSpikeWindow(lastMouseX, lastMouseY);
-        if (overImGui) {
-            if (action == GLFW.GLFW_PRESS) {
-                focused = true;
-                KeyMapping.releaseAll();
-            }
-            return true;
+        if (action == GLFW.GLFW_PRESS) {
+            gameFocused = false;
+            focused = true;
+            unfocusRequested = false;
+            KeyMapping.releaseAll();
         }
-        if (action == GLFW.GLFW_PRESS && focused) {
-            focused = false;
-            unfocusRequested = true;
-        }
-        return false;
+        return true;
     }
 
     public static boolean onMouseScroll(long window, double xoffset, double yoffset) {
         Minecraft mc = Minecraft.getInstance();
         if (mc == null || mc.getWindow() == null || window != mc.getWindow().handle()) return false;
-        if (!isActive() || !initialized) return false;
+        if (!capturesInput() || !initialized) return false;
         if (mc.mouseHandler.isMouseGrabbed()) return false;
         Backend.onMouseScroll(window, xoffset, yoffset);
-        if (isDockedViewportActive()) {
-            return !insideViewport(lastMouseX, lastMouseY) || insideSpikeWindow(lastMouseX, lastMouseY);
-        }
-        return Backend.wantsMouse() || insideSpikeWindow(lastMouseX, lastMouseY);
+        return !insideViewport(lastMouseX, lastMouseY);
     }
 
     // ------------------------------------------------------------------ Dear ImGui backend (loaded after prepareNatives)
@@ -605,43 +468,22 @@ public final class ImGuiManager {
         private static ImGuiContext ctx;
         private static ImGuiImplGlfw glfw;
         private static ImGuiImplGl3 gl3;
-        private static imgui.ImFont uiFont, monoFont;
         private static int blitReadFbo;
-        private static boolean dockLayoutInitialized;
-        private static int dockBuiltW = -1, dockBuiltH = -1;
-        private static final ImBoolean openFlag = new ImBoolean(true);
-        private static final ImString note = new ImString(128);
 
         static void init(long windowHandle) {
             ctx = ImGui.createContext();
             ImGui.setCurrentContext(ctx);
 
             ImGuiIO io = ImGui.getIO();
-            Path ini = FabricLoader.getInstance().getConfigDir().resolve("manhattan-imgui.ini");
-            io.setIniFilename(ini.toAbsolutePath().toString());
-            io.addConfigFlags(ImGuiConfigFlags.NavEnableKeyboard | ImGuiConfigFlags.DockingEnable);
+            io.setIniFilename(null);   // fixed layouts: nothing to save
+            io.addConfigFlags(ImGuiConfigFlags.NavEnableKeyboard);
 
-            applyStyle(ImGui.getStyle());
-
+            UiTheme.apply(ImGui.getStyle(), getUiScale());
             try {
-                Path segoe = Path.of("C:\\Windows\\Fonts\\segoeui.ttf");
-                if (Files.exists(segoe)) {
-                    uiFont = io.getFonts().addFontFromFileTTF(segoe.toString(), 16.0f);
-                    if (uiFont != null) {
-                        io.setFontDefault(uiFont);
-                    }
-                }
-                Path consola = Path.of("C:\\Windows\\Fonts\\consola.ttf");
-                if (Files.exists(consola)) {
-                    monoFont = io.getFonts().addFontFromFileTTF(consola.toString(), 15.0f);
-                }
-                if (uiFont == null) {
-                    io.getFonts().addFontDefault();
-                }
-            } catch (Throwable ignored) {
-                try {
-                    io.getFonts().addFontDefault();
-                } catch (Throwable ignored2) {}
+                UiTheme.loadFonts(io, getUiScale());
+            } catch (Throwable t) {
+                t.printStackTrace();
+                io.getFonts().addFontDefault();
             }
 
             glfw = new ImGuiImplGlfw();
@@ -657,516 +499,115 @@ public final class ImGuiManager {
             gl3.init("#version 150");
         }
 
-        /** Dark palette matching ProgressView (#23262e bg, #2c303a panels, #343944 borders, #4a9ee0 accent). */
-        private static void applyStyle(ImGuiStyle s) {
-            ImGui.styleColorsDark(s);
-            s.setWindowRounding(4f);
-            s.setFrameRounding(3f);
-            s.setGrabRounding(3f);
-            s.setWindowBorderSize(1f);
-            s.setFrameBorderSize(1f);
-            s.setFramePadding(6f, 3f);
-            s.setItemSpacing(6f, 5f);
-
-            s.setColor(ImGuiCol.WindowBg, 0.137f, 0.149f, 0.180f, 0.96f);         // #23262e
-            s.setColor(ImGuiCol.ChildBg, 0.173f, 0.188f, 0.227f, 1.00f);          // #2c303a
-            s.setColor(ImGuiCol.PopupBg, 0.137f, 0.149f, 0.180f, 0.98f);
-            s.setColor(ImGuiCol.Border, 0.204f, 0.224f, 0.267f, 1.00f);           // #343944
-            s.setColor(ImGuiCol.FrameBg, 0.173f, 0.188f, 0.227f, 1.00f);          // #2c303a
-            s.setColor(ImGuiCol.FrameBgHovered, 0.220f, 0.245f, 0.298f, 1.00f);
-            s.setColor(ImGuiCol.FrameBgActive, 0.290f, 0.620f, 0.878f, 0.45f);
-            s.setColor(ImGuiCol.TitleBg, 0.137f, 0.149f, 0.180f, 1.00f);
-            s.setColor(ImGuiCol.TitleBgActive, 0.173f, 0.188f, 0.227f, 1.00f);
-            s.setColor(ImGuiCol.Button, 0.204f, 0.224f, 0.267f, 1.00f);
-            s.setColor(ImGuiCol.ButtonHovered, 0.290f, 0.620f, 0.878f, 0.85f);    // #4a9ee0
-            s.setColor(ImGuiCol.ButtonActive, 0.290f, 0.620f, 0.878f, 1.00f);
-            s.setColor(ImGuiCol.Header, 0.290f, 0.620f, 0.878f, 0.35f);
-            s.setColor(ImGuiCol.HeaderHovered, 0.290f, 0.620f, 0.878f, 0.65f);
-            s.setColor(ImGuiCol.HeaderActive, 0.290f, 0.620f, 0.878f, 0.85f);
-            s.setColor(ImGuiCol.Tab, 0.173f, 0.188f, 0.227f, 1.00f);
-            s.setColor(ImGuiCol.TabHovered, 0.290f, 0.620f, 0.878f, 0.80f);
-            s.setColor(ImGuiCol.TabActive, 0.290f, 0.620f, 0.878f, 1.00f);
-            s.setColor(ImGuiCol.TabUnfocused, 0.137f, 0.149f, 0.180f, 1.00f);
-            s.setColor(ImGuiCol.TabUnfocusedActive, 0.173f, 0.188f, 0.227f, 1.00f);
-            s.setColor(ImGuiCol.DockingEmptyBg, 0.0f, 0.0f, 0.0f, 0.0f);
+        /** Re-rasterises the fonts and rescales the style when the UI scale changed. */
+        private static void refreshScale() {
+            float scale = getUiScale();
+            if (!UiTheme.needsFonts(scale)) return;
+            ImGuiIO io = ImGui.getIO();
+            io.getFonts().clear();
+            UiTheme.loadFonts(io, scale);
+            gl3.destroyFontsTexture();
+            gl3.createFontsTexture();
+            UiTheme.apply(ImGui.getStyle(), scale);
         }
 
         static void render(Minecraft mc, Window win) {
             ImGui.setCurrentContext(ctx);
+            refreshScale();
             ImGuiIO io = ImGui.getIO();
-            if (mc.mouseHandler.isMouseGrabbed()) {
+            boolean shell = Shell.isOpen();
+            if (!shell || mc.mouseHandler.isMouseGrabbed()) {
                 io.addConfigFlags(ImGuiConfigFlags.NoMouse);
                 io.addMousePosEvent(-Float.MAX_VALUE, -Float.MAX_VALUE);
             } else {
                 io.removeConfigFlags(ImGuiConfigFlags.NoMouse);
             }
+            // Closed (overlay only): ImGui must not touch the cursor mode, or the game's mouse look and aim jump.
+            if (shell) io.removeConfigFlags(ImGuiConfigFlags.NoMouseCursorChange);
+            else io.addConfigFlags(ImGuiConfigFlags.NoMouseCursorChange);
 
             io.setWantSetMousePos(false);
             glfw.newFrame();
             gl3.newFrame();
             ImGui.newFrame();
-            ImGui.getIO().setFontGlobalScale(cfg.uiScale > 0.5f ? cfg.uiScale : 1.0f);
 
-            if (unfocusRequested && !spikeOpen) {
+            if (unfocusRequested) {
                 ImGui.setWindowFocus(null);
                 unfocusRequested = false;
                 focused = false;
             }
 
             ProgressModel.Snapshot snap = ProgressModel.snapshot();
-            boolean dockedActive = isDockedViewportActive();
-            if (dockedActive) {
-                renderTopBar(snap);
-                renderDockedShell(mc, snap);
-            }
-            if (spikeOpen) {
-                renderSpikeWindow(snap);
-            }
+            float w = io.getDisplaySizeX(), h = io.getDisplaySizeY();
+            if (shell) Shell.render(snap, w, h);
+            else Overlay.draw(snap, w, h);
 
             ImGui.render();
 
             GlStateManager._glBindFramebuffer(GL30.GL_FRAMEBUFFER, 0);
+            if (shell) blitGameViewport(mc, win);
             gl3.renderDrawData(ImGui.getDrawData());
-            if (dockedActive) {
-                blitGameViewport(mc, win);
+            if (shotPath != null) {
+                Path p = shotPath;
+                shotPath = null;
+                saveShot(win, p);
             }
 
             framesRendered++;
-            lastDisplayW = (int) io.getDisplaySizeX();
-            lastDisplayH = (int) io.getDisplaySizeY();
+            lastDisplayW = (int) w;
+            lastDisplayH = (int) h;
         }
 
+        /** The finished frame (game and panels) as a PNG; used by the in-game tests to look at the layouts. */
+        private static void saveShot(Window win, Path p) {
+            try {
+                int w = win.getWidth(), h = win.getHeight();
+                java.nio.ByteBuffer buf = org.lwjgl.BufferUtils.createByteBuffer(w * h * 4);
+                GL11.glReadPixels(0, 0, w, h, GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, buf);
+                java.awt.image.BufferedImage img = new java.awt.image.BufferedImage(w, h, java.awt.image.BufferedImage.TYPE_INT_RGB);
+                for (int y = 0; y < h; y++) {
+                    for (int x = 0; x < w; x++) {
+                        int i = ((h - 1 - y) * w + x) * 4;
+                        img.setRGB(x, y, ((buf.get(i) & 0xFF) << 16) | ((buf.get(i + 1) & 0xFF) << 8) | (buf.get(i + 2) & 0xFF));
+                    }
+                }
+                Files.createDirectories(p.getParent());
+                javax.imageio.ImageIO.write(img, "png", p.toFile());
+                shotDone = p.toString();
+            } catch (Throwable t) {
+                shotDone = "error: " + t;
+            }
+        }
+
+        /** Clears the window to the workspace background and copies the game image into the fitted game area. */
         private static void blitGameViewport(Minecraft mc, Window win) {
             RenderTarget mainTarget = mc.getMainRenderTarget();
-            if (mainTarget != null && mainTarget.getColorTexture() instanceof GlTexture glTex) {
-                if (blitReadFbo == 0) {
-                    blitReadFbo = GlStateManager.glGenFramebuffers();
-                }
+            if (mainTarget == null || !(mainTarget.getColorTexture() instanceof GlTexture glTex)) return;
+            if (blitReadFbo == 0) blitReadFbo = GlStateManager.glGenFramebuffers();
 
-                float[] fit = fittedViewportRect();
-                float fx = fit[0], fy = fit[1], fw = fit[2], fh = fit[3];
+            float[] fit = fittedViewportRect();
+            double sx = (double) win.getWidth() / Math.max(1, win.getScreenWidth());
+            double sy = (double) win.getHeight() / Math.max(1, win.getScreenHeight());
+            int dstX0 = (int) Math.round(fit[0] * sx);
+            int dstX1 = (int) Math.round((fit[0] + fit[2]) * sx);
+            int dstY0 = (int) Math.round((win.getScreenHeight() - (fit[1] + fit[3])) * sy);
+            int dstY1 = (int) Math.round((win.getScreenHeight() - fit[1]) * sy);
 
-                double sx = (double) win.getWidth() / Math.max(1, win.getScreenWidth());
-                double sy = (double) win.getHeight() / Math.max(1, win.getScreenHeight());
+            GlStateManager._glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, 0);
+            GlStateManager._disableScissorTest();
+            GL11.glDisable(GL11.GL_SCISSOR_TEST);
+            GL11.glClearColor(UiTheme.r(UiTheme.BG), UiTheme.g(UiTheme.BG), UiTheme.b(UiTheme.BG), 1.0f);
+            GL11.glClear(GL11.GL_COLOR_BUFFER_BIT);
 
-                int paneX0 = (int) Math.round(vpX * sx);
-                int paneX1 = (int) Math.round((vpX + vpW) * sx);
-                int paneY0 = (int) Math.round((win.getScreenHeight() - (vpY + vpH)) * sy);
-                int paneY1 = (int) Math.round((win.getScreenHeight() - vpY) * sy);
-
-                int dstX0 = (int) Math.round(fx * sx);
-                int dstX1 = (int) Math.round((fx + fw) * sx);
-                int dstY0 = (int) Math.round((win.getScreenHeight() - (fy + fh)) * sy);
-                int dstY1 = (int) Math.round((win.getScreenHeight() - fy) * sy);
-
-                GlStateManager._glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, 0);
-
-                int paneW = Math.max(1, paneX1 - paneX0);
-                int paneH = Math.max(1, paneY1 - paneY0);
-                GL11.glEnable(GL11.GL_SCISSOR_TEST);
-                GL11.glScissor(paneX0, paneY0, paneW, paneH);
-                GL11.glClearColor(0.094f, 0.102f, 0.125f, 1.0f);
-                GL11.glClear(GL11.GL_COLOR_BUFFER_BIT);
-
-                int bx0 = Math.max(paneX0, dstX0 - 2);
-                int by0 = Math.max(paneY0, dstY0 - 2);
-                int bx1 = Math.min(paneX1, dstX1 + 2);
-                int by1 = Math.min(paneY1, dstY1 + 2);
-                int bw = Math.max(0, bx1 - bx0);
-                int bh = Math.max(0, by1 - by0);
-                if (bw > 0 && bh > 0) {
-                    GL11.glScissor(bx0, by0, bw, bh);
-                    if (isGameFocused()) {
-                        GL11.glClearColor(0.290f, 0.620f, 0.878f, 1.0f);
-                    } else {
-                        GL11.glClearColor(0.204f, 0.224f, 0.267f, 1.0f);
-                    }
-                    GL11.glClear(GL11.GL_COLOR_BUFFER_BIT);
-                }
-                GL11.glDisable(GL11.GL_SCISSOR_TEST);
-                GlStateManager._disableScissorTest();
-
-                GlStateManager._glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, blitReadFbo);
-                GlStateManager._glFramebufferTexture2D(GL30.GL_READ_FRAMEBUFFER, GL30.GL_COLOR_ATTACHMENT0, GL11.GL_TEXTURE_2D, glTex.glId(), 0);
-
-                GlStateManager._glBlitFrameBuffer(
-                        0, 0, mainTarget.width, mainTarget.height,
-                        dstX0, dstY0, dstX1, dstY1,
-                        GL11.GL_COLOR_BUFFER_BIT, GL11.GL_LINEAR
-                );
-                GlStateManager._glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, 0);
-                GlStateManager._glBindFramebuffer(GL30.GL_FRAMEBUFFER, 0);
-            }
-        }
-
-        private static void renderTopBar(ProgressModel.Snapshot snap) {
-            int flags = ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoMove
-                    | ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse
-                    | ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoSavedSettings;
-            ImGui.setNextWindowPos(0f, 0f);
-            ImGui.setNextWindowSize(lastDisplayW, TOP_BAR_H);
-            ImGui.pushStyleVar(ImGuiStyleVar.WindowRounding, 0f);
-            ImGui.pushStyleVar(ImGuiStyleVar.WindowPadding, 8f, 4f);
-            if (ImGui.begin("##ManhattanTopBar", flags)) {
-                ImGui.text("Manhattan");
-                ImGui.sameLine(0f, 10f);
-                if (snap.running()) {
-                    ImGui.textColored(0.247f, 0.698f, 0.498f, 1.0f, "Running");
-                    ImGui.sameLine(0f, 8f);
-                    ImGui.text("Step " + snap.currentStep() + "/" + snap.totalSteps() + " (" + snap.overallPercent() + "%)");
-                    ImGui.sameLine(0f, 8f);
-                    ImGui.textDisabled(snap.elapsedText());
-                } else {
-                    ImGui.textDisabled("Idle (" + snap.totalSteps() + " steps)");
-                }
-
-                String scaleLabel = Math.round(getUiScale() * 100f) + "%";
-                String layoutText = "Layout: " + layoutLabel();
-                float spacing = 6f;
-                float btnH = Math.max(22f, TOP_BAR_H - 8f);
-
-                float wLayout = ImGui.calcTextSizeX(layoutText);
-                float wScale = ImGui.calcTextSizeX(scaleLabel) + 16f;
-                float wReset = ImGui.calcTextSizeX("Reset layout") + 16f;
-                float wSkip = ImGui.calcTextSizeX("Skip") + 16f;
-                float wStop = ImGui.calcTextSizeX("Stop") + 16f;
-                float wFs = ImGui.calcTextSizeX("Fullscreen game (F8)") + 16f;
-
-                float totalRightW = wLayout + spacing + wScale + spacing + wReset + spacing + wSkip + spacing + wStop + spacing + wFs + 16f;
-                float startX = Math.max(ImGui.getCursorPosX() + 10f, lastDisplayW - totalRightW);
-                ImGui.sameLine(startX);
-                ImGui.textDisabled(layoutText);
-
-                ImGui.sameLine(0f, spacing);
-                if (ImGui.button(scaleLabel, wScale, btnH)) {
-                    float cur = getUiScale();
-                    if (cur < 1.15f) setUiScale(1.25f);
-                    else if (cur < 1.4f) setUiScale(1.5f);
-                    else setUiScale(1.0f);
-                }
-
-                ImGui.sameLine(0f, spacing);
-                if (ImGui.button("Reset layout", wReset, btnH)) {
-                    resetLayout();
-                }
-                resetBtnX = ImGui.getItemRectMinX();
-                resetBtnY = ImGui.getItemRectMinY();
-                resetBtnW = ImGui.getItemRectSizeX();
-                resetBtnH = ImGui.getItemRectSizeY();
-
-                ImGui.sameLine(0f, spacing);
-                if (ImGui.button("Skip", wSkip, btnH)) {
-                    RunnerView.skip();
-                }
-
-                ImGui.sameLine(0f, spacing);
-                if (ImGui.button("Stop", wStop, btnH)) {
-                    RunnerView.stop();
-                }
-                if (!spikeOpen) {
-                    stopBtnX = ImGui.getItemRectMinX();
-                    stopBtnY = ImGui.getItemRectMinY();
-                    stopBtnW = ImGui.getItemRectSizeX();
-                    stopBtnH = ImGui.getItemRectSizeY();
-                }
-
-                ImGui.sameLine(0f, spacing);
-                if (ImGui.button("Fullscreen game (F8)", wFs, btnH)) {
-                    toggleFullscreenGame();
-                }
-                fsBtnX = ImGui.getItemRectMinX();
-                fsBtnY = ImGui.getItemRectMinY();
-                fsBtnW = ImGui.getItemRectSizeX();
-                fsBtnH = ImGui.getItemRectSizeY();
-            }
-            ImGui.end();
-            ImGui.popStyleVar(2);
-        }
-
-        private static void buildDefault2x2Layout(int dockspaceId) {
-            float contentH = Math.max(2f, lastDisplayH - TOP_BAR_H);
-            imgui.internal.ImGui.dockBuilderRemoveNode(dockspaceId);
-            imgui.internal.ImGui.dockBuilderAddNode(dockspaceId, imgui.internal.flag.ImGuiDockNodeFlags.DockSpace);
-            imgui.internal.ImGui.dockBuilderSetNodePos(dockspaceId, 0f, TOP_BAR_H);
-            imgui.internal.ImGui.dockBuilderSetNodeSize(dockspaceId, lastDisplayW, contentH);
-
-            ImInt leftId = new ImInt();
-            ImInt rightId = new ImInt();
-            imgui.internal.ImGui.dockBuilderSplitNode(dockspaceId, ImGuiDir.Left, 0.5f, leftId, rightId);
-
-            ImInt topLeftId = new ImInt();
-            ImInt bottomLeftId = new ImInt();
-            imgui.internal.ImGui.dockBuilderSplitNode(leftId.get(), ImGuiDir.Up, 0.5f, topLeftId, bottomLeftId);
-
-            ImInt topRightId = new ImInt();
-            ImInt bottomRightId = new ImInt();
-            imgui.internal.ImGui.dockBuilderSplitNode(rightId.get(), ImGuiDir.Up, 0.5f, topRightId, bottomRightId);
-
-            ImGuiDockNode trNode = imgui.internal.ImGui.dockBuilderGetNode(topRightId.get());
-            if (trNode != null && trNode.ptr != 0) {
-                trNode.setLocalFlags(trNode.getLocalFlags()
-                        | imgui.internal.flag.ImGuiDockNodeFlags.NoTabBar
-                        | imgui.internal.flag.ImGuiDockNodeFlags.NoWindowMenuButton);
-            }
-
-            imgui.internal.ImGui.dockBuilderDockWindow("Script Editor", topLeftId.get());
-            imgui.internal.ImGui.dockBuilderDockWindow("Presets", topLeftId.get());
-            imgui.internal.ImGui.dockBuilderDockWindow("Game Viewport", topRightId.get());
-            imgui.internal.ImGui.dockBuilderDockWindow("Chests", bottomLeftId.get());
-            imgui.internal.ImGui.dockBuilderDockWindow("Areas", bottomLeftId.get());
-            imgui.internal.ImGui.dockBuilderDockWindow("Capture", bottomLeftId.get());
-            imgui.internal.ImGui.dockBuilderDockWindow("Log", bottomRightId.get());
-            imgui.internal.ImGui.dockBuilderDockWindow("Assistant", bottomRightId.get());
-            imgui.internal.ImGui.dockBuilderFinish(dockspaceId);
-
-            String ini = ImGui.getIO().getIniFilename();
-            if (ini != null && !ini.isEmpty()) {
-                ImGui.saveIniSettingsToDisk(ini);
-            }
-        }
-
-        private static void renderDockedShell(Minecraft mc, ProgressModel.Snapshot snap) {
-            float contentH = Math.max(2f, lastDisplayH - TOP_BAR_H);
-            int hostFlags = ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoCollapse
-                    | ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoMove
-                    | ImGuiWindowFlags.NoBringToFrontOnFocus | ImGuiWindowFlags.NoNavFocus
-                    | ImGuiWindowFlags.NoBackground | ImGuiWindowFlags.NoSavedSettings;
-
-            ImGui.setNextWindowPos(0f, TOP_BAR_H);
-            ImGui.setNextWindowSize(lastDisplayW, contentH);
-            ImGui.pushStyleVar(ImGuiStyleVar.WindowRounding, 0f);
-            ImGui.pushStyleVar(ImGuiStyleVar.WindowBorderSize, 0f);
-            ImGui.pushStyleVar(ImGuiStyleVar.WindowPadding, 0f, 0f);
-            ImGui.pushStyleColor(ImGuiCol.WindowBg, 0f, 0f, 0f, 0f);
-
-            ImGui.begin("##ManhattanDockSpaceHost", hostFlags);
-            ImGui.popStyleVar(3);
-
-            int dockspaceId = ImGui.getID("ManhattanDockSpace");
-            ImGuiDockNode rootNode = imgui.internal.ImGui.dockBuilderGetNode(dockspaceId);
-            boolean resizedDefault = !customDockedViewport && (dockBuiltW != lastDisplayW || dockBuiltH != lastDisplayH);
-            boolean needBuild = !dockLayoutInitialized || resetLayoutRequested || resizedDefault
-                    || rootNode == null || rootNode.ptr == 0 || !rootNode.isSplitNode();
-            if (needBuild) {
-                buildDefault2x2Layout(dockspaceId);
-                dockLayoutInitialized = true;
-                dockBuiltW = lastDisplayW;
-                dockBuiltH = lastDisplayH;
-                customDockedViewport = false;
-                if (resetLayoutRequested) {
-                    resetLayoutRequested = false;
-                    layoutResetCount++;
-                }
-            }
-
-            ImGui.dockSpace(dockspaceId, 0f, 0f, ImGuiDockNodeFlags.PassthruCentralNode | imgui.internal.flag.ImGuiDockNodeFlags.NoWindowMenuButton);
-            ImGui.popStyleColor();
-            ImGui.end();
-
-            // Top-Right: Game Viewport dock pane (transparent so FBO 0 blit shows through cleanly)
-            ImGui.pushStyleColor(ImGuiCol.WindowBg, 0f, 0f, 0f, 0f);
-            int vpFlags = ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoBackground
-                    | ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.NoCollapse;
-            if (ImGui.begin("Game Viewport", vpFlags)) {
-                float gx = ImGui.getWindowPosX();
-                float gy = ImGui.getWindowPosY();
-                float gw = ImGui.getWindowSizeX();
-                float gh = ImGui.getWindowSizeY();
-                float defX = (float) Math.floor(lastDisplayW * 0.5f);
-                float defY = TOP_BAR_H;
-                float defW = Math.max(1f, lastDisplayW - defX);
-                float defH = Math.max(1f, (float) Math.floor(contentH * 0.5f));
-                if (needBuild) {
-                    vpX = defX;
-                    vpY = defY;
-                    vpW = defW;
-                    vpH = defH;
-                    customDockedViewport = false;
-                } else if (gw > 10f && gh > 10f) {
-                    if (Math.abs(gx - defX) <= 6f && Math.abs(gy - defY) <= 6f
-                            && Math.abs(gw - defW) <= 6f && Math.abs(gh - defH) <= 6f) {
-                        vpX = defX;
-                        vpY = defY;
-                        vpW = defW;
-                        vpH = defH;
-                        customDockedViewport = false;
-                    } else {
-                        vpX = gx;
-                        vpY = gy;
-                        vpW = gw;
-                        vpH = gh;
-                        customDockedViewport = true;
-                    }
-                }
-            }
-            ImGui.end();
-            ImGui.popStyleColor();
-
-            // Top-Left: Script Editor + Dashboard telemetry & segmented step bar
-            if (ImGui.begin("Script Editor")) {
-                renderDashboardSection(snap);
-                ImGui.separator();
-                DockedPanels.renderScriptEditorPanel(snap);
-            }
-            ImGui.end();
-
-            if (ImGui.begin("Presets")) {
-                DockedPanels.renderPresetsPanel();
-            }
-            ImGui.end();
-
-            // Bottom-Left: Chests, Areas, Capture tabs
-            if (ImGui.begin("Chests")) {
-                DockedPanels.renderChestsPanel();
-            }
-            ImGui.end();
-
-            if (ImGui.begin("Areas")) {
-                DockedPanels.renderAreasPanel();
-            }
-            ImGui.end();
-
-            if (ImGui.begin("Capture")) {
-                DockedPanels.renderCapturePanel();
-            }
-            ImGui.end();
-
-            // Bottom-Right: Log, Assistant tabs
-            if (ImGui.begin("Log")) {
-                DockedPanels.renderLogPanel();
-            }
-            ImGui.end();
-
-            if (ImGui.begin("Assistant")) {
-                DockedPanels.renderAssistantPanel();
-            }
-            ImGui.end();
-
-            if (pendingWindowFocus != null) {
-                ImGui.setWindowFocus(pendingWindowFocus);
-                pendingWindowFocus = null;
-            }
-        }
-
-        private static void renderDashboardSection(ProgressModel.Snapshot snap) {
-            // Segmented step bar: green (#3fb27f) done, blue (#4a9ee0) running with partial fill, grey (#2c303a) pending
-            float availW = Math.max(80f, ImGui.getContentRegionAvailX());
-            float barX = ImGui.getCursorScreenPosX();
-            float barY = ImGui.getCursorScreenPosY();
-            float barH = 10f;
-            ImDrawList dl = ImGui.getWindowDrawList();
-
-            int colPending = ImGui.colorConvertFloat4ToU32(0.173f, 0.188f, 0.227f, 1.0f);  // #2c303a
-            int colBorder = ImGui.colorConvertFloat4ToU32(0.204f, 0.224f, 0.267f, 1.0f);   // #343944
-            int colDone = ImGui.colorConvertFloat4ToU32(0.247f, 0.698f, 0.498f, 1.0f);     // #3fb27f
-            int colRunning = ImGui.colorConvertFloat4ToU32(0.290f, 0.620f, 0.878f, 1.0f);  // #4a9ee0
-
-            List<ProgressModel.Segment> segs = snap.segments();
-            if (segs.isEmpty()) {
-                dl.addRectFilled(barX, barY, barX + availW, barY + barH, colPending, 2f);
-                dl.addRect(barX, barY, barX + availW, barY + barH, colBorder, 2f);
-            } else {
-                int n = segs.size();
-                float gap = n > 1 ? 2f : 0f;
-                float segW = Math.max(2f, (availW - gap * (n - 1)) / n);
-                for (int i = 0; i < n; i++) {
-                    float sx0 = barX + i * (segW + gap);
-                    float sx1 = (i == n - 1) ? (barX + availW) : (sx0 + segW);
-                    dl.addRectFilled(sx0, barY, sx1, barY + barH, colPending, 1f);
-                    ProgressModel.Segment seg = segs.get(i);
-                    if (seg.state() == ProgressModel.State.DONE) {
-                        dl.addRectFilled(sx0, barY, sx1, barY + barH, colDone, 1f);
-                    } else if (seg.state() == ProgressModel.State.RUNNING) {
-                        float fillW = Math.max(2f, (float) ((sx1 - sx0) * seg.fraction()));
-                        dl.addRectFilled(sx0, barY, Math.min(sx1, sx0 + fillW), barY + barH, colRunning, 1f);
-                    }
-                    dl.addRect(sx0, barY, sx1, barY + barH, colBorder, 1f);
-                }
-            }
-            ImGui.dummy(availW, barH + 2f);
-
-            String ctrl = snap.controller().isEmpty() ? "idle" : snap.controller();
-            ImGui.text("Control: " + ctrl + "  |  Elapsed: " + (snap.running() ? snap.elapsedText() : "-")
-                    + "  |  " + snap.stepTailText());
-            ImGui.text("HP: " + String.format(java.util.Locale.ROOT, "%.0f/%.0f", snap.health(), snap.maxHealth())
-                    + "  |  Food: " + snap.food() + "/20"
-                    + "  |  Pos: " + snap.posText());
-            if (!snap.stallWarning().isEmpty()) {
-                ImGui.textColored(1.0f, 0.627f, 0.251f, 1.0f, snap.stallWarning());
-            }
-        }
-
-        private static void renderSpikeWindow(ProgressModel.Snapshot snap) {
-            ImGui.setNextWindowPos(24f, 38f, ImGuiCond.FirstUseEver);
-            ImGui.setNextWindowSize(340f, 220f, ImGuiCond.FirstUseEver);
-            if (focusRequested) {
-                ImGui.setNextWindowFocus();
-                focusRequested = false;
-            }
-            if (unfocusRequested) {
-                ImGui.setWindowFocus(null);
-            }
-
-            openFlag.set(true);
-            if (ImGui.begin("Manhattan - Runner (F9)", openFlag)) {
-                winX = ImGui.getWindowPosX();
-                winY = ImGui.getWindowPosY();
-                winW = ImGui.getWindowSizeX();
-                winH = ImGui.getWindowSizeY();
-
-                boolean running = snap.running();
-                ImGui.text("Status:");
-                ImGui.sameLine();
-                if (running) {
-                    ImGui.textColored(0.247f, 0.698f, 0.498f, 1.0f, "Running");   // #3fb27f
-                } else {
-                    ImGui.textDisabled("Not running");
-                }
-
-                ImGui.separator();
-                ImGui.text("Line: " + snap.line());
-                ImGui.sameLine(140f);
-                ImGui.text("Actions done: " + snap.actionsDone());
-                ImGui.text("Elapsed: " + (running ? snap.elapsedText() : "-"));
-                ImGui.sameLine(140f);
-                String ctrl = snap.controller();
-                ImGui.text("Control: " + (ctrl.isEmpty() ? "idle" : ctrl));
-                String cur = snap.currentCommand();
-                ImGui.textWrapped("Step: " + (cur.isEmpty() ? "(none)" : cur));
-
-                ImGui.spacing();
-                if (ImGui.button("Stop", 90f, 24f)) {
-                    RunnerView.stop();
-                }
-                stopBtnX = ImGui.getItemRectMinX();
-                stopBtnY = ImGui.getItemRectMinY();
-                stopBtnW = ImGui.getItemRectSizeX();
-                stopBtnH = ImGui.getItemRectSizeY();
-                ImGui.sameLine();
-                if (ImGui.button("Skip", 90f, 24f)) {
-                    RunnerView.skip();
-                }
-                ImGui.sameLine();
-                ImGui.textDisabled("ui.mode=" + cfg.uiMode);
-
-                ImGui.spacing();
-                ImGui.inputText("Note", note);
-
-                if (unfocusRequested) {
-                    unfocusRequested = false;
-                    focused = false;
-                } else {
-                    focused = ImGui.isWindowFocused(ImGuiFocusedFlags.RootAndChildWindows) || ImGui.getIO().getWantCaptureKeyboard();
-                }
-            } else if (unfocusRequested) {
-                unfocusRequested = false;
-                focused = false;
-            }
-            ImGui.end();
-
-            if (!openFlag.get()) {
-                setSpikeOpen(false);
-            }
+            GlStateManager._glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, blitReadFbo);
+            GlStateManager._glFramebufferTexture2D(GL30.GL_READ_FRAMEBUFFER, GL30.GL_COLOR_ATTACHMENT0, GL11.GL_TEXTURE_2D, glTex.glId(), 0);
+            GlStateManager._glBlitFrameBuffer(
+                    0, 0, mainTarget.width, mainTarget.height,
+                    dstX0, dstY0, dstX1, dstY1,
+                    GL11.GL_COLOR_BUFFER_BIT, GL11.GL_LINEAR
+            );
+            GlStateManager._glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, 0);
+            GlStateManager._glBindFramebuffer(GL30.GL_FRAMEBUFFER, 0);
         }
 
         static boolean wantsKeyboard() {

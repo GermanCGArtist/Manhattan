@@ -2,6 +2,37 @@
 
 Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
 
+## 2.12.0 – the workspace: one UI, Edit and Monitor (2026-11-15)
+The vanilla screens (editor, presets, capture menu, HUD bar) and the docked 2x2 layout are replaced by one Dear ImGui
+workspace with two fixed layouts around the live game.
+- **J opens and closes the workspace** (in the layout used last). **Edit**: a wide script editor, and on the right
+  the game above a Now running card (big percent, step, estimate, step bar, Skip/Stop), Vitals, Tools and Alerts.
+  **Monitor**: a top strip (step, step bar, big percent, step estimate, Skip/Stop), the game in the middle, Steps,
+  Vitals and Handlers on the left, Alerts and Log under the game, a top-down Map and the Inventory on the right.
+  The activity bar on the left switches layouts and opens Presets, Chests, Areas, Capture (also K) and Log as a drawer.
+- **Closed**, the game is full size with normal mouse look; while a script runs a small glass pill at the top shows
+  the step and progress, and errors pop up as toasts for 8 s. This replaces the HUD bar. F8 (fullscreen game) and
+  F9 (runner window) are gone.
+- **Editor**: completion at the cursor as grey ghost text and a list (Tab accepts; Up/Down, Enter, Esc, Ctrl+Space,
+  a click on the list), live problems (checked 400 ms after typing: a squiggle and the message on the line),
+  Ctrl+/ comments lines, Pick block puts `pos(...)` in at the cursor (a named `let` line on an empty line), presets go
+  in at the cursor line and Save preset saves the selected lines, Run uses the tab's name.
+- **Ctrl+P command palette**: run, test, skip, stop, layouts, drawers, UI scale, Pick block, insert a preset, open a
+  script tab, go to a chest.
+- **Map**: saved areas (the last one highlighted), `#sel`, chests and captured spots, positions written in the script
+  as `let name = pos(...)`, the player and where it looks. **Handlers**: each `on` block with how often it fired and
+  when it last finished. **Alerts**: the latest error, a stalled step, a tool close to the itemSaver threshold, low
+  health or food, a full inventory.
+- **Capture drawer** has everything the old menu had: role list, name, Litematica placement, Fetch looked-at, Aim in
+  world (closes the workspace; J captures and brings it back), Rapid, Use #sel, the sheet, Import saved, Copy sheet,
+  Copy full context, Show in world, and the stale check.
+- New look: own colour theme, Inter / JetBrains Mono / Barlow Condensed fonts bundled in the jar (SIL OFL, licences
+  next to the fonts), sharp at every UI scale (100/125/150% from Ctrl+P). The layout is not saved to an ini file any more.
+- `option("ui.mode", ...)` is now `ui.layout` (`"edit"` or `"monitor"`: the layout J opens); `/queue ui` takes
+  `edit`, `monitor` or `close`.
+- In-game tests: `imgui_spike` and `docked_shell` are replaced by `workspace` and `monitor`; `smoke`, `viewport` and
+  `panels` test the workspace.
+
 ## 2.11.3 – flood() refills, faster in-game tests (2026-11-13)
 - `flood()` placed its first two water sources far apart, so they never made new water and it ran out ("No water
   source to refill from within 16 blocks"). With few buckets it now places them with a one-block gap, so the water

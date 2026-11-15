@@ -7,7 +7,6 @@ import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallba
 import net.fabricmc.fabric.api.client.command.v2.ClientCommands;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
-import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
@@ -25,7 +24,7 @@ public class QueueMod implements ClientModInitializer {
     static final ChestProcess chest = new ChestProcess();
     static final ClearProcess clear = new ClearProcess();
     static final SchemProcess schem = new SchemProcess();
-    static KeyMapping open, capture, spike, fullscreen;
+    static KeyMapping open, capture;
     private boolean registered = false;
     private int noPlayer, areaTick;
 
@@ -40,8 +39,6 @@ public class QueueMod implements ClientModInitializer {
         KeyMapping.Category category = KeyMapping.Category.register(Identifier.fromNamespaceAndPath("baritonequeue", "main"));
         open = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.baritonequeue.open", 74 /* GLFW_KEY_J */, category));
         capture = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.baritonequeue.capture", 75 /* GLFW_KEY_K */, category));
-        spike = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.baritonequeue.imgui", 298 /* GLFW_KEY_F9 */, category));
-        fullscreen = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.baritonequeue.fullscreen", 297 /* GLFW_KEY_F8 */, category));
 
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> SchemCmd.register(dispatcher));
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
@@ -49,7 +46,10 @@ public class QueueMod implements ClientModInitializer {
                         .executes(ctx -> list())
                         .then(ClientCommands.literal("open").executes(ctx -> {
                             Minecraft mc = Minecraft.getInstance();
-                            mc.execute(() -> mc.setScreen(new QueueScreen()));   // after the chat screen has closed
+                            mc.execute(() -> {   // after the chat screen has closed
+                                ImGuiManager.openShell(Shell.Mode.EDIT);
+                                Shell.drawer = Shell.Drawer.NONE;
+                            });
                             return 1;
                         }))
                         .then(ClientCommands.literal("add")
@@ -65,7 +65,10 @@ public class QueueMod implements ClientModInitializer {
                         .then(ClientCommands.literal("capture")
                                 .executes(ctx -> {
                                     Minecraft mc = Minecraft.getInstance();
-                                    mc.execute(() -> mc.setScreen(new CaptureScreen()));
+                                    mc.execute(() -> {
+                                        ImGuiManager.openShell(Shell.lastMode());
+                                        Shell.drawer = Shell.Drawer.CAPTURE;
+                                    });
                                     return 1;
                                 })
                                 .then(ClientCommands.literal("dir")
@@ -260,19 +263,22 @@ public class QueueMod implements ClientModInitializer {
                                 })))
                         .then(ClientCommands.literal("ui")
                                 .executes(ctx -> {
-                                    Util.msg("UI mode is '" + cfg.uiMode + "'. /queue ui <vanilla|docked> changes it.");
+                                    Util.msg("The workspace (key J) opens in '" + cfg.uiLastMode + "'. /queue ui <edit|monitor|close> switches it.");
                                     return 1;
                                 })
-                                .then(ClientCommands.literal("vanilla").executes(ctx -> {
-                                    cfg.uiMode = "vanilla";
-                                    Config.save();
-                                    Util.msg("UI mode set to 'vanilla'.");
+                                .then(ClientCommands.literal("edit").executes(ctx -> {
+                                    Minecraft mc = Minecraft.getInstance();
+                                    mc.execute(() -> ImGuiManager.openShell(Shell.Mode.EDIT));
                                     return 1;
                                 }))
-                                .then(ClientCommands.literal("docked").executes(ctx -> {
-                                    cfg.uiMode = "docked";
-                                    Config.save();
-                                    Util.msg("UI mode set to 'docked'.");
+                                .then(ClientCommands.literal("monitor").executes(ctx -> {
+                                    Minecraft mc = Minecraft.getInstance();
+                                    mc.execute(() -> ImGuiManager.openShell(Shell.Mode.MONITOR));
+                                    return 1;
+                                }))
+                                .then(ClientCommands.literal("close").executes(ctx -> {
+                                    Minecraft mc = Minecraft.getInstance();
+                                    mc.execute(ImGuiManager::closeShell);
                                     return 1;
                                 })))
                         .then(ClientCommands.literal("clear").executes(ctx -> {
@@ -283,43 +289,13 @@ public class QueueMod implements ClientModInitializer {
                         }))));
 
         ClientTickEvents.END_CLIENT_TICK.register(this::tick);
+        // The run status, aiming hints and error toasts over the game are drawn by Overlay (Dear ImGui).
+    }
 
-        // The progress on the game screen while the script runs (hidden with F1, and while the editor is open),
-        // and the hint while a block is being picked for the editor.
-        HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("baritonequeue", "progress"), (g, delta) -> {
-            Minecraft mc = Minecraft.getInstance();
-            if (mc.options.hideGui || mc.screen instanceof QueueScreen || mc.screen instanceof CaptureScreen) return;
-            int sw = mc.getWindow().getGuiScaledWidth();
-            if (Capture.aiming) {
-                Places.Target t = Places.target();
-                Capture.Type ty = Capture.type();
-                String step = ty.kind == Capture.Kind.AREA ? (Capture.corner1 == null ? " (corner 1)" : " (corner 2; corner 1 at " + Capture.corner1 + ")") : "";
-                String a = "Capture " + ty.label + step + ": look at a block, press " + open.getTranslatedKeyMessage().getString()
-                        + ".  " + capture.getTranslatedKeyMessage().getString() + " = back to the menu";
-                String b = (t == null ? "Looking at nothing (the key now goes back to the menu)" : "Looking at: " + t.name() + " at " + t.pos())
-                        + (cfg.captureRapid ? "   |   rapid: " + Capture.captured + " captured" : "");
-                int w = Math.max(mc.font.width(a), mc.font.width(b)) + 12;
-                g.fill(sw / 2 - w / 2, 28, sw / 2 + w / 2, 54, 0xAA000000);
-                g.centeredText(mc.font, a, sw / 2, 32, 0xFF60E0FF);
-                g.centeredText(mc.font, b, sw / 2, 43, 0xFFE0E0E0);
-                return;
-            }
-            if (picking) {
-                Places.Target t = Places.target();
-                String a = "Look at a block and press " + open.getTranslatedKeyMessage().getString() + " to put its position into the script.";
-                String b = t == null ? "(Press it looking at the sky to go back without one.)" : "Looking at: " + t.name() + " at " + t.pos();
-                int w = Math.max(mc.font.width(a), mc.font.width(b)) + 12;
-                g.fill(sw / 2 - w / 2, 28, sw / 2 + w / 2, 54, 0xAA000000);
-                g.centeredText(mc.font, a, sw / 2, 32, 0xFFFFFF60);
-                g.centeredText(mc.font, b, sw / 2, 43, 0xFFE0E0E0);
-                return;
-            }
-            if (!runner.running()) return;
-            int w = Math.min(300, sw - 20);
-            int x = (sw - w) / 2;
-            g.fill(x - 4, 2, x + w + 4, 6 + ProgressView.HEIGHT, 0x99000000);   // readable against any sky
-            ProgressView.draw(g, mc.font, x, 6, w);
-        });
+    /** After aiming in the world (Pick block, Capture): reopen the workspace if aiming closed it. */
+    private static void backFromAiming(Shell.Drawer drawer) {
+        if (Shell.suspended()) Shell.resume(drawer);
+        else if (Shell.isOpen() && drawer != null) Shell.drawer = drawer;
     }
 
     private static int run() {
@@ -376,6 +352,7 @@ public class QueueMod implements ClientModInitializer {
         Util.flush();
         if (mc.player == null) {
             picking = false;
+            if (Shell.isOpen()) ImGuiManager.closeShell();   // left the world: the title screen gets the whole window
             Capture.tick(mc);   // ends aiming
             // a dropped connection that the reconnect helper brings back: keep the script and carry on afterwards
             if (runner.running() && (System.getProperty("survivalkit.recovering") != null || ++noPlayer < 60)) runner.holdForReconnect();
@@ -393,10 +370,10 @@ public class QueueMod implements ClientModInitializer {
         while (open.consumeClick()) {
             if (Capture.aiming) {
                 Places.Target t = Places.target();
-                if (t == null) {   // the sky: back to the menu
+                if (t == null) {   // the sky: back to the workspace
                     Capture.aiming = false;
                     Capture.corner1 = null;
-                    if (!ImGuiManager.isDockedViewportActive()) mc.setScreen(new CaptureScreen());
+                    backFromAiming(Shell.Drawer.CAPTURE);
                     continue;
                 }
                 String r = Capture.capture(t);
@@ -404,40 +381,24 @@ public class QueueMod implements ClientModInitializer {
                 boolean waiting = Capture.corner1 != null || r.startsWith("Pick");
                 if (!cfg.captureRapid && !waiting) {
                     Capture.aiming = false;
-                    if (!ImGuiManager.isDockedViewportActive()) mc.setScreen(new CaptureScreen());
+                    backFromAiming(Shell.Drawer.CAPTURE);
                 }
             } else if (picking) {
                 picking = false;
-                Places.Target t = Places.target();
-                if (DockedPanels.isImGuiPicking()) {
-                    DockedPanels.handleImGuiPick(t);
-                } else {
-                    QueueScreen.pickResult(t);
-                    mc.setScreen(new QueueScreen());
-                }
-            } else if (ImGuiManager.isDockedViewportActive()) {
-                mc.mouseHandler.releaseMouse();
-                ImGuiManager.requestWindowFocus("Script Editor");
-            } else if (mc.screen == null) {
-                mc.setScreen(new QueueScreen());
+                DockedPanels.handleImGuiPick(Places.target());
+                backFromAiming(null);
+            } else if (mc.screen == null || ImGuiManager.isDockedViewportActive()) {
+                ImGuiManager.toggleShell();
             }
         }
         while (capture.consumeClick()) {
             if (Capture.aiming) {
                 Capture.aiming = false;
-                if (!ImGuiManager.isDockedViewportActive()) mc.setScreen(new CaptureScreen());
-            } else if (ImGuiManager.isDockedViewportActive()) {
-                mc.mouseHandler.releaseMouse();
-                ImGuiManager.requestWindowFocus("Capture");
-            } else if (mc.screen == null) {
-                mc.setScreen(new CaptureScreen());
+                backFromAiming(Shell.Drawer.CAPTURE);
+            } else if (mc.screen == null || ImGuiManager.isDockedViewportActive()) {
+                if (!Shell.isOpen()) ImGuiManager.openShell(Shell.lastMode());
+                Shell.drawer = Shell.Drawer.CAPTURE;
             }
-        }
-        while (spike.consumeClick()) {
-            ImGuiManager.toggleSpike();
-        }
-        while (fullscreen.consumeClick()) {
-            ImGuiManager.toggleFullscreenGame();
         }
         Capture.tick(mc);
         ChestIndexView.tickHighlight();

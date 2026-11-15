@@ -35,30 +35,46 @@ acts on its own: the script starts them. The packages talk through small `Api` c
 - Built-in functions: `Builtins` (general), `GameBuiltins` (world, getters, actions, chests, areas, helpers).
   Getters such as `health` work without `()`. `Modules` reads and writes every helper setting by reflection for
   `option("group.field", v)`.
-- Editor: `QueueScreen`, `Syntax` (colours from the lexer), `Suggest` (Tab completion, looked-at block as `pos(…)`),
-  `ScriptCheck` (Test), `Places` (raycast up to 96 blocks), `Estimate` / `ProgressModel` / `ProgressView` (time and
-  segmented step progress shared by the vanilla HUD/editor and the ImGui dashboard).
-- View-models & Docked Panels (`RunnerView`, `ProgressModel`, `ChestIndexView`, `AreasView`, `PlacesView`, `LogBuffer`, `DockedPanels`):
-  `ChestIndexView` queries `dev.survivalkit.ChestIndex` (`Api.indexedChests()`) with search, category filters, low-stock
-  detection, column sorting, and world highlight / clipboard / Baritone `#goto` actions. `LogBuffer` is a 500-entry ring
-  buffer fed by `Util.msg` with `ALL`, `ERRORS`, and `BARITONE` filters. `DockedPanels` renders the 6 docked panels
-  (`Script Editor`, `Presets`, `Chests`, `Areas`, `Capture`, `Log`) plus the `Assistant` tab stub inside `ImGuiManager`'s
-  2x2 `DockSpace`.
-- Dear ImGui (`ImGuiManager`, `RunnerView`, `ProgressModel`, `DockedPanels`): `imgui-java` 1.90.0 rendered at `RenderSystem.flipFrame` before buffer swap,
-  with input forwarded from `KeyboardHandlerMixin` and `MouseHandlerMixin` (`installCallbacks = false` so GLFW callbacks
-  are never overwritten). `ui.mode = vanilla | docked` (default `vanilla`); key **F9** toggles the Stage 0 runner spike window.
-  When `ui.mode = docked` and F8 fullscreen (`key.baritonequeue.fullscreen`) is off, `ImGuiManager` hosts a persistent
-  2x2 `DockSpace` (Top-left: `Script Editor`, `Presets`; Top-right: `Game Viewport`; Bottom-left: `Chests`, `Areas`, `Capture`;
-  Bottom-right: `Log`, `Assistant`) saved to `config/manhattan-imgui.ini` with a Top Bar (`Reset layout`, `Skip`, `Stop`, `Fullscreen game (F8)` — Pause is omitted because `Runner` and custom processes do not support mid-action pause/resume outside `on` handlers).
-  `mainRenderTarget` is blitted into the top-right quarter Game Viewport via `GlStateManager._glBlitFrameBuffer` using
-  aspect-ratio-preserving bounds (`ImGuiManager.fittedViewportRect`) so resizing docked panels never stretches the game view.
-  `MouseHandlerMixin` isolates mouse look in UI mode (blocking `grabMouse` and `turnPlayer` while ImGui is active) and
-  linearly remaps cursor coordinates from the Game Viewport rectangle to full-screen GUI coordinates so clicks inside
-  the viewport open and interact with UI screens (Game Menu, Chat, Chests). Keyboard input is routed to the game only when the Game Viewport is focused.
-  The Script Editor in `DockedPanels` uses single-pass `ImDrawList` syntax text rendering with token prefix measurement and
-  a custom blinking caret over a 100% transparent `InputTextMultiline` buffer, eliminating double-rendered text.
-- Capture menu: `CaptureScreen` (the menu), `Capture` (roles, sheet files per world and set, rapid aiming,
-  particle outlines, full context), `CaptureSheet` (the sheet's text without the game; tested in `LangTest`).
+- Workspace (key J; Dear ImGui is the only UI since 2.12.0): `Shell` has two fixed layouts around the live game,
+  switched from its activity bar, Ctrl+P or `/queue ui edit|monitor|close`; J opens the last one (`uiLastMode`,
+  script option `ui.layout`). **Edit**: activity bar, the script editor (about 60% of the width), and on the right
+  the game at 16:9 above a Now running card and Vitals/Tools/Alerts tiles. **Monitor**: a top strip (step, segmented
+  bar, big percent, step estimate, Skip/Stop), Steps/Vitals/Handlers on the left, the game in the middle, Alerts and
+  Log under it, Map and Inventory on the right, and a status bar. Presets, Chests, Areas, Capture (K) and Log open as
+  a drawer over the left side. No DockSpace and no ini file: windows are placed every frame (`NoSavedSettings`).
+- Look: `UiTheme` (colour tokens, the ImGui style, fonts Inter / JetBrains Mono / Barlow Condensed bundled under
+  `assets/baritonequeue/fonts`, SIL OFL; rasterised at the UI scale and rebuilt when it changes), `Icons` (activity
+  bar icons drawn with the draw list).
+- Tiles: `Widgets` (Now running, top strip, step list, vitals, tools with the itemSaver threshold tick, inventory,
+  alerts, handlers, compact log), `MapView` (top-down: saved areas, `#sel`, chests and captured spots, positions
+  written in the script as `let name = pos(...)`, the player and heading), `PlayerView` (inventory and tool
+  durability), `Alerts` (latest error, stalled step, worn tools, low health/food, full inventory), `Runner.handlerInfos()`
+  (each `on` block: condition, first body line, times fired, ticks since it last finished, running now).
+- Editor (`DockedPanels.renderScriptEditorPanel`): file tabs (`main` = `cfg.script`, plus `<game>/scripts/*.txt`), Run
+  (with the tab's name for the job ledger), Test, Pick block, Save preset; `Syntax` colours drawn with the draw list
+  over a transparent `InputTextMultiline`; `Suggest` completions at the cursor as ghost text and a list (Tab accepts,
+  Up/Down/PgUp/PgDn/Enter/Esc, Ctrl+Space shows all, a click on the list is handled before ImGui so the editor keeps
+  the keyboard); Ctrl+/ comments lines; `ScriptCheck` runs 400 ms after the last edit and marks lines with a squiggle
+  and the message. Edits made while typing (completion, comment, pick, preset) go through the input callback
+  (`pendingText`), which works in UTF-8 byte offsets (`byteToChar` / `charToByte`). The script is written to the
+  config at most once a second while typing.
+- `CommandPalette` (Ctrl+P): run, test, skip, stop, layouts, drawers, UI scale, Pick block, insert a preset, open a
+  script tab, go to a chest or spot.
+- Rendering (`ImGuiManager`): `imgui-java` 1.90.0 at `RenderSystem.flipFrame`, before the buffer swap. With the
+  workspace open the window is cleared to the background colour, the game image (`mainRenderTarget`) is blitted into
+  the game area letterboxed to the window's aspect ratio (`fittedViewportRect`), and then ImGui is drawn on top (so
+  toasts and popups can cover the game). Input comes from `KeyboardHandlerMixin` / `MouseHandlerMixin`
+  (`installCallbacks = false`). A click in the game gives it the keyboard and mouse buttons (clicks are remapped so
+  screens such as chests work inside the game area); a click on the panels or Esc takes them back. There is no mouse
+  look while the workspace is open; Pick block and Capture's Aim in world close it (`Shell.suspendForAiming`) and J
+  brings it back as it was.
+- Closed workspace (`Overlay`): drawn on the foreground draw list, never takes input (`capturesInput()` is false, the
+  mixins leave grab and mouse look alone): a glass status pill while the script runs, the aiming hints for Pick block
+  and Capture, and error toasts (8 s, also shown inside the game area when the workspace is open).
+- Capture: the Capture drawer in `DockedPanels` (role, name, Litematica placement, Fetch looked-at, Aim in world,
+  Rapid, Use #sel, the sheet, Import saved, Copy sheet, Copy full context, Show in world, stale check), `Capture` (roles,
+  sheet files per world and set, rapid aiming, particle outlines, full context), `CaptureSheet` (the sheet's text
+  without the game; tested in `LangTest`).
 - `Migrate` converts pre-2.0 scripts and presets once on load.
 
 ## Water fill (`dev.buildtools.TerminatorProcess`)

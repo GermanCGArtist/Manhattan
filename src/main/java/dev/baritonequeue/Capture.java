@@ -28,7 +28,7 @@ import static dev.baritonequeue.Config.cfg;
 /**
  * Capture sheets: chests, beds, areas and schematics taken from the world into a text that is plain script, to paste
  * into a script or hand to an LLM. One sheet per world and set, kept as a file (manhattan-context/<world>_<set>.txt),
- * so an LLM with file access can read it directly. The menu is {@link CaptureScreen}; aiming in the world uses the
+ * so an LLM with file access can read it directly. The menu is the workspace's Capture drawer (K); aiming in the world uses the
  * script editor's key (J), and with rapid capture on every press adds a line until K brings the menu back.
  */
 final class Capture {
@@ -431,7 +431,7 @@ final class Capture {
                         Math.max(corner1.x(), p.x()), Math.max(corner1.y(), p.y()), Math.max(corner1.z(), p.z())}, ParticleTypes.ELECTRIC_SPARK, new int[]{600});
             }
         }
-        boolean menu = mc.screen instanceof CaptureScreen;
+        boolean menu = Shell.isOpen() && Shell.drawer == Shell.Drawer.CAPTURE;
         if (!cfg.captureShow || !(menu || aiming || mc.screen == null)) return;
         if (!menu && !aiming && pulse % 40 != 0) return;   // in normal play only every 2 s
         int[] budget = {1500};

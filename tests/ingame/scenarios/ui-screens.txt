@@ -1,0 +1,18 @@
+// Screenshots of the workspace layouts: a script with places, handlers and several steps that waits long enough.
+let dirt_chest = pos(104, -60, 104)
+let bed = pos(96, -60, 104)
+on food < 14
+  eat()
+end
+on mobs > 0
+  defend()
+end
+on full
+  print("full")
+end
+print("TEST ui screens started")
+wait 1
+wait 2
+area("pond")
+wait 120
+print("TEST ui screens finished")

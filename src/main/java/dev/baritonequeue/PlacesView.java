@@ -84,7 +84,8 @@ public final class PlacesView {
         if (mc != null && mc.screen != null) {
             mc.setScreen(null);
         }
-        String msg = "Aiming in world for '" + Capture.type().label + "': look at a block in the Game Viewport and press J.";
+        Shell.suspendForAiming();   // full-size game with mouse look; J captures and brings the workspace back
+        String msg = "Aiming in world for '" + Capture.type().label + "': look at a block and press J (K goes back).";
         Util.msg(msg);
         return msg;
     }

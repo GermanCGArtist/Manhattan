@@ -258,10 +258,18 @@ public class LangTest {
         check("string index", "let s = \"abc\"\nout(s[1], len(s), s.length)", "b 3 3");
         check("random range", "let r = random(1, 6)\nout(r >= 1 and r <= 6)", "true");
         check("deep recursion", "func f(n)\n  return f(n + 1)\nend\nf(0)", "ERROR line 2: Too many calls inside each other (a function that never stops calling itself?).");
-        same("ui mode default", Modules.get("ui.mode", 1), "vanilla");
-        Modules.set("ui.mode", "docked", 1);
-        same("ui mode docked", Modules.get("ui.mode", 1), "docked");
-        Modules.set("ui.mode", "vanilla", 1);
+        same("ui layout default", Modules.get("ui.layout", 1), "edit");
+        Modules.set("ui.layout", "monitor", 1);
+        same("ui layout monitor", Modules.get("ui.layout", 1), "monitor");
+        Modules.set("ui.layout", "edit", 1);
+        String badLayout = "accepted";
+        try {
+            Modules.set("ui.layout", "docked", 1);
+        } catch (RuntimeException e) {
+            badLayout = "rejected";
+        }
+        same("ui layout bad value rejected", badLayout, "rejected");
+        same("ui layout unchanged", Modules.get("ui.layout", 1), "edit");
 
         List<String> progScript = List.of(
                 "// header comment",

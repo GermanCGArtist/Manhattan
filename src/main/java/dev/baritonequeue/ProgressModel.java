@@ -7,7 +7,7 @@ import java.util.List;
 
 /**
  * Plain view-model for script progress, step segments, Baritone controller, estimates, and player telemetry.
- * Shared by the vanilla {@link ProgressView} overlay/editor and the Dear ImGui docked dashboard.
+ * Read by the workspace tiles ({@link Widgets}) and the closed-state {@link Overlay}.
  */
 public final class ProgressModel {
     private ProgressModel() {}

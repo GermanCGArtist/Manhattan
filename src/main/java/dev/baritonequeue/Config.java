@@ -48,8 +48,8 @@ final class Config {
     boolean captureRapid = false;
     String captureType = "dump";
 
-    /** UI mode: "vanilla" (default, J/K screens) or "docked" (Dear ImGui layout). */
-    String uiMode = "vanilla";
+    /** Workspace layout J opens: "edit" (script editor first) or "monitor" (run telemetry first). */
+    String uiLastMode = "edit";
 
     /** UI scale: 1.0f, 1.25f, 1.5f. */
     float uiScale = 1.0f;
@@ -92,7 +92,7 @@ final class Config {
                     if (cfg.captureDir == null) cfg.captureDir = "";
                     if (cfg.captureSet == null || cfg.captureSet.isBlank()) cfg.captureSet = "main";
                     if (cfg.captureType == null) cfg.captureType = "dump";
-                    if (cfg.uiMode == null || (!cfg.uiMode.equals("vanilla") && !cfg.uiMode.equals("docked"))) cfg.uiMode = "vanilla";
+                    if (!"monitor".equals(cfg.uiLastMode)) cfg.uiLastMode = "edit";
                     if (cfg.uiScale <= 0.5f || cfg.uiScale > 2.5f) cfg.uiScale = 1.0f;
                     if (cfg.lastArea == null) cfg.lastArea = new ArrayList<>();
                 }

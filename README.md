@@ -23,8 +23,10 @@ fill_water("dirt", dirt_chest)
 ```
 
 ## Use
-- Press **J** in game to open the editor. **Tab** completes like `/setblock`; **Pick block** fills in the position
-  of the block you look at (chests, beds).
+- Press **J** in game to open the workspace: **Edit** (the script editor next to the game) or **Monitor** (the
+  running script, map, inventory and alerts around the game); J again closes it. **Tab** completes like
+  `/setblock`; **Pick block** puts in the position of the block you look at (chests, beds); **Ctrl+P** finds any
+  command; **K** opens Capture.
 - Language guide: [docs/SCRIPTING.md](docs/SCRIPTING.md)
 - Example: [scripts/water-job.txt](scripts/water-job.txt) (fill an area's water bottom-up, then mine two areas)
 - Changes per version: [docs/CHANGELOG.md](docs/CHANGELOG.md); how the code is built: [docs/DESIGN.md](docs/DESIGN.md)

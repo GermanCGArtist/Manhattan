@@ -129,6 +129,25 @@ final class Runner {
         return out;
     }
 
+    /** One {@code on ... end} block for the UI: its line, condition text, first body line, how often it fired,
+     *  ticks since its block last finished (-1 = never), and whether it is running right now. */
+    record HandlerInfo(int line, String condition, String body, int fired, long ticksSinceEnd, boolean active) {}
+
+    List<HandlerInfo> handlerInfos() {
+        if (!running) return List.of();
+        java.util.Set<Handler> activeSet = new java.util.HashSet<>();
+        for (Frame fr : stack) activeSet.add(fr.h());
+        List<HandlerInfo> out = new ArrayList<>(handlers.size());
+        for (Handler h : handlers) {
+            int ln = h.on.line;
+            String cond = lineText(ln);
+            if (cond.startsWith("on ")) cond = cond.substring(3).trim();
+            long since = h.lastEnd < 0 ? -1 : tickCounter - h.lastEnd;
+            out.add(new HandlerInfo(ln, cond, lineText(ln + 1), h.fired, since, activeSet.contains(h)));
+        }
+        return out;
+    }
+
     static int stallLimit() {
         return Math.max(0, cfg.stallMinutes) * 1200;
     }

@@ -281,7 +281,11 @@ public class TestBridge implements ClientModInitializer {
             }
             case "script": return onGame(() -> ok("\"running\":" + QueueMod.runner.running() + ",\"status\":" + q(QueueMod.runner.status())));
             case "stopscript": return onGame(() -> { QueueMod.runner.halt("Stopped by the test bridge."); return ok(""); });
-            case "editor": return onGame(() -> { mc.setScreen(new QueueScreen()); return ok(""); });
+            case "editor": return onGame(() -> {
+                ImGuiManager.openShell(Shell.Mode.EDIT);
+                Shell.drawer = Shell.Drawer.NONE;
+                return ok("");
+            });
             case "screen": return onGame(() -> {
                 if (a.length > 0 && a[0].equals("close")) mc.setScreen(null);
                 return ok("\"screen\":" + q(mc.screen == null ? "" : mc.screen.getClass().getName()));
@@ -327,9 +331,17 @@ public class TestBridge implements ClientModInitializer {
         long win = mc.getWindow().handle();
         if (a.length > 0) {
             switch (a[0]) {
-                case "toggle" -> ImGuiManager.toggleSpike();
-                case "open" -> ImGuiManager.setSpikeOpen(true);
-                case "close" -> ImGuiManager.setSpikeOpen(false);
+                case "toggle" -> ImGuiManager.toggleShell();
+                case "open" -> ImGuiManager.openShell(a.length > 1 && a[1].equalsIgnoreCase("monitor") ? Shell.Mode.MONITOR
+                        : a.length > 1 && a[1].equalsIgnoreCase("edit") ? Shell.Mode.EDIT : Shell.lastMode());
+                case "close" -> ImGuiManager.closeShell();
+                case "drawer" -> Shell.drawer = Shell.Drawer.valueOf(a[1].toUpperCase());
+                case "palette" -> {
+                    if (a.length > 1) CommandPalette.runFirst(String.join(" ", java.util.Arrays.copyOfRange(a, 1, a.length)));
+                    else CommandPalette.toggle();
+                }
+                case "scale" -> ImGuiManager.setUiScale(Float.parseFloat(a[1]));
+                case "shot" -> ImGuiManager.requestScreenshot(java.nio.file.Path.of(String.join(" ", java.util.Arrays.copyOfRange(a, 1, a.length))));
                 case "stop" -> ImGuiManager.triggerStop();
                 case "key" -> {
                     int key = Integer.parseInt(a[1]);
@@ -391,11 +403,6 @@ public class TestBridge implements ClientModInitializer {
                     int h = Integer.parseInt(a[2]);
                     org.lwjgl.glfw.GLFW.glfwSetWindowSize(win, w, h);
                 }
-                case "fullscreen" -> {
-                    if (a.length > 1) ImGuiManager.setFullscreenGame(Boolean.parseBoolean(a[1]));
-                    else ImGuiManager.toggleFullscreenGame();
-                }
-                case "resetlayout" -> ImGuiManager.resetLayout();
                 case "guiscale" -> {
                     int scale = Integer.parseInt(a[1]);
                     mc.options.guiScale().set(scale);
@@ -420,23 +427,26 @@ public class TestBridge implements ClientModInitializer {
                 }
             }
         }
-        float[] wr = ImGuiManager.windowRect();
         float[] sr = ImGuiManager.stopButtonRect();
         float[] vr = ImGuiManager.viewportRect();
-        float[] fr = ImGuiManager.fullscreenButtonRect();
-        float[] rr = ImGuiManager.resetButtonRect();
+        float[] fr = ImGuiManager.fittedViewportRect();
         ProgressModel.Snapshot snap = ProgressModel.snapshot();
         long segDone = snap.segments().stream().filter(s -> s.state() == ProgressModel.State.DONE).count();
         long segRun = snap.segments().stream().filter(s -> s.state() == ProgressModel.State.RUNNING).count();
         long segPend = snap.segments().stream().filter(s -> s.state() == ProgressModel.State.PENDING).count();
         return ok("\"initialized\":" + ImGuiManager.isInitialized()
-                + ",\"spikeOpen\":" + ImGuiManager.isSpikeOpen()
+                + ",\"shellOpen\":" + Shell.isOpen()
+                + ",\"mode\":" + q(ImGuiManager.layoutLabel())
+                + ",\"drawer\":" + q(Shell.drawer.name())
+                + ",\"paletteOpen\":" + CommandPalette.isOpen()
+                + ",\"paletteLastRun\":" + q(CommandPalette.lastRun())
+                + ",\"overlayVisible\":" + Overlay.visible()
+                + ",\"active\":" + ImGuiManager.isActive()
+                + ",\"mouseGrabbed\":" + mc.mouseHandler.isMouseGrabbed()
                 + ",\"focused\":" + ImGuiManager.isFocused()
                 + ",\"gameFocused\":" + ImGuiManager.isGameFocused()
-                + ",\"fullscreenGame\":" + ImGuiManager.isFullscreenGame()
                 + ",\"dockedActive\":" + ImGuiManager.isDockedViewportActive()
-                + ",\"layoutLabel\":" + q(ImGuiManager.layoutLabel())
-                + ",\"layoutResets\":" + ImGuiManager.layoutResetCount()
+                + ",\"uiScale\":" + ImGuiManager.getUiScale()
                 + ",\"framesRendered\":" + ImGuiManager.framesRendered()
                 + ",\"displayW\":" + ImGuiManager.displayWidth()
                 + ",\"displayH\":" + ImGuiManager.displayHeight()
@@ -444,9 +454,9 @@ public class TestBridge implements ClientModInitializer {
                 + ",\"guiScaledW\":" + mc.getWindow().getGuiScaledWidth()
                 + ",\"guiScaledH\":" + mc.getWindow().getGuiScaledHeight()
                 + ",\"vpX\":" + vr[0] + ",\"vpY\":" + vr[1] + ",\"vpW\":" + vr[2] + ",\"vpH\":" + vr[3]
-                + ",\"fsX\":" + fr[0] + ",\"fsY\":" + fr[1] + ",\"fsW\":" + fr[2] + ",\"fsH\":" + fr[3]
-                + ",\"resetX\":" + rr[0] + ",\"resetY\":" + rr[1] + ",\"resetW\":" + rr[2] + ",\"resetH\":" + rr[3]
-                + ",\"winX\":" + wr[0] + ",\"winY\":" + wr[1] + ",\"winW\":" + wr[2] + ",\"winH\":" + wr[3]
+                + ",\"fitX\":" + fr[0] + ",\"fitY\":" + fr[1] + ",\"fitW\":" + fr[2] + ",\"fitH\":" + fr[3]
+                + ",\"handlerCount\":" + QueueMod.runner.handlerInfos().size()
+                + ",\"alertCount\":" + Alerts.list(snap).size()
                 + ",\"stopX\":" + sr[0] + ",\"stopY\":" + sr[1] + ",\"stopW\":" + sr[2] + ",\"stopH\":" + sr[3]
                 + ",\"runnerRunning\":" + snap.running()
                 + ",\"runnerLine\":" + snap.line()
@@ -461,8 +471,8 @@ public class TestBridge implements ClientModInitializer {
                 + ",\"posText\":" + q(snap.posText())
                 + ",\"interruptCount\":" + snap.interrupts().size()
                 + ",\"picking\":" + QueueMod.picking
-                + ",\"uiMode\":" + q(Config.cfg.uiMode)
-                + ",\"note\":" + q(ImGuiManager.noteText()));
+                + ",\"uiLastMode\":" + q(Config.cfg.uiLastMode)
+                + ",\"lastShot\":" + q(ImGuiManager.lastShot()));
     }
 
     private static String handlePanels(Minecraft mc, String[] a, String rest) {
@@ -477,8 +487,10 @@ public class TestBridge implements ClientModInitializer {
                 case "setscript" -> {
                     int idx = rest.indexOf("setscript");
                     String content = idx >= 0 ? rest.substring(idx + "setscript".length()).stripLeading().replace("\\n", "\n") : "";
-                    DockedPanels.setCurrentScriptText(content);
+                    DockedPanels.setScriptText(content);
                 }
+                case "cursor" -> DockedPanels.setCursor(Integer.parseInt(a[1]));
+                case "comment" -> DockedPanels.toggleComment();
                 case "complete" -> DockedPanels.acceptTopSuggestion();
                 case "check" -> DockedPanels.runTest();
                 case "pick" -> DockedPanels.handleImGuiPick(Places.target());

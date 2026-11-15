@@ -59,16 +59,16 @@ final class Modules {
                 }
             }
         }
-        out.put("ui.mode", Config.cfg.uiMode);
+        out.put("ui.layout", Config.cfg.uiLastMode);
         out.put("engine", dev.midtown.api.EngineSelector.selectedName());
         return out;
     }
 
     private static Object[] find(String key, int line) {
         String k = key.trim();
-        if (k.equalsIgnoreCase("ui.mode")) {
+        if (k.equalsIgnoreCase("ui.layout") || k.equalsIgnoreCase("ui.mode")) {
             try {
-                Field f = Config.class.getDeclaredField("uiMode");
+                Field f = Config.class.getDeclaredField("uiLastMode");
                 f.setAccessible(true);
                 return new Object[]{Config.cfg, f, new Group("ui", () -> Config.cfg, Config::save)};
             } catch (NoSuchFieldException e) {
@@ -140,8 +140,8 @@ final class Modules {
                 f.setDouble(r[0], Values.toNum(value, key, line));
             } else if (t == String.class) {
                 String s = value == null ? null : Values.str(value);
-                if (f.getName().equals("uiMode") && (s == null || (!s.equals("vanilla") && !s.equals("docked")))) {
-                    throw Values.error("ui.mode must be \"vanilla\" or \"docked\".", line);
+                if (f.getName().equals("uiLastMode") && (s == null || (!s.equals("edit") && !s.equals("monitor")))) {
+                    throw Values.error("ui.layout is \"edit\" or \"monitor\" (the layout key J opens; the old vanilla screens are gone).", line);
                 }
                 f.set(r[0], s);
             } else if (t == int[].class) {

@@ -107,57 +107,93 @@ def reset_area(t, gamemode="survival"):
 # ------------------------------------------------------------------ tests
 
 def test_smoke(t):
-    """The script language runs, and the editor opens."""
+    """The script language runs, and the workspace opens in the Edit layout."""
     t.run("smoke.txt")
     t.wait_chat("TEST smoke n=3 names=2", 15)
     t.script_done(10)
     t.b("editor")
-    scr = t.b.wait(lambda: t.b("screen")["screen"], 5, what="the editor")
-    if not scr.endswith("QueueScreen"):
-        raise Fail("editor did not open, screen is %s" % scr)
-    t.b("screen close")
-    return "script printed, editor opened"
+    st = t.b.wait(lambda: (lambda s: s if s["shellOpen"] and s["mode"] == "edit" else None)(t.b("imgui")), 5, what="the workspace")
+    if t.state()["screen"] != "":
+        raise Fail("the editor opened a vanilla screen: %s" % t.state()["screen"])
+    t.b("imgui close")
+    return "script printed, workspace opened (%s)" % st["mode"]
 
 
-def test_imgui_spike(t):
-    """F9 opens the Dear ImGui spike window showing Runner state and a Stop button; keys do not leak while focused; resize works."""
+def ui_reset(t):
     t.b("screen close")
     t.b("imgui close")
+    t.b("imgui scale 1.0")
+    t.b("imgui guiscale 0")
+
+
+def test_workspace(t):
+    """J opens and closes the workspace; keys do not leak to the game while the panels have them; Ctrl+P palette;
+    Edit/Monitor switch; overlay while closed; resize; the Stop button stops the script."""
+    ui_reset(t)
     t.run("imgui-spike.txt")
     t.wait_chat("TEST imgui started", 15)
-    time.sleep(1.5)   # let wait 1 complete so actionsDone >= 1 and wait 30 is active
+    time.sleep(1.5)
 
-    # Press F9 (GLFW_KEY_F9 = 298) to open the ImGui spike window
-    t.b("imgui key 298 1 0")
-    t.b("imgui key 298 0 0")
-    st = t.b.wait(lambda: (lambda s: s if s["spikeOpen"] and s["initialized"] and s["framesRendered"] >= 3 else None)(t.b("imgui")),
-                  10, step=0.2, what="ImGui spike window to initialize and render")
-    if not st["runnerRunning"] or st["runnerLine"] < 2 or st["runnerActions"] < 1:
-        raise Fail("ImGui RunnerView state wrong while script runs: %s" % st)
-    if not st["focused"]:
-        raise Fail("ImGui window should have focus when opened: %s" % st)
+    # closed + running: the overlay draws, but nothing takes input
+    st = t.b.wait(lambda: (lambda s: s if s["overlayVisible"] and s["framesRendered"] >= 3 else None)(t.b("imgui")),
+                  10, step=0.2, what="the closed-state overlay to render while the script runs")
+    if st["shellOpen"] or st["focused"] or not st["gameFocused"]:
+        raise Fail("closed workspace must not take input: %s" % st)
 
-    # While ImGui has focus, pressing J (74) or K (75) must not open QueueScreen or CaptureScreen
+    # J opens it (in the last layout)
     t.b("imgui key 74 1 0")
     t.b("imgui key 74 0 0")
-    t.b("imgui key 75 1 0")
-    t.b("imgui key 75 0 0")
-    time.sleep(0.3)
-    scr = t.b("screen")["screen"]
-    if scr != "":
-        raise Fail("keys leaked into the game while ImGui had focus (opened %s)" % scr)
+    st = t.b.wait(lambda: (lambda s: s if s["shellOpen"] else None)(t.b("imgui")), 5, step=0.2, what="J to open the workspace")
+    if st["gameFocused"]:
+        raise Fail("the panels should have the keyboard right after opening: %s" % st)
 
-    # Window resize while ImGui is rendering must not crash and must update display size
+    # E must not reach the game while the panels have the keyboard
+    t.b("imgui key 69 1 0")
+    t.b("imgui key 69 0 0")
+    time.sleep(0.3)
+    if t.state()["screen"] != "":
+        raise Fail("E leaked into the game while the panels had the keyboard (opened %s)" % t.state()["screen"])
+
+    # Ctrl+P opens the command palette, Esc closes it
+    t.b("imgui key 80 1 2")
+    t.b("imgui key 80 0 2")
+    t.b.wait(lambda: t.b("imgui")["paletteOpen"], 5, step=0.2, what="Ctrl+P to open the command palette")
+    t.b("imgui key 256 1 0")
+    t.b("imgui key 256 0 0")
+    t.b.wait(lambda: not t.b("imgui")["paletteOpen"], 5, step=0.2, what="Esc to close the command palette")
+
+    # palette commands: Monitor layout, a drawer
+    t.b("imgui palette monitor layout")
+    st = t.b.wait(lambda: (lambda s: s if s["mode"] == "monitor" else None)(t.b("imgui")), 5, step=0.2, what="palette: Monitor layout")
+    if st["uiLastMode"] != "monitor":
+        raise Fail("the layout J opens was not remembered: %s" % st)
+    t.b("imgui palette open log")
+    t.b.wait(lambda: t.b("imgui")["drawer"] == "LOG", 5, step=0.2, what="palette: Open Log drawer")
+    t.b("imgui drawer NONE")
+    t.b("imgui palette edit layout")
+    t.b.wait(lambda: t.b("imgui")["mode"] == "edit", 5, step=0.2, what="palette: Edit layout")
+
+    # resize while the workspace renders
     w0, h0 = st["displayW"], st["displayH"]
     t.b("imgui resize 960 540")
-    t.b.wait(lambda: (lambda s: s if s["displayW"] == 960 and s["displayH"] == 540 else None)(t.b("imgui")),
-             10, step=0.2, what="ImGui display size 960x540 after resize")
+    st = t.b.wait(lambda: (lambda s: s if s["displayW"] == 960 and s["displayH"] == 540 else None)(t.b("imgui")),
+                  10, step=0.2, what="display size 960x540 after resize")
+    if st["vpX"] + st["vpW"] > 960.5 or st["vpW"] < 100:
+        raise Fail("game area does not fit the 960x540 window: %s" % st)
     t.b("imgui resize %d %d" % (w0, h0))
     st = t.b.wait(lambda: (lambda s: s if s["displayW"] == w0 and s["displayH"] == h0 else None)(t.b("imgui")),
-                  10, step=0.2, what="ImGui display size restored")
+                  10, step=0.2, what="display size restored")
 
-    # Click the Stop button inside the ImGui window to stop the running script
-    sx, sy = st["stopX"] + 15, st["stopY"] + 10
+    # UI scale: fonts are rebuilt, rendering carries on
+    f0 = st["framesRendered"]
+    t.b("imgui scale 1.25")
+    t.b.wait(lambda: t.b("imgui")["framesRendered"] > f0 + 5, 5, step=0.2, what="frames after UI scale 125%")
+    t.b("imgui scale 1.0")
+    time.sleep(0.5)
+
+    # the Stop button in the Now running card
+    st = t.b.wait(lambda: (lambda s: s if s["stopW"] > 0 else None)(t.b("imgui")), 5, step=0.2, what="Stop button rect")
+    sx, sy = st["stopX"] + st["stopW"] / 2.0, st["stopY"] + st["stopH"] / 2.0
     t.b("imgui move %.1f %.1f" % (sx, sy))
     time.sleep(0.15)
     t.b("imgui press %.1f %.1f 0" % (sx, sy))
@@ -166,241 +202,171 @@ def test_imgui_spike(t):
     t.script_done(10)
     t.wait_chat("Script stopped", 30)
 
-    # Press F9 again to close the ImGui spike window
-    t.b("imgui key 298 1 0")
-    t.b("imgui key 298 0 0")
-    t.b.wait(lambda: not t.b("imgui")["spikeOpen"], 5, step=0.2, what="ImGui spike window to close")
-    return "ImGui rendered (%d frames), Runner state shown, focus blocked J/K leak, resize 960x540 ok, Stop button halted script" % st["framesRendered"]
+    # J (panels have the keyboard, no text field) closes it again
+    t.b("imgui click 24 %d 0" % (h0 - 40))
+    t.b("imgui key 74 1 0")
+    t.b("imgui key 74 0 0")
+    st = t.b.wait(lambda: (lambda s: s if not s["shellOpen"] else None)(t.b("imgui")), 5, step=0.2, what="J to close the workspace")
+    if st["vpX"] != 0.0 or st["vpW"] != float(w0):
+        raise Fail("closed workspace should give the game the whole window: %s" % st)
+    return "J open/close, no key leaks, Ctrl+P palette (layouts, drawers), resize, scale 125%, Stop button ok"
 
 
 def test_viewport(t):
-    """Stage 1 Game Viewport: top-right quarter blit, mouse remapping for chests & Pick block, keyboard focus gating, resize/GUI scale/F8."""
+    """The game inside the workspace: letterboxed game area, focus gating, walking, Baritone, Pick block, chest clicks, resize."""
     reset_area(t)
-    t.b("screen close")
-    t.b("imgui close")
-    t.b("imgui fullscreen false")
-    t.b("chat /queue ui docked")
-    t.wait_chat("UI mode set to 'docked'.", 5)
-
-    # 1. Verify top-right quarter Game Viewport geometry
+    ui_reset(t)
+    t.b("imgui open edit")
     st = t.b.wait(lambda: (lambda s: s if s["dockedActive"] and s["framesRendered"] > 0 else None)(t.b("imgui")),
-                  10, step=0.2, what="docked viewport to render")
+                  10, step=0.2, what="the workspace to render")
     dw, dh = st["displayW"], st["displayH"]
-    exp_x = float(dw // 2)
-    exp_y = 30.0
-    exp_w = float(dw - int(exp_x))
-    exp_h = float((dh - 30) // 2)
-    if (st["vpX"], st["vpY"], st["vpW"], st["vpH"]) != (exp_x, exp_y, exp_w, exp_h):
-        raise Fail("unexpected viewport rect: got (%s,%s,%s,%s), expected (%s,%s,%s,%s)"
-                   % (st["vpX"], st["vpY"], st["vpW"], st["vpH"], exp_x, exp_y, exp_w, exp_h))
 
-    # 2. Verify keyboard focus gating: clicking outside viewport blocks keys; clicking inside viewport focuses game
-    t.b("imgui click 80 100 0")
+    # 1. Edit layout: the game sits top right; the fitted image keeps the window's aspect ratio
+    if not (st["vpX"] > dw * 0.45 and st["vpY"] == 0.0 and abs(st["vpX"] + st["vpW"] - dw) < 1.0):
+        raise Fail("unexpected game area in the Edit layout: %s" % st)
+    if abs(st["fitW"] / st["fitH"] - dw / float(dh)) > 0.02:
+        raise Fail("the game image is stretched: fit %sx%s for a %sx%s window" % (st["fitW"], st["fitH"], dw, dh))
+
+    # 2. focus gating: a click on the panels keeps keys away from the game; a click on the game gives them back
+    t.b("imgui click %d %d 0" % (dw - 60, dh - 60))
     st = t.b("imgui")
     if st["gameFocused"]:
-        raise Fail("clicking outside Game Viewport did not unfocus the game view: %s" % st)
-    # Press E (69) and J (74) while gameFocused is False -> must NOT open InventoryScreen or QueueScreen
+        raise Fail("clicking the panels did not take the keyboard from the game: %s" % st)
     t.b("imgui key 69 1 0")
     t.b("imgui key 69 0 0")
-    t.b("imgui key 74 1 0")
-    t.b("imgui key 74 0 0")
     time.sleep(0.25)
     if t.state()["screen"] != "":
-        raise Fail("keyboard input leaked to game while Game Viewport was unfocused: screen=%s" % t.state()["screen"])
-
-    # Click inside the Top-Right Game Viewport -> gameFocused becomes True
-    vcx = st["vpX"] + st["vpW"] * 0.5
-    vcy = st["vpY"] + st["vpH"] * 0.5
+        raise Fail("E leaked to the game while the panels had the keyboard: screen=%s" % t.state()["screen"])
+    vcx = st["fitX"] + st["fitW"] * 0.5
+    vcy = st["fitY"] + st["fitH"] * 0.5
     t.b("imgui click %.1f %.1f 0" % (vcx, vcy))
     st = t.b("imgui")
     if not st["gameFocused"]:
-        raise Fail("clicking inside Game Viewport did not focus the game view: %s" % st)
-
-    # Press E (69) while gameFocused is True -> opens InventoryScreen
+        raise Fail("clicking the game did not give it the keyboard: %s" % st)
     t.b("imgui key 69 1 0")
     t.b("imgui key 69 0 0")
     t.b.wait(lambda: t.state()["screen"].endswith("InventoryScreen"), 5, step=0.2, what="InventoryScreen to open")
     t.b("screen close")
     t.b.wait(lambda: t.state()["screen"] == "", 5, step=0.2, what="InventoryScreen to close")
 
-    # 3. Walking at the reduced viewport size
+    # 3. walking in the small game view
     t.cmd("/tp @s 100.5 -60 100.5 0 0")
     time.sleep(0.3)
     z0 = t.state()["z"]
-    t.b("imgui key 87 1 0")   # hold W
+    t.b("imgui key 87 1 0")
     time.sleep(0.6)
-    t.b("imgui key 87 0 0")   # release W
+    t.b("imgui key 87 0 0")
     time.sleep(0.2)
     z1 = t.state()["z"]
     if z1 - z0 < 0.8:
-        raise Fail("walking forward in docked viewport did not move player: z0=%.2f z1=%.2f" % (z0, z1))
+        raise Fail("walking forward in the game view did not move the player: z0=%.2f z1=%.2f" % (z0, z1))
 
-    # 4. Mining with Baritone at the reduced viewport size
+    # 4. Baritone mining while the workspace is open
     t.cmd("/tp @s 100.5 -60 100.5 0 0", "/setblock 102 -60 100 coal_ore", "/give @s diamond_pickaxe 1")
     time.sleep(0.3)
     t.run("viewport-mine.txt")
     t.wait_chat("TEST viewport mine done", 30)
     t.script_done(10)
     if "air" not in t.block((102, -60, 100)):
-        raise Fail("Baritone mining in docked viewport failed: block=%s" % t.block((102, -60, 100)))
+        raise Fail("Baritone mining with the workspace open failed: block=%s" % t.block((102, -60, 100)))
 
-    # 5. Pick block (both middle-click in world and QueueScreen's Pick block button) inside the reduced viewport
+    # 5. Pick block: middle-click in the game view, and the editor's Pick block button (inserts at the cursor)
     t.cmd("/clear @s", "/setblock 100 -60 102 gold_block", "/item replace entity @s inventory.0 with minecraft:gold_block 1",
           "/tp @s 100.5 -60 100.5 0 25")
     time.sleep(0.4)
-    t.b("imgui click %.1f %.1f 2" % (vcx, vcy))   # middle-click (button 2) inside Game Viewport
+    t.b("imgui click %.1f %.1f 2" % (vcx, vcy))
     t.b.wait(lambda: t.b("held")["item"] == "minecraft:gold_block", 5, step=0.2, what="middle-click Pick block to select gold_block")
+    t.b("panels setscript let target = pos(")
+    t.b("panels cursor 17")
+    p = t.b("panels")
+    if p["pickW"] <= 0:
+        raise Fail("Pick block button rect not recorded: %s" % p)
+    t.b("imgui click %.1f %.1f 0" % (p["pickX"] + p["pickW"] / 2.0, p["pickY"] + p["pickH"] / 2.0))
+    p = t.b.wait(lambda: (lambda s: s if "pos(100, -60, 102)" in s["scriptText"] else None)(t.b("panels")), 5, step=0.2,
+                 what="Pick block button to insert the looked-at position")
+    if not p["scriptText"].startswith("let target = pos(100, -60, 102)"):
+        raise Fail("Pick block did not insert pos(...) at the cursor: %r" % p["scriptText"])
 
-    # Also test QueueScreen's Pick block button via remapped viewport coordinates (at guiScale=1 so QueueScreen fits vertically in 480p)
-    t.b("imgui guiscale 1")
-    t.b("chat /queue clear")
-    t.wait_chat("Script cleared.", 5)
-    t.b("editor")
-    t.b.wait(lambda: t.state()["screen"].endswith("QueueScreen"), 5, step=0.2, what="QueueScreen to open")
-    st = t.b("imgui")
-    gw, gh = st["guiScaledW"], st["guiScaledH"]
-    w0 = min(gw - 24, 460)
-    left = (gw - w0) // 2
-    box_y = 40 + 40 + 6
-    box_h = max(60, gh - box_y - 58 - 4 - 16 - 26 - 26 - 6)
-    panel_y = box_y + box_h + 4
-    py = panel_y + 58 + 16
-    by = py + 26
-    bw = (w0 - 20) // 6
-    pick_gx = left + 4 * (bw + 4) + bw * 0.5
-    pick_gy = by + 10
-    t.b("imgui clickgui %.1f %.1f 0" % (pick_gx, pick_gy))
-    t.b.wait(lambda: t.b("imgui")["picking"] and t.state()["screen"] == "", 5, step=0.2, what="Pick block mode from QueueScreen")
-    t.b("imgui key 74 1 0")   # press J while aiming at (100, -60, 102)
-    t.b("imgui key 74 0 0")
-    t.b.wait(lambda: t.state()["screen"].endswith("QueueScreen"), 5, step=0.2, what="QueueScreen to reopen after Pick block")
-    t.b("screen close")
-    t.b("imgui guiscale 0")
-
-    # 6. Opening a chest and clicking slots inside ContainerScreen via remapped Game Viewport coordinates
+    # 6. a chest opened and its slots clicked through the game view
     t.cmd("/clear @s", "/setblock 100 -60 102 chest",
           "/item replace block 100 -60 102 container.0 with minecraft:diamond 16",
           "/tp @s 100.5 -60 100.5 0 25")
     time.sleep(0.4)
-    t.b("imgui click %.1f %.1f 1" % (vcx, vcy))   # right-click chest inside Game Viewport
+    t.b("imgui click %.1f %.1f 1" % (vcx, vcy))
     t.b.wait(lambda: t.state()["screen"].endswith("ContainerScreen"), 5, step=0.2, what="ContainerScreen to open")
     time.sleep(0.25)
     st = t.b("imgui")
     gw, gh = st["guiScaledW"], st["guiScaledH"]
     c_left = (gw - 176) // 2
     c_top = (gh - 168) // 2
-    # Click slot 0 of the chest (c_left + 16, c_top + 26), then click player hotbar slot 0 (c_left + 16, c_top + 150)
     t.b("imgui clickgui %.1f %.1f 0" % (c_left + 16, c_top + 26))
     time.sleep(0.2)
     t.b("imgui clickgui %.1f %.1f 0" % (c_left + 16, c_top + 150))
     time.sleep(0.2)
     t.b("screen close")
-    t.b.wait(lambda: t.count("diamond") == 16, 5, step=0.2, what="16 diamonds transferred from chest via remapped viewport clicks")
+    t.b.wait(lambda: t.count("diamond") == 16, 5, step=0.2, what="16 diamonds moved from the chest by clicks through the game view")
 
-    # 7. Window resize, GUI scale, and F8 fullscreen toggle
+    # 7. resize, GUI scale, Monitor layout, closed
     t.b("imgui resize 1024 600")
-    t.b.wait(lambda: t.b("imgui")["displayW"] == 1024 and t.b("imgui")["displayH"] == 600, 5, step=0.2, what="window resize 1024x600")
-    st = t.b("imgui")
-    if st["vpX"] != 512.0 or st["vpW"] != 512.0:
-        raise Fail("viewport did not update on 1024x600 resize: %s" % st)
-
+    st = t.b.wait(lambda: (lambda s: s if s["displayW"] == 1024 and s["displayH"] == 600 else None)(t.b("imgui")), 5, step=0.2, what="window resize 1024x600")
+    if abs(st["vpX"] + st["vpW"] - 1024) > 1.0:
+        raise Fail("game area did not follow the 1024x600 resize: %s" % st)
     t.b("imgui guiscale 1")
     t.b.wait(lambda: t.b("imgui")["guiScale"] == 1, 5, step=0.2, what="guiScale=1")
     t.b("imgui guiscale 0")
-
     t.b("imgui resize %d %d" % (dw, dh))
     t.b.wait(lambda: t.b("imgui")["displayW"] == dw and t.b("imgui")["displayH"] == dh, 5, step=0.2, what="window resize restore")
-
-    # Press F8 (297) -> fullscreenGame = True, panels hidden, game fills window
-    t.b("imgui key 297 1 0")
-    t.b("imgui key 297 0 0")
-    st = t.b.wait(lambda: (lambda s: s if s["fullscreenGame"] else None)(t.b("imgui")), 5, step=0.2, what="F8 fullscreenGame on")
-    if st["dockedActive"] or (st["vpX"], st["vpY"], st["vpW"], st["vpH"]) != (0.0, 0.0, float(dw), float(dh)):
-        raise Fail("F8 fullscreen did not expand viewport to full window: %s" % st)
-
-    # Press F8 (297) again -> fullscreenGame = False, panels restored, game back in top-right quarter
-    t.b("imgui key 297 1 0")
-    t.b("imgui key 297 0 0")
-    st = t.b.wait(lambda: (lambda s: s if not s["fullscreenGame"] and s["dockedActive"] else None)(t.b("imgui")),
-                  5, step=0.2, what="F8 fullscreenGame off")
-    if (st["vpX"], st["vpY"], st["vpW"], st["vpH"]) != (exp_x, exp_y, exp_w, exp_h):
-        raise Fail("F8 restore did not return viewport to top-right quarter: %s" % st)
-
-    t.b("chat /queue ui vanilla")
-    t.wait_chat("UI mode set to 'vanilla'.", 5)
-    return "top-right viewport %.0fx%.0f, focus gating ok, walking/Baritone mining/Pick block/chest slot click ok, resize/GUI scale/F8 ok" % (exp_w, exp_h)
-
-
-def test_docked_shell(t):
-    """Stage 2 docked shell: 2x2 DockSpace layout, Reset layout button + ini persistence, Top Bar status/Skip/Stop/F8,
-    and ProgressModel segmented step bar + telemetry while a script runs."""
-    reset_area(t)
+    t.b("imgui open monitor")
+    st = t.b.wait(lambda: (lambda s: s if s["mode"] == "monitor" else None)(t.b("imgui")), 5, step=0.2, what="Monitor layout")
+    if not (st["vpY"] > 0 and st["vpX"] > 0 and st["vpX"] + st["vpW"] < dw):
+        raise Fail("Monitor layout should put the game in the middle: %s" % st)
     t.b("imgui close")
-    t.b("imgui fullscreen off")
-    t.b("imgui guiscale 0")
-    t.b("chat /queue ui docked")
-    t.wait_chat("UI mode set to 'docked'.", 5)
+    st = t.b.wait(lambda: (lambda s: s if not s["shellOpen"] else None)(t.b("imgui")), 5, step=0.2, what="workspace closed")
+    if (st["vpX"], st["vpY"], st["vpW"], st["vpH"]) != (0.0, 0.0, float(dw), float(dh)):
+        raise Fail("closed workspace should give the game the whole window: %s" % st)
+    t.b("imgui open edit")
+    t.b("imgui close")
+    return "Edit game area %.0fx%.0f (fitted, not stretched), focus gating, walking, Baritone, Pick block at cursor, chest clicks, resize, Monitor, closed ok" % (st["vpW"], st["vpH"])
+
+
+def test_monitor(t):
+    """Monitor layout while a multi-step script with an on-block runs: steps, handlers, telemetry; Stop in the top strip."""
+    reset_area(t)
+    ui_reset(t)
+    t.b("imgui open monitor")
     time.sleep(0.3)
-
     st = t.b("imgui")
-    if not st["dockedActive"] or st["layoutLabel"] != "2x2 Docked":
-        raise Fail("docked shell not active with '2x2 Docked' label: %s" % st)
+    if not st["shellOpen"] or st["mode"] != "monitor":
+        raise Fail("Monitor layout not open: %s" % st)
 
-    # 1. Click 'Reset layout' in the Top Bar and check layoutResets increments & ini is saved
-    resets0 = st["layoutResets"]
-    if st["resetW"] <= 0 or st["resetH"] <= 0:
-        raise Fail("Top Bar Reset layout button rect not recorded: %s" % st)
-    rx = st["resetX"] + st["resetW"] / 2.0
-    ry = st["resetY"] + st["resetH"] / 2.0
-    t.b("imgui click %.1f %.1f 0" % (rx, ry))
-    st = t.b.wait(lambda: (lambda s: s if s["layoutResets"] > resets0 else None)(t.b("imgui")),
-                  5, step=0.2, what="Reset layout button click to rebuild 2x2 DockSpace")
-    ini_path = os.path.join(os.environ.get("MANHATTAN_PROFILE", mc.PROFILE), "config", "manhattan-imgui.ini")
-    if not os.path.exists(ini_path):
-        raise Fail("manhattan-imgui.ini was not saved after layout build: %s" % ini_path)
-
-    # 2. Run a multi-step script with an 'on' handler and verify ProgressModel segments + telemetry
     t.run("docked-shell.txt")
     t.wait_chat("TEST docked_shell started", 10)
     st = t.b.wait(lambda: (lambda s: s if s["runnerRunning"] and s["segRunning"] == 1 and s["segDone"] >= 1 else None)(t.b("imgui")),
                   10, step=0.2, what="ProgressModel running step segment")
     if st["totalSteps"] < 3 or st["currentStep"] < 2:
         raise Fail("unexpected step counts in ProgressModel: %s" % st)
-    if st["interruptCount"] < 1:
-        raise Fail("expected at least 1 active interrupt ('food < 14'): %s" % st)
+    if st["handlerCount"] < 1 or st["interruptCount"] < 1:
+        raise Fail("expected the 'on food < 14' handler in the Handlers tile: %s" % st)
     if "100" not in st["posText"]:
         raise Fail("expected player position near 100 in posText: %s" % st)
 
-    # 3. Click Top Bar Stop button and verify the script stops cleanly
-    if st["stopW"] <= 0 or st["stopH"] <= 0:
-        raise Fail("Top Bar Stop button rect not recorded: %s" % st)
-    sx = st["stopX"] + st["stopW"] / 2.0
-    sy = st["stopY"] + st["stopH"] / 2.0
-    t.b("imgui click %.1f %.1f 0" % (sx, sy))
-    t.b.wait(lambda: not t.b("script")["running"], 10, step=0.2, what="Top Bar Stop button to stop script")
-    st2 = t.b("imgui")
-    if st2["runnerRunning"]:
-        raise Fail("RunnerView still reports running after Top Bar Stop click: %s" % st2)
-
-    t.b("chat /queue ui vanilla")
-    t.wait_chat("UI mode set to 'vanilla'.", 5)
-    return "2x2 Docked layout + Reset layout ok, ProgressModel (%d/%d steps, done=%d, running=%d, int=%d) ok, Top Bar Stop ok" % (
-        st["currentStep"], st["totalSteps"], st["segDone"], st["segRunning"], st["interruptCount"])
+    st = t.b.wait(lambda: (lambda s: s if s["stopW"] > 0 and s["stopY"] < 100 else None)(t.b("imgui")), 5, step=0.2, what="Stop in the top strip")
+    t.b("imgui click %.1f %.1f 0" % (st["stopX"] + st["stopW"] / 2.0, st["stopY"] + st["stopH"] / 2.0))
+    t.b.wait(lambda: not t.b("script")["running"], 10, step=0.2, what="top strip Stop to stop the script")
+    t.b("imgui close")
+    return "Monitor: %d/%d steps (done=%d, running=%d), %d handler(s), Stop ok" % (
+        st["currentStep"], st["totalSteps"], st["segDone"], st["segRunning"], st["handlerCount"])
 
 
 def test_panels(t):
-    """Stage 3 panels: Script Editor (file tabs, Syntax, Suggest Tab completion, ScriptCheck Test, Pick block, Run),
-    Presets (insert/share), Chests (ChestIndexView search/sort/category/low-stock + Show in world / Copy pos / Go there),
-    Areas & Capture (Fetch looked-at, Aim in world), Log (LogBuffer filters All/Errors/Baritone, Copy, Clear), and Assistant stub."""
+    """Editor (tabs, completion at the cursor, Ctrl+/, live check / Test, Pick block, presets at the cursor line, Run),
+    Chests, Areas & Capture (Fetch looked-at, Aim in world closes and J brings the workspace back), Log."""
     reset_area(t)
-    t.b("imgui close")
-    t.b("imgui fullscreen off")
-    t.b("imgui guiscale 0")
-    t.b("chat /queue ui docked")
-    t.wait_chat("UI mode set to 'docked'.", 5)
+    ui_reset(t)
+    t.b("imgui open edit")
     time.sleep(0.3)
 
-    # 1. Script Editor: file tabs, Suggest completion, ScriptCheck error hint, Pick block, Presets insert, Run button
+    # 1. editor
     p = t.b("panels addtab panel-test.txt // header")
     if p["tabCount"] < 2 or p["activeTab"] != "panel-test.txt":
         raise Fail("Script Editor did not create/switch to 'panel-test.txt' tab: %s" % p)
@@ -412,7 +378,24 @@ def test_panels(t):
     if p["scriptText"] != "fill_water(":
         raise Fail("Tab completion did not replace 'fill_wa' with 'fill_water(': %s" % p)
 
-    # ScriptCheck Test button click
+    # completion in the middle of the script: only the word at the cursor changes
+    t.b("panels setscript wait 1\\nfill_wa\\nwait 2")
+    t.b("panels cursor 14")
+    p = t.b("panels complete")
+    if p["scriptText"] != "wait 1\nfill_water(\nwait 2":
+        raise Fail("completion at the cursor changed the wrong place: %r" % p["scriptText"])
+
+    # Ctrl+/ comment toggle (on the cursor line)
+    t.b("panels setscript wait 1\\nwait 2")
+    t.b("panels cursor 9")
+    p = t.b("panels comment")
+    if p["scriptText"] != "wait 1\n// wait 2":
+        raise Fail("comment toggle did not comment the cursor line: %r" % p["scriptText"])
+    p = t.b("panels comment")
+    if p["scriptText"] != "wait 1\nwait 2":
+        raise Fail("comment toggle did not uncomment: %r" % p["scriptText"])
+
+    # Test button
     t.b("panels setscript unknown_fn_xyz()")
     time.sleep(0.2)
     p = t.b("panels")
@@ -424,7 +407,7 @@ def test_panels(t):
     if p["errorCount"] != 1:
         raise Fail("expected 1 ScriptCheck error for unknown_fn_xyz(): %s" % p)
 
-    # Pick block in ImGui Script Editor
+    # Pick block with no cursor: a named position line at the end
     t.cmd("/setblock 100 -60 102 emerald_block", "/tp @s 100.5 -60 100.5 0 25")
     time.sleep(0.3)
     t.b("panels setscript ")
@@ -432,12 +415,16 @@ def test_panels(t):
     if "pos(100, -60, 102)" not in p["scriptText"]:
         raise Fail("ImGui Pick block did not insert pos(100, -60, 102): %s" % p)
 
-    # Presets: insert preset into active script editor
+    # preset at the cursor line (a blank cursor line is replaced)
+    t.b("panels setscript wait 1\\n\\nwait 2")
+    t.b("panels cursor 7")
     p = t.b("panels presetinsert Wait for the morning")
-    if p["lastInsertedPreset"] != "Wait for the morning" or "wait until day" not in p["scriptText"]:
-        raise Fail("Preset insert did not add 'wait until day': %s" % p)
+    lines = p["scriptText"].split("\n")
+    if p["lastInsertedPreset"] != "Wait for the morning" or "wait until day" not in p["scriptText"] \
+            or lines[0] != "wait 1" or lines[-1] != "wait 2" or "" in lines:
+        raise Fail("preset was not put in at the cursor line: %r" % p["scriptText"])
 
-    # Run button in Script Editor + running line highlight
+    # Run button + running line
     t.b("panels setscript print(\"TEST panel editor run\")\\nwait 20")
     time.sleep(0.2)
     p = t.b("panels")
@@ -451,37 +438,34 @@ def test_panels(t):
     t.b.wait(lambda: not t.b("script")["running"], 5, step=0.2, what="script to stop")
     t.b("panels selecttab 0")
 
-    # 2. Chests panel: ChestIndexView search, sort, category filter, low-stock filter, and detail pane actions
+    # 2. Chests
+    t.b("imgui drawer CHESTS")
     t.b("panels clearchests")
     t.b("panels indexchest 102 -60 100 dirt:128,diamond_pickaxe:1,bread:8")
     p = t.b("panels chestsort COUNT false")
     if p["chestRowCount"] != 3 or p["firstChestItem"] != "dirt" or p["firstChestCount"] != 128:
         raise Fail("ChestIndexView sort by COUNT desc failed: %s" % p)
-
     p = t.b("panels chestfilter - TOOLS false")
     if p["chestRowCount"] != 1 or p["firstChestItem"] != "diamond_pickaxe":
         raise Fail("ChestIndexView TOOLS category filter failed: %s" % p)
-
     p = t.b("panels chestfilter - ALL true")
     if p["chestRowCount"] != 2:
         raise Fail("ChestIndexView lowStockOnly filter expected 2 rows (pickaxe, bread): %s" % p)
     t.b("panels chestfilter - ALL false")
-
     p = t.b("panels chestshow 102 -60 100")
     if p["highlightedChest"] != "102,-60,100":
         raise Fail("ChestIndexView Show in world did not set highlightedChest: %s" % p)
-
     p = t.b("panels chestcopy 102 -60 100")
     if p["lastCopiedPos"] != "pos(102, -60, 100)":
         raise Fail("ChestIndexView Copy pos did not copy pos(102, -60, 100): %s" % p)
-
     t.cmd("/setblock 106 -60 100 chest", "/tp @s 100.5 -60 100.5 0 0")
     time.sleep(0.3)
     t.b("panels chestgoto 106 -60 100")
     t.b.wait(lambda: t.state()["x"] > 103.0, 15, step=0.2, what="Baritone #goto from Chests detail pane")
     t.cmd("/setblock 106 -60 100 air", "/tp @s 100.5 -60 100.5 0 25")
 
-    # 3. Areas & Capture panels: Fetch looked-at and Aim in world
+    # 3. Capture: Fetch looked-at; Aim in world closes the workspace, J captures and brings it back
+    t.b("imgui drawer CAPTURE")
     t.cmd("/setblock 100 -60 102 chest")
     time.sleep(0.3)
     p0 = t.b("panels capturerole dump")
@@ -489,21 +473,21 @@ def test_panels(t):
     p1 = t.b("panels capturefetch")
     if p1["captureEntryCount"] <= entries0:
         raise Fail("Capture Fetch looked-at did not add an entry to the capture sheet: %s -> %s" % (entries0, p1))
-
     p2 = t.b("panels captureaim")
     if not p2["captureAiming"]:
         raise Fail("Capture Aim in world did not enter aiming mode: %s" % p2)
-    # Focus game viewport and press J (74) to capture the looked-at chest and end aiming without opening vanilla CaptureScreen
-    st_im = t.b("imgui")
-    t.b("imgui click %.1f %.1f 0" % (st_im["vpX"] + st_im["vpW"] / 2.0, st_im["vpY"] + st_im["vpH"] / 2.0))
-    time.sleep(0.15)
+    st_im = t.b.wait(lambda: (lambda s: s if not s["shellOpen"] and s["overlayVisible"] else None)(t.b("imgui")), 5, step=0.2,
+                     what="Aim in world to close the workspace and show the aiming hint")
     t.b("imgui key 74 1 0")
     t.b("imgui key 74 0 0")
-    p3 = t.b.wait(lambda: (lambda s: s if not s["captureAiming"] else None)(t.b("panels")), 5, step=0.2, what="J key to finish Capture aiming in docked mode")
+    t.b.wait(lambda: (lambda s: s if not s["captureAiming"] else None)(t.b("panels")), 5, step=0.2, what="J to capture and end aiming")
+    st_im = t.b.wait(lambda: (lambda s: s if s["shellOpen"] and s["drawer"] == "CAPTURE" else None)(t.b("imgui")), 5, step=0.2,
+                     what="the workspace to come back on the Capture drawer")
     if t.state()["screen"] != "":
-        raise Fail("docked Capture aiming opened a vanilla screen instead of staying in docked UI: %s" % t.state()["screen"])
+        raise Fail("Capture aiming opened a vanilla screen: %s" % t.state()["screen"])
 
-    # 4. Log panel: All / Errors / Baritone filters, multi-line selection, Copy, Clear
+    # 4. Log
+    t.b("imgui drawer LOG")
     p_log = t.b("panels logfilter ALL")
     if p_log["logTotal"] < 3 or p_log["logErrors"] < 1 or p_log["logBaritone"] < 1:
         raise Fail("expected LogBuffer to have INFO, ERROR, and BARITONE entries: %s" % p_log)
@@ -524,11 +508,41 @@ def test_panels(t):
     if p_clr["logTotal"] != 0:
         raise Fail("LogBuffer clear did not empty the ring buffer: %s" % p_clr)
     t.b("panels logfilter ALL")
+    t.b("imgui drawer NONE")
+    t.b("imgui close")
+    return "Editor (tabs, completion at cursor, Ctrl+/, Test, Pick, preset at cursor, Run) ok, Chests ok, Capture aim/J/back ok, Log ok"
 
-    t.b("chat /queue ui vanilla")
-    t.wait_chat("UI mode set to 'vanilla'.", 5)
-    return "Editor (tabs/Syntax/Suggest/Test/Pick/Run) ok, Presets ok, Chests (search/sort/filter/Show/Copy/Go) ok, Areas/Capture ok, Log select/filters/Clear ok"
 
+def test_ui_screens(t):
+    """PNGs of the Edit, Monitor and closed layouts at 1920x1080 while a script runs (tmp/ingame/screens), to look at."""
+    reset_area(t)
+    ui_reset(t)
+    out = os.path.join(mc.REPO, "tmp", "ingame", "screens")
+    os.makedirs(out, exist_ok=True)
+    t.cmd("/give @s diamond_pickaxe[damage=1100] 1", "/give @s diamond_shovel[damage=1500] 1", "/give @s diamond_sword 1",
+          "/give @s bread 15", "/give @s dirt 192", "/give @s cobblestone 100", "/give @s torch 31",
+          "/setblock 104 -60 104 chest", "/setblock 96 -60 104 red_bed")
+    t.b("chat /queue area set 100 -61 106 110 -61 116")
+    t.b("chat /queue area save pond")
+    time.sleep(0.5)
+    t.b("imgui resize 1920 1080")
+    t.b.wait(lambda: t.b("imgui")["displayW"] >= 1600, 10, step=0.2, what="a large window")
+    t.run("ui-screens.txt")
+    t.wait_chat("TEST ui screens started", 15)
+    time.sleep(4)
+    shots = []
+    for name, cmd in (("edit", "imgui open edit"), ("monitor", "imgui open monitor"), ("closed", "imgui close")):
+        t.b(cmd)
+        time.sleep(1.5)
+        path = os.path.join(out, "%s.png" % name)
+        t.b("imgui shot %s" % path)
+        st = t.b.wait(lambda: (lambda s: s if s["lastShot"] else None)(t.b("imgui")), 10, step=0.2, what="screenshot %s" % name)
+        if st["lastShot"].startswith("error"):
+            raise Fail("screenshot failed: %s" % st["lastShot"])
+        shots.append(path)
+    t.b("stopscript")
+    t.b("chat /queue area delete pond")
+    return "screens: " + ", ".join(shots)
 
 
 
@@ -2225,7 +2239,7 @@ def _forest(group):
 TREE_TESTS = [("trees_small", test_trees_small)] + [("trees_forest_" + g, _forest(g)) for g in FOREST_GROUPS]
 
 
-TESTS = [("smoke", test_smoke), ("imgui_spike", test_imgui_spike), ("viewport", test_viewport), ("docked_shell", test_docked_shell), ("panels", test_panels), ("fill_water", test_fill_water), ("fill_water_deep", test_fill_water_deep), ("fill_water_shaft", test_fill_water_shaft), ("fill_water_submerged_shaft", test_fill_water_submerged_shaft), ("fill_water_submerged_pocket", test_fill_water_submerged_pocket), ("eat", test_eat), ("defend", test_defend), ("clear_resume", test_clear_resume), ("clear_overnight_stress", test_clear_overnight_stress), ("dump", test_dump), ("chest_index", test_chest_index), ("hotbar_tools", test_hotbar_tools), ("air", test_air), ("clear_wet", test_clear_wet),
+TESTS = [("smoke", test_smoke), ("workspace", test_workspace), ("viewport", test_viewport), ("monitor", test_monitor), ("panels", test_panels), ("ui_screens", test_ui_screens), ("fill_water", test_fill_water), ("fill_water_deep", test_fill_water_deep), ("fill_water_shaft", test_fill_water_shaft), ("fill_water_submerged_shaft", test_fill_water_submerged_shaft), ("fill_water_submerged_pocket", test_fill_water_submerged_pocket), ("eat", test_eat), ("defend", test_defend), ("clear_resume", test_clear_resume), ("clear_overnight_stress", test_clear_overnight_stress), ("dump", test_dump), ("chest_index", test_chest_index), ("hotbar_tools", test_hotbar_tools), ("air", test_air), ("clear_wet", test_clear_wet),
          ("schem_list", test_schem_list), ("schem_add", test_schem_add), ("schem_fix", test_schem_fix), ("schem_fix_wrong", test_schem_fix_wrong), ("schem_exact", test_schem_exact),
          ("colossal_schem", test_colossal_schem)]
 

@@ -69,14 +69,62 @@ public final class DockedPanels {
     private static int editorCursorPos = 0;
     private static int editorSelStart = 0;
     private static int editorSelEnd = 0;
+    /** Cursor (char index) when the editor was last active; -1 = never. Pick block and presets go in here. */
+    private static int lastCursor = -1;
+    // an edit to apply inside the input callback (completion, comment toggle, pick) while the editor is active
+    private static String pendingText = null;
+    private static int pendingCursor = 0;
+    private static boolean refocusEditor = false;
+    // completion state
+    private static String suggestKey = "";
+    private static boolean suggestForced = false;
+    private static boolean popupDismissed = false;
+    private static boolean popupNavigated = false;
+    // live checks (debounced)
+    private static List<ScriptCheck.Entry> liveChecks = List.of();
+    private static String liveCheckedText = null;
+    private static long lastEditAt = 0;
+    // config writes are throttled to one per second while typing
+    private static boolean configDirty = false;
+    private static long lastConfigSave = 0;
     private static final imgui.callback.ImGuiInputTextCallback EDITOR_CALLBACK = new imgui.callback.ImGuiInputTextCallback() {
         @Override
         public void accept(imgui.ImGuiInputTextCallbackData data) {
-            editorCursorPos = data.getCursorPos();
-            editorSelStart = data.getSelectionStart();
-            editorSelEnd = data.getSelectionEnd();
+            String buf = data.getBuf();
+            if (pendingText != null) {
+                String t = pendingText;
+                pendingText = null;
+                data.deleteChars(0, data.getBufTextLen());
+                data.insertChars(0, t);
+                int c = charToByte(t, pendingCursor);
+                data.setCursorPos(c);
+                data.setSelectionStart(c);
+                data.setSelectionEnd(c);
+                buf = t;
+            }
+            editorCursorPos = byteToChar(buf, data.getCursorPos());
+            editorSelStart = byteToChar(buf, data.getSelectionStart());
+            editorSelEnd = byteToChar(buf, data.getSelectionEnd());
+            lastCursor = editorCursorPos;
         }
     };
+
+    /** ImGui works in UTF-8 byte offsets; the script text in chars. */
+    static int byteToChar(String s, int bytes) {
+        int b = 0;
+        for (int i = 0; i < s.length(); i++) {
+            if (b >= bytes) return i;
+            int cp = s.codePointAt(i);
+            b += cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
+            if (Character.isSupplementaryCodePoint(cp)) i++;
+        }
+        return s.length();
+    }
+
+    static int charToByte(String s, int chars) {
+        int n = Math.max(0, Math.min(chars, s.length()));
+        return s.substring(0, n).getBytes(StandardCharsets.UTF_8).length;
+    }
 
     // Recorded button rects for TestBridge verification
     public static float runBtnX, runBtnY, runBtnW, runBtnH;
@@ -127,15 +175,90 @@ public final class DockedPanels {
         Values.Pos p = t.pos();
         String pos = "pos(" + p.x() + ", " + p.y() + ", " + p.z() + ")";
         String cur = currentScriptText();
-        String name = Places.varName(t.name());
-        var taken = Suggest.definedNames(cur);
-        String unique = name;
-        for (int i = 2; taken.contains(unique) || Builtins.all().containsKey(unique); i++) unique = name + i;
-        String line = "let " + unique + " = " + pos + "   // " + t.name();
-        String updated = cur.isBlank() ? line : (cur.endsWith("\n") ? cur + line : cur + "\n" + line);
-        setCurrentScriptText(updated);
-        editorStatus = "Picked " + t.name() + " at " + p + " -> " + unique;
+        int at = lastCursor < 0 ? cur.length() : Math.min(lastCursor, cur.length());
+        int ls = at == 0 ? 0 : cur.lastIndexOf('\n', at - 1) + 1;
+        int le = cur.indexOf('\n', at);
+        if (le < 0) le = cur.length();
+        String lineNow = cur.substring(ls, le);
+        String updated;
+        int cursorAfter;
+        if (lineNow.isBlank() || lastCursor < 0) {
+            // an empty line (or no cursor yet): a named position on its own line
+            String name = Places.varName(t.name());
+            var taken = Suggest.definedNames(cur);
+            String unique = name;
+            for (int i = 2; taken.contains(unique) || Builtins.all().containsKey(unique); i++) unique = name + i;
+            String line = "let " + unique + " = " + pos + "   // " + t.name();
+            if (lastCursor < 0) {
+                updated = cur.isBlank() ? line : (cur.endsWith("\n") ? cur + line : cur + "\n" + line);
+                cursorAfter = updated.length();
+            } else {
+                updated = cur.substring(0, ls) + line + cur.substring(le);
+                cursorAfter = ls + line.length();
+            }
+            editorStatus = "Picked " + t.name() + " at " + p + " -> " + unique;
+        } else {
+            // inside a line: pos(...) at the cursor; bare coordinates in # and / lines
+            String before = cur.substring(ls, at);
+            boolean bare = before.stripLeading().startsWith("#") || before.stripLeading().startsWith("/");
+            String insert = bare ? p.x() + " " + p.y() + " " + p.z() : before.endsWith("pos(") ? p.x() + ", " + p.y() + ", " + p.z() + ")" : pos;
+            updated = cur.substring(0, at) + insert + cur.substring(at);
+            cursorAfter = at + insert.length();
+            editorStatus = "Picked " + t.name() + " at " + p;
+        }
+        replaceText(updated, cursorAfter);
         Util.msg("Put in the " + t.name() + " at " + p + ".");
+    }
+
+    /** Replaces the active tab's text and puts the cursor at {@code cursor} (also while the editor is being typed in). */
+    static void replaceText(String updated, int cursor) {
+        if (editorInputActive) {
+            pendingText = updated;
+            pendingCursor = cursor;
+        }
+        lastCursor = cursor;
+        setCurrentScriptText(updated);
+    }
+
+    /** Pick block button: the looked-at block if there is one in the game view, else aim in the world (J). */
+    static void pickBlock() {
+        Places.Target t = Places.target();
+        if (t != null) {
+            handleImGuiPick(t);
+        } else {
+            imguiPicking = true;
+            QueueMod.picking = true;
+            editorStatus = "Aim at a block and press J.";
+            Shell.suspendForAiming();
+        }
+    }
+
+    /** Run button: runs the active tab. */
+    static void runCurrent() {
+        ensureTabsLoaded();
+        flushConfig(true);
+        String err = QueueMod.runner.start(cfg.script, activeTabIndex == 0 ? Jobs.SCRIPT : activeTabName());
+        if (err != null) {
+            editorStatus = err;
+            Util.msg(err);
+        } else {
+            editorStatus = "Running " + activeTabName() + " (" + cfg.script.size() + " lines).";
+        }
+    }
+
+    static String tabName(int i) {
+        ensureTabsLoaded();
+        return i >= 0 && i < tabs.size() ? tabs.get(i).name : "";
+    }
+
+    /** Writes the script to the config file if it changed (at most once a second unless {@code now}). */
+    static void flushConfig(boolean now) {
+        if (!configDirty) return;
+        long t = System.currentTimeMillis();
+        if (!now && t - lastConfigSave < 1000) return;
+        configDirty = false;
+        lastConfigSave = t;
+        Config.save();
     }
 
     public static void ensureTabsLoaded() {
@@ -244,6 +367,21 @@ public final class DockedPanels {
         return tabs.get(activeTabIndex).text;
     }
 
+    /** Puts the (remembered) cursor at char index {@code c}, as if the editor had been clicked there (tests). */
+    public static void setCursor(int c) {
+        int n = Math.max(0, Math.min(c, currentScriptText().length()));
+        lastCursor = n;
+        editorCursorPos = n;
+        editorSelStart = n;
+        editorSelEnd = n;
+    }
+
+    /** Sets the text from outside the editor (tests, commands): the cursor is forgotten, inserts go to the end. */
+    public static void setScriptText(String text) {
+        lastCursor = -1;
+        setCurrentScriptText(text);
+    }
+
     public static void setCurrentScriptText(String text) {
         ensureTabsLoaded();
         if (text == null) text = "";
@@ -265,7 +403,9 @@ public final class DockedPanels {
         while (!lines.isEmpty() && lines.get(lines.size() - 1).isBlank()) lines.remove(lines.size() - 1);
         cfg.script = lines;
         lastSyncedText = String.join("\n", cfg.script);
-        Config.save();
+        configDirty = true;
+        lastEditAt = System.currentTimeMillis();
+        flushConfig(false);
     }
 
     private static void recomputeSyntaxAndSuggestions(String text) {
@@ -275,13 +415,186 @@ public final class DockedPanels {
         } catch (Throwable t) {
             cachedSyntaxColors = new int[text.length()];
         }
+        updateSuggestions(text, true);
+    }
+
+    /** Completions at the cursor while typing (at the end of the text otherwise); recomputed when text or cursor move. */
+    private static void updateSuggestions(String text, boolean textChanged) {
+        int cur = editorInputActive ? Math.max(0, Math.min(editorCursorPos, text.length()))
+                : lastCursor >= 0 ? Math.min(lastCursor, text.length()) : text.length();
+        boolean force = suggestForced || !editorInputActive;
+        String key = cur + ":" + force + ":" + text.hashCode() + ":" + text.length();
+        if (key.equals(suggestKey)) return;
+        suggestKey = key;
+        if (textChanged) {
+            popupDismissed = false;
+        }
+        popupNavigated = false;
         try {
-            Suggest.Result r = Suggest.complete(text, text.length(), true);
+            Suggest.Result r = Suggest.complete(text, cur, force);
             suggestions = r.items();
             suggestFrom = r.from();
             selectedSuggestion = 0;
         } catch (Throwable t) {
             suggestions = List.of();
+        }
+    }
+
+    /** The word typed so far that the completions replace. */
+    private static String typedPrefix(String text) {
+        int cur = Math.max(0, Math.min(editorCursorPos, text.length()));
+        int from = Math.max(0, Math.min(suggestFrom, cur));
+        return text.substring(from, cur);
+    }
+
+    private static boolean popupVisible() {
+        if (!editorInputActive || popupDismissed || suggestions.isEmpty()) return false;
+        if (suggestForced) return true;
+        String typed = typedPrefix(currentScriptText());
+        return !typed.isEmpty() && (suggestions.size() > 1 || !suggestions.get(0).text().equals(typed));
+    }
+
+    /** Puts the chosen completion in at the cursor. */
+    static void acceptSuggestion(int idx) {
+        String text = currentScriptText();
+        if (suggestions.isEmpty()) return;
+        int cur = Math.max(0, Math.min(editorInputActive ? editorCursorPos : (lastCursor >= 0 ? lastCursor : text.length()), text.length()));
+        int start = Math.max(0, Math.min(suggestFrom, cur));
+        String s = suggestions.get(Math.max(0, Math.min(idx, suggestions.size() - 1))).text();
+        String before = text.substring(0, start);
+        String line = before.substring(before.lastIndexOf('\n') + 1).stripLeading();
+        String insert = s;
+        if (line.startsWith("#") || Lexer.KEYWORDS.contains(s)) insert += " ";
+        String updated = text.substring(0, start) + insert + text.substring(cur);
+        suggestForced = false;
+        replaceText(updated, start + insert.length());
+        editorStatus = "Completed: " + s;
+    }
+
+    /**
+     * Keys the editor handles itself before ImGui sees them (called from ImGuiManager.onKey): Tab accepts the
+     * completion, Up/Down/Enter/Esc drive the completion list, Ctrl+Space shows all completions, Ctrl+/ comments lines.
+     */
+    static boolean handleEditorKey(int key, int mods) {
+        if (!editorInputActive) return false;
+        boolean ctrl = (mods & GLFW.GLFW_MOD_CONTROL) != 0;
+        boolean popup = popupVisible();
+        if (key == GLFW.GLFW_KEY_TAB && mods == 0 && !suggestions.isEmpty() && (popup || ghostSuffix() != null)) {
+            acceptSuggestion(selectedSuggestion);
+            return true;
+        }
+        if (ctrl && key == GLFW.GLFW_KEY_SPACE) {
+            suggestForced = true;
+            popupDismissed = false;
+            suggestKey = "";
+            updateSuggestions(currentScriptText(), false);
+            return true;
+        }
+        if (ctrl && key == GLFW.GLFW_KEY_SLASH) {
+            toggleComment();
+            return true;
+        }
+        if (popup) {
+            int n = suggestions.size();
+            switch (key) {
+                case GLFW.GLFW_KEY_DOWN -> { selectedSuggestion = (selectedSuggestion + 1) % n; popupNavigated = true; return true; }
+                case GLFW.GLFW_KEY_UP -> { selectedSuggestion = (selectedSuggestion - 1 + n) % n; popupNavigated = true; return true; }
+                case GLFW.GLFW_KEY_PAGE_DOWN -> { selectedSuggestion = Math.min(n - 1, selectedSuggestion + 8); popupNavigated = true; return true; }
+                case GLFW.GLFW_KEY_PAGE_UP -> { selectedSuggestion = Math.max(0, selectedSuggestion - 8); popupNavigated = true; return true; }
+                case GLFW.GLFW_KEY_ESCAPE -> { popupDismissed = true; suggestForced = false; return true; }
+                case GLFW.GLFW_KEY_ENTER, GLFW.GLFW_KEY_KP_ENTER -> {
+                    if (popupNavigated) { acceptSuggestion(selectedSuggestion); return true; }
+                    return false;
+                }
+                default -> { return false; }
+            }
+        }
+        return false;
+    }
+
+    /** What the top completion would add after the cursor (shown greyed out), or null. */
+    private static String ghostSuffix() {
+        if (!editorInputActive || suggestions.isEmpty() || popupDismissed) return null;
+        String text = currentScriptText();
+        int cur = Math.max(0, Math.min(editorCursorPos, text.length()));
+        if (cur < text.length() && (Character.isLetterOrDigit(text.charAt(cur)) || text.charAt(cur) == '_')) return null;
+        String typed = typedPrefix(text);
+        String s = suggestions.get(Math.max(0, Math.min(selectedSuggestion, suggestions.size() - 1))).text();
+        if (typed.isEmpty() && !s.startsWith("pos(") && !s.startsWith("let ") && !suggestForced) return null;
+        if (!s.startsWith(typed) || s.length() <= typed.length()) return null;
+        return s.substring(typed.length());
+    }
+
+    /** Ctrl+/ : "// " in front of the selected lines (or the cursor line), or away again. */
+    static void toggleComment() {
+        String value = currentScriptText();
+        int cursor = Math.max(0, Math.min(editorCursorPos, value.length()));
+        int a = Math.min(editorSelStart, editorSelEnd), b = Math.max(editorSelStart, editorSelEnd);
+        if (a == b) { a = cursor; b = cursor; }
+        a = Math.max(0, Math.min(a, value.length()));
+        b = Math.max(0, Math.min(b, value.length()));
+        int ls = a == 0 ? 0 : value.lastIndexOf('\n', a - 1) + 1;
+        int le = value.indexOf('\n', b);
+        if (le < 0) le = value.length();
+        String[] lines = value.substring(ls, le).split("\n", -1);
+        boolean allCommented = true;
+        for (String l : lines) if (!l.isBlank() && !l.stripLeading().startsWith("//")) allCommented = false;
+        StringBuilder out = new StringBuilder();
+        for (int i = 0; i < lines.length; i++) {
+            String l = lines[i];
+            if (i > 0) out.append('\n');
+            if (l.isBlank()) { out.append(l); continue; }
+            if (allCommented) {
+                int at = l.indexOf("//");
+                String rest = l.substring(at + 2);
+                out.append(l, 0, at).append(rest.startsWith(" ") ? rest.substring(1) : rest);
+            } else {
+                int indent = l.length() - l.stripLeading().length();
+                out.append(l, 0, indent).append("// ").append(l.substring(indent));
+            }
+        }
+        String updated = value.substring(0, ls) + out + value.substring(le);
+        int delta = updated.length() - value.length();
+        replaceText(updated, Math.max(0, Math.min(cursor + delta, updated.length())));
+    }
+
+    /** The selected whole lines, or the whole script when nothing is selected. */
+    static List<String> selectedLines() {
+        String value = currentScriptText();
+        int a = Math.min(editorSelStart, editorSelEnd), b = Math.max(editorSelStart, editorSelEnd);
+        if (a == b) { a = 0; b = value.length(); }
+        a = Math.max(0, Math.min(a, value.length()));
+        b = Math.max(0, Math.min(b, value.length()));
+        int ls = a == 0 ? 0 : value.lastIndexOf('\n', a - 1) + 1;
+        int le = value.indexOf('\n', b);
+        if (le < 0) le = value.length();
+        List<String> lines = new ArrayList<>(List.of(value.substring(ls, le).split("\n", -1)));
+        while (!lines.isEmpty() && lines.get(lines.size() - 1).isBlank()) lines.remove(lines.size() - 1);
+        while (!lines.isEmpty() && lines.get(0).isBlank()) lines.remove(0);
+        return lines;
+    }
+
+    /** Saves the selected lines (or the whole script) as a preset. */
+    static String savePreset(String name) {
+        name = name == null ? "" : name.trim();
+        if (name.isEmpty()) return "Type a name for the preset first.";
+        List<String> lines = selectedLines();
+        if (lines.isEmpty()) return "Nothing to save: select some lines first (or write something).";
+        boolean replaced = cfg.presets.containsKey(name);
+        cfg.presets.put(name, lines);
+        Config.save();
+        return (replaced ? "Updated" : "Saved") + " preset '" + name + "' (" + lines.size() + " line" + (lines.size() == 1 ? "" : "s") + ").";
+    }
+
+    /** Live check while typing: ScriptCheck 400 ms after the last edit (no chat messages). */
+    private static void liveCheck(String text) {
+        if (text.equals(liveCheckedText)) return;
+        if (System.currentTimeMillis() - lastEditAt < 400) return;
+        liveCheckedText = text;
+        try {
+            liveChecks = ScriptCheck.run(List.of(text.split("\n", -1)));
+        } catch (Throwable t) {
+            liveChecks = List.of();
         }
     }
 
@@ -322,30 +635,37 @@ public final class DockedPanels {
     public static String acceptTopSuggestion() {
         ensureTabsLoaded();
         String text = currentScriptText();
-        Suggest.Result r = Suggest.complete(text, text.length(), true);
-        suggestions = r.items();
-        suggestFrom = r.from();
+        suggestKey = "";
+        updateSuggestions(text, false);
         if (suggestions.isEmpty()) return text;
-        int idx = Math.max(0, Math.min(selectedSuggestion, suggestions.size() - 1));
-        String s = suggestions.get(idx).text();
-        int start = Math.max(0, Math.min(suggestFrom, text.length()));
-        String before = text.substring(0, start);
-        String line = before.substring(before.lastIndexOf('\n') + 1).stripLeading();
-        String insert = s;
-        if (line.startsWith("#") || Lexer.KEYWORDS.contains(s)) insert += " ";
-        String updated = text.substring(0, start) + insert;
-        setCurrentScriptText(updated);
-        editorStatus = "Completed: " + s;
-        return updated;
+        acceptSuggestion(selectedSuggestion);
+        return currentScriptText();
     }
 
+    /** Puts a preset in at the cursor line (what was there moves below; a blank cursor line is replaced), or at the end. */
     public static void insertPresetByName(String name) {
         List<String> lines = cfg.presets.get(name);
         if (lines == null || lines.isEmpty()) return;
         String cur = currentScriptText();
         String block = String.join("\n", lines);
-        String updated = cur.isBlank() ? block : cur + "\n" + block;
-        setCurrentScriptText(updated);
+        String updated;
+        int cursorAfter;
+        if (lastCursor < 0 || cur.isBlank()) {
+            updated = cur.isBlank() ? block : cur + "\n" + block;
+            cursorAfter = updated.length();
+        } else {
+            int at = Math.min(lastCursor, cur.length());
+            int ls = at == 0 ? 0 : cur.lastIndexOf('\n', at - 1) + 1;
+            int le = cur.indexOf('\n', at);
+            if (le < 0) le = cur.length();
+            if (cur.substring(ls, le).isBlank()) {
+                updated = cur.substring(0, ls) + block + cur.substring(le);
+            } else {
+                updated = cur.substring(0, ls) + block + "\n" + cur.substring(ls);
+            }
+            cursorAfter = ls + block.length();
+        }
+        replaceText(updated, cursorAfter);
         lastInsertedPreset = name;
         editorStatus = "Inserted preset '" + name + "' (" + lines.size() + " lines).";
         Util.msg(editorStatus);
@@ -456,95 +776,97 @@ public final class DockedPanels {
 
     // ------------------------------------------------------------------ ImGui rendering for all 6 panels
 
-    /** 1. Top-Left Tab 1: Script Editor + Dashboard telemetry. */
+    /** The script editor: file tabs, toolbar, code with line gutter, live problems, completion (ghost text and list). */
     public static void renderScriptEditorPanel(ProgressModel.Snapshot snap) {
         ensureTabsLoaded();
+        flushConfig(false);
+        float s = ImGuiManager.getUiScale();
 
-        // File tabs bar + New tab
-        if (ImGui.beginTabBar("##ScriptFilesTabBar")) {
+        // file tabs (+ opens a small "new tab" popup)
+        if (ImGui.beginTabBar("##ScriptFilesTabBar", imgui.flag.ImGuiTabBarFlags.FittingPolicyScroll)) {
             for (int i = 0; i < tabs.size(); i++) {
                 ScriptTab t = tabs.get(i);
                 if (ImGui.beginTabItem(t.name + "##tab" + i)) {
-                    if (activeTabIndex != i) {
-                        selectTab(i);
-                    }
+                    if (activeTabIndex != i) selectTab(i);
                     ImGui.endTabItem();
                 }
             }
+            if (ImGui.tabItemButton("+##AddScriptTab", imgui.flag.ImGuiTabItemFlags.Trailing)) ImGui.openPopup("##newTabPopup");
             ImGui.endTabBar();
         }
-
-        // Toolbar: Run, Test, Pick block, Comment, Tab complete, + New tab
-        if (ImGui.button("Run##EditorRun")) {
-            syncToConfig(currentScriptText());
-            String err = QueueMod.runner.start(cfg.script);
-            if (err != null) {
-                editorStatus = err;
-                Util.msg(err);
-            } else {
-                editorStatus = "Running script (" + cfg.script.size() + " lines).";
+        if (ImGui.beginPopup("##newTabPopup")) {
+            ImGui.setNextItemWidth(180f * s);
+            ImGui.inputText("##NewTabName", newTabName);
+            ImGui.sameLine();
+            if (Widgets.button("Create##newTabCreate", 1)) {
+                addScriptTab(newTabName.get(), "// " + newTabName.get() + "\n");
+                ImGui.closeCurrentPopup();
             }
+            ImGui.endPopup();
         }
+
+        // toolbar
+        if (Widgets.button("Run##EditorRun", 1)) runCurrent();
         runBtnX = ImGui.getItemRectMinX();
         runBtnY = ImGui.getItemRectMinY();
         runBtnW = ImGui.getItemRectSizeX();
         runBtnH = ImGui.getItemRectSizeY();
-
-        ImGui.sameLine(0f, 4f);
-        if (ImGui.button("Test##EditorTest")) {
-            runTest();
-        }
+        ImGui.sameLine();
+        if (Widgets.button("Test##EditorTest", 0)) runTest();
         testBtnX = ImGui.getItemRectMinX();
         testBtnY = ImGui.getItemRectMinY();
         testBtnW = ImGui.getItemRectSizeX();
         testBtnH = ImGui.getItemRectSizeY();
-
-        ImGui.sameLine(0f, 4f);
-        if (ImGui.button("Pick block##EditorPick")) {
-            Places.Target t = Places.target();
-            if (t != null) {
-                handleImGuiPick(t);
-            } else {
-                imguiPicking = true;
-                QueueMod.picking = true;
-                editorStatus = "Aim at a block in the Game Viewport and press J.";
-            }
-        }
+        ImGui.sameLine();
+        if (Widgets.button("Pick block##EditorPick", 0)) pickBlock();
         pickBtnX = ImGui.getItemRectMinX();
         pickBtnY = ImGui.getItemRectMinY();
         pickBtnW = ImGui.getItemRectSizeX();
         pickBtnH = ImGui.getItemRectSizeY();
-
-        ImGui.sameLine(0f, 4f);
-        if (ImGui.button("Tab (" + suggestions.size() + ")##EditorTabComplete")) {
-            acceptTopSuggestion();
+        if (ImGui.isItemHovered()) ImGui.setTooltip("Puts in the position of the block you look at (at the cursor).");
+        ImGui.sameLine();
+        if (Widgets.button("Save preset##EditorSavePreset", 0)) ImGui.openPopup("##savePresetPopup");
+        if (ImGui.isItemHovered()) ImGui.setTooltip("Saves the selected lines (or the whole script) as a preset.");
+        if (ImGui.beginPopup("##savePresetPopup")) {
+            ImGui.setNextItemWidth(200f * s);
+            ImGui.inputTextWithHint("##EditorPresetName", "Preset name", newPresetName);
+            ImGui.sameLine();
+            if (Widgets.button("Save##EditorPresetSave", 1)) {
+                editorStatus = savePreset(newPresetName.get());
+                Util.msg(editorStatus);
+                ImGui.closeCurrentPopup();
+            }
+            ImGui.endPopup();
         }
-        ImGui.sameLine(0f, 6f);
-        ImGui.setNextItemWidth(76f);
-        ImGui.inputText("##NewTabName", newTabName);
-        ImGui.sameLine(0f, 4f);
-        if (ImGui.button("+ Tab##AddScriptTab")) {
-            addScriptTab(newTabName.get(), "// " + newTabName.get() + "\n");
-        }
 
-        // Map of error/warning lines from ScriptCheck
+        String text = currentScriptText();
+        liveCheck(text);
+        List<ScriptCheck.Entry> issues = checkResults != null ? checkResults : (text.equals(liveCheckedText) ? liveChecks : List.of());
         Map<Integer, ScriptCheck.Entry> lineIssues = new LinkedHashMap<>();
-        if (checkResults != null) {
-            for (ScriptCheck.Entry e : checkResults) {
-                if (e.line() > 0 && !lineIssues.containsKey(e.line())) {
-                    lineIssues.put(e.line(), e);
-                }
-            }
+        int nErr = 0, nWarn = 0;
+        for (ScriptCheck.Entry e : issues) {
+            if (e.line() <= 0) continue;
+            if (e.level() == ScriptCheck.Level.ERROR) nErr++;
+            else if (e.level() == ScriptCheck.Level.WARN) nWarn++;
+            ScriptCheck.Entry prev = lineIssues.get(e.line());
+            if (prev == null || (prev.level() != ScriptCheck.Level.ERROR && e.level() == ScriptCheck.Level.ERROR)) lineIssues.put(e.line(), e);
         }
+        String probs = nErr + nWarn == 0 ? "No problems" : (nErr > 0 ? nErr + " error" + (nErr == 1 ? "" : "s") : "")
+                + (nErr > 0 && nWarn > 0 ? ", " : "") + (nWarn > 0 ? nWarn + " warning" + (nWarn == 1 ? "" : "s") : "");
+        ImGui.sameLine(ImGui.getContentRegionMaxX() - ImGui.calcTextSizeX(probs));
+        UiTheme.textColored(nErr > 0 ? UiTheme.ERR : nWarn > 0 ? UiTheme.WARN : UiTheme.OK, probs);
 
-        // Single unified full-height editor (##UnifiedScriptEditor)
-        float editorH = Math.max(80f, ImGui.getContentRegionAvailY() - 48f);
+        // code
+        float footerH = ImGui.getTextLineHeightWithSpacing() + 6f * s;
+        float editorH = Math.max(80f, ImGui.getContentRegionAvailY() - footerH);
         ImGuiManager.pushMonoFont();
-        if (ImGui.beginChild("##UnifiedCodeScroll", 0f, editorH, true)) {
+        ImGui.pushStyleColor(ImGuiCol.ChildBg, UiTheme.r(UiTheme.PANEL), UiTheme.g(UiTheme.PANEL), UiTheme.b(UiTheme.PANEL), 1f);
+        ImGui.pushStyleColor(ImGuiCol.Border, UiTheme.r(UiTheme.LINE2), UiTheme.g(UiTheme.LINE2), UiTheme.b(UiTheme.LINE2), 1f);
+        float caretX = 0, caretY = 0, lineHeight = ImGui.getTextLineHeight();
+        boolean showPopup = false;
+        if (ImGui.beginChild("##UnifiedCodeScroll", 0f, editorH, true, imgui.flag.ImGuiWindowFlags.HorizontalScrollbar)) {
             String src = currentScriptText();
-            if (!src.equals(cachedSyntaxSource)) {
-                recomputeSyntaxAndSuggestions(src);
-            }
+            if (!src.equals(cachedSyntaxSource)) recomputeSyntaxAndSuggestions(src);
             String[] lines = src.split("\n", -1);
             ImDrawList dl = ImGui.getWindowDrawList();
             float startX = ImGui.getCursorScreenPosX();
@@ -552,29 +874,43 @@ public final class DockedPanels {
             var style = ImGui.getStyle();
             float padX = style.getFramePaddingX();
             float padY = style.getFramePaddingY();
-            float lineHeight = ImGui.getTextLineHeight();
-            float codeStartX = startX + 38f;
-            float availW = Math.max(120f, ImGui.getContentRegionAvailX() - 38f);
-            float contentH = Math.max(editorH - 12f, (lines.length + 2) * ImGui.getTextLineHeightWithSpacing());
+            float gutterW = ImGui.calcTextSizeX("0000") + 18f * s;
+            float codeStartX = startX + gutterW;
             float fullW = Math.max(160f, ImGui.getContentRegionAvailX());
+            float textW = 0f;
+            for (String l : lines) textW = Math.max(textW, ImGui.calcTextSizeX(l));
+            float availW = Math.max(fullW - gutterW, textW + 400f * s);
+            float contentH = Math.max(editorH - 12f, (lines.length + 3) * lineHeight + padY * 2);
 
             for (int i = 0; i < lines.length; i++) {
                 int ln = i + 1;
                 float rowY = startY + padY + i * lineHeight;
                 boolean isRunningLine = snap.running() && snap.line() == ln;
                 ScriptCheck.Entry issue = lineIssues.get(ln);
+                String num = String.valueOf(ln);
+                float numX = startX + gutterW - 12f * s - ImGui.calcTextSizeX(num);
                 if (isRunningLine) {
-                    dl.addRectFilled(startX, rowY, startX + fullW, rowY + lineHeight, ImGui.colorConvertFloat4ToU32(0.290f, 0.620f, 0.878f, 0.22f));
-                    dl.addRectFilled(startX, rowY, startX + 3f, rowY + lineHeight, ImGui.colorConvertFloat4ToU32(0.290f, 0.620f, 0.878f, 1.0f));
-                    dl.addText(startX + 2f, rowY, ImGui.colorConvertFloat4ToU32(0.290f, 0.620f, 0.878f, 1.0f), String.format("%2d \u25b6", ln));
-                } else if (issue != null) {
-                    boolean err = issue.level() == ScriptCheck.Level.ERROR;
-                    int bgCol = err ? ImGui.colorConvertFloat4ToU32(0.878f, 0.333f, 0.333f, 0.20f) : ImGui.colorConvertFloat4ToU32(0.878f, 0.659f, 0.290f, 0.16f);
-                    dl.addRectFilled(startX, rowY, startX + fullW, rowY + lineHeight, bgCol);
-                    int textCol = err ? ImGui.colorConvertFloat4ToU32(0.95f, 0.38f, 0.38f, 1.0f) : ImGui.colorConvertFloat4ToU32(0.95f, 0.78f, 0.35f, 1.0f);
-                    dl.addText(startX + 2f, rowY, textCol, String.format("%2d !", ln));
+                    dl.addRectFilled(startX, rowY, startX + fullW + availW, rowY + lineHeight, UiTheme.u32(UiTheme.RUNLINE));
+                    dl.addRectFilled(startX, rowY, startX + 3f * s, rowY + lineHeight, UiTheme.u32(UiTheme.ACCENT));
+                    dl.addText(numX, rowY, UiTheme.u32(UiTheme.ACCENT), num);
                 } else {
-                    dl.addText(startX + 2f, rowY, ImGui.colorConvertFloat4ToU32(0.50f, 0.50f, 0.55f, 0.60f), String.format("%2d  ", ln));
+                    dl.addText(numX, rowY, UiTheme.u32(issue != null ? (issue.level() == ScriptCheck.Level.ERROR ? UiTheme.ERR : UiTheme.WARN) : UiTheme.GUTTER), num);
+                }
+                if (issue != null && issue.level() != ScriptCheck.Level.OK) {
+                    int col = issue.level() == ScriptCheck.Level.ERROR ? UiTheme.ERR : UiTheme.WARN;
+                    String line = lines[i];
+                    int indent = line.length() - line.stripLeading().length();
+                    float x0 = codeStartX + padX + ImGui.calcTextSizeX(line.substring(0, indent));
+                    float x1 = codeStartX + padX + Math.max(ImGui.calcTextSizeX(line), ImGui.calcTextSizeX(line.substring(0, indent)) + 12f * s);
+                    float uy = rowY + lineHeight - 1.5f * s;
+                    int n = Math.max(2, (int) ((x1 - x0) / (3f * s)));
+                    imgui.ImVec2[] pts = new imgui.ImVec2[n + 1];
+                    for (int k = 0; k <= n; k++) pts[k] = new imgui.ImVec2(x0 + (x1 - x0) * k / n, uy + ((k & 1) == 0 ? -1.2f * s : 1.2f * s));
+                    dl.addPolyline(pts, pts.length, UiTheme.u32(col, 0.9f), 0, 1.2f * s);
+                    UiTheme.push(UiTheme.small);
+                    dl.addText(x1 + 24f * s, rowY + (lineHeight - ImGui.getFontSize()) / 2f, UiTheme.u32(col, 0.85f),
+                            Alerts.shorten(issue.text(), 140));
+                    ImGui.popFont();
                 }
             }
 
@@ -583,8 +919,12 @@ public final class DockedPanels {
             ImGui.pushStyleColor(ImGuiCol.Border, 0f, 0f, 0f, 0f);
             ImGui.pushStyleColor(ImGuiCol.Text, 0f, 0f, 0f, 0f);
             ImGui.pushStyleColor(ImGuiCol.TextSelectedBg, 0f, 0f, 0f, 0f);
+            if (refocusEditor) {
+                ImGui.setKeyboardFocusHere();
+                refocusEditor = false;
+            }
             if (ImGui.inputTextMultiline("##ScriptEditorInput", editorBuffer, availW, contentH,
-                    ImGuiInputTextFlags.AllowTabInput | ImGuiInputTextFlags.CallbackAlways, EDITOR_CALLBACK)) {
+                    ImGuiInputTextFlags.AllowTabInput | ImGuiInputTextFlags.CallbackAlways | ImGuiInputTextFlags.NoHorizontalScroll, EDITOR_CALLBACK)) {
                 setCurrentScriptText(editorBuffer.get());
             }
             ImGui.popStyleColor(4);
@@ -594,43 +934,37 @@ public final class DockedPanels {
                 editorSelStart = 0;
                 editorSelEnd = 0;
                 ScriptTab t = tabs.get(activeTabIndex);
-                if (!t.text.equals(editorBuffer.get())) {
-                    editorBuffer.set(t.text);
-                }
+                if (!t.text.equals(editorBuffer.get())) editorBuffer.set(t.text);
+                suggestForced = false;
             }
 
             String renderSrc = editorBuffer.get();
-            if (!renderSrc.equals(cachedSyntaxSource)) {
-                recomputeSyntaxAndSuggestions(renderSrc);
-            }
+            if (!renderSrc.equals(cachedSyntaxSource)) recomputeSyntaxAndSuggestions(renderSrc);
+            else updateSuggestions(renderSrc, false);
             String[] renderLines = renderSrc.split("\n", -1);
             int selMin = Math.min(editorSelStart, editorSelEnd);
             int selMax = Math.max(editorSelStart, editorSelEnd);
-            int selBgCol = ImGui.colorConvertFloat4ToU32(0.22f, 0.44f, 0.72f, 0.55f);
+            int selBgCol = UiTheme.u32(UiTheme.ACCENT, 0.28f);
             int charOffset = 0;
             for (int i = 0; i < renderLines.length; i++) {
                 String line = renderLines[i];
                 float lineY = startY + padY + i * lineHeight;
                 if (editorInputActive && selMin < selMax && selMax >= charOffset && selMin <= charOffset + line.length()) {
-                    int s = Math.max(0, selMin - charOffset);
+                    int a = Math.max(0, selMin - charOffset);
                     int e = Math.min(line.length(), selMax - charOffset);
-                    if (s <= e) {
-                        float x0 = codeStartX + padX + (s == 0 ? 0f : ImGui.calcTextSizeX(line.substring(0, s)));
+                    if (a <= e) {
+                        float x0 = codeStartX + padX + (a == 0 ? 0f : ImGui.calcTextSizeX(line.substring(0, a)));
                         float x1 = codeStartX + padX + (e == 0 ? 0f : ImGui.calcTextSizeX(line.substring(0, e))) + (selMax > charOffset + line.length() ? 5f : 0f);
-                        if (x1 > x0) {
-                            dl.addRectFilled(x0, lineY, x1, lineY + lineHeight, selBgCol);
-                        }
+                        if (x1 > x0) dl.addRectFilled(x0, lineY, x1, lineY + lineHeight, selBgCol);
                     }
                 }
                 drawSyntaxLine(dl, codeStartX + padX, lineY, line, charOffset, cachedSyntaxColors);
                 charOffset += line.length() + 1;
             }
 
-            if (editorInputActive && ((System.currentTimeMillis() / 500L) % 2L == 0L)) {
+            if (editorInputActive) {
                 int cpos = Math.max(0, Math.min(editorCursorPos, renderSrc.length()));
-                int rem = cpos;
-                int cLine = 0;
-                int cCol = 0;
+                int rem = cpos, cLine = 0, cCol = 0;
                 for (int i = 0; i < renderLines.length; i++) {
                     int lLen = renderLines[i].length();
                     if (rem <= lLen || i == renderLines.length - 1) {
@@ -640,44 +974,98 @@ public final class DockedPanels {
                     }
                     rem -= (lLen + 1);
                 }
-                String prefix = renderLines[cLine].substring(0, cCol);
-                float caretX = codeStartX + padX + ImGui.calcTextSizeX(prefix);
-                float caretY = startY + padY + cLine * lineHeight;
-                int caretCol = ImGui.colorConvertFloat4ToU32(0.92f, 0.95f, 1.0f, 0.95f);
-                dl.addRectFilled(caretX, caretY, caretX + 2f, caretY + lineHeight, caretCol);
+                caretX = codeStartX + padX + ImGui.calcTextSizeX(renderLines[cLine].substring(0, cCol));
+                caretY = startY + padY + cLine * lineHeight;
+                dl.addRectFilled(caretX, caretY, caretX + 1f, caretY + lineHeight, UiTheme.u32(UiTheme.GUTTER, 0.0f));
+                if ((System.currentTimeMillis() / 500L) % 2L == 0L) {
+                    dl.addRectFilled(caretX, caretY, caretX + 2f * s, caretY + lineHeight, UiTheme.u32(UiTheme.ACCENT));
+                }
+                String ghost = ghostSuffix();
+                if (ghost != null) {
+                    dl.addText(caretX + 2f * s, caretY, UiTheme.u32(UiTheme.DIM, 0.65f), ghost);
+                    float gx = caretX + 2f * s + ImGui.calcTextSizeX(ghost) + 14f * s;
+                    UiTheme.push(UiTheme.small);
+                    String tip = "Tab";
+                    float tw = ImGui.calcTextSizeX(tip) + 8f * s;
+                    dl.addRect(gx, caretY + 2f, gx + tw, caretY + lineHeight - 2f, UiTheme.u32(UiTheme.LINE), 3f);
+                    dl.addText(gx + 4f * s, caretY + (lineHeight - ImGui.getFontSize()) / 2f, UiTheme.u32(UiTheme.DIM), tip);
+                    ImGui.popFont();
+                }
+                showPopup = popupVisible();
             }
         }
         ImGui.endChild();
+        ImGui.popStyleColor(2);
         ImGuiManager.popMonoFont();
 
-        // Footer: Test results / Error hint line OR Suggest completions
-        if (checkResults != null && !checkResults.isEmpty()) {
+        if (showPopup) renderCompletionPopup(caretX, caretY + lineHeight + 2f, s);
+
+        // footer: the selected completion's description, or the check summary / status
+        Suggest.Item top = suggestions.isEmpty() ? null : suggestions.get(Math.max(0, Math.min(selectedSuggestion, suggestions.size() - 1)));
+        if (editorInputActive && top != null && (showPopup || ghostSuffix() != null) && !top.desc().isEmpty()) {
+            UiTheme.textColored(UiTheme.ACCENT, top.text());
+            ImGui.sameLine(0f, 8f * s);
+            UiTheme.textColored(UiTheme.DIM, Alerts.shorten(top.desc(), 110));
+        } else if (checkResults != null && !checkResults.isEmpty()) {
             ScriptCheck.Entry summary = checkResults.get(checkResults.size() - 1);
-            for (int i = 0; i < checkResults.size() - 1 && i < 2; i++) {
-                ScriptCheck.Entry e = checkResults.get(i);
-                if (e.level() == ScriptCheck.Level.ERROR) {
-                    ImGui.textColored(0.95f, 0.38f, 0.38f, 1.0f, "Line " + e.line() + ": " + e.text());
-                } else {
-                    ImGui.textColored(0.95f, 0.78f, 0.35f, 1.0f, "Line " + e.line() + ": " + e.text());
-                }
-            }
-            if (summary.level() == ScriptCheck.Level.ERROR) {
-                ImGui.textColored(0.95f, 0.38f, 0.38f, 1.0f, summary.text());
-            } else if (summary.level() == ScriptCheck.Level.WARN) {
-                ImGui.textColored(0.95f, 0.78f, 0.35f, 1.0f, summary.text());
-            } else {
-                ImGui.textColored(0.247f, 0.698f, 0.498f, 1.0f, summary.text());
-            }
-        } else if (!suggestions.isEmpty()) {
-            Suggest.Item top = suggestions.get(Math.max(0, Math.min(selectedSuggestion, suggestions.size() - 1)));
-            ImGui.textColored(0.37f, 0.76f, 1.0f, 1.0f, "Suggest: " + top.text());
-            if (!top.desc().isEmpty()) {
-                ImGui.sameLine(0f, 8f);
-                ImGui.textDisabled(top.desc());
-            }
+            int c = summary.level() == ScriptCheck.Level.ERROR ? UiTheme.ERR : summary.level() == ScriptCheck.Level.WARN ? UiTheme.WARN : UiTheme.OK;
+            UiTheme.textColored(c, summary.text());
         } else if (!editorStatus.isEmpty()) {
-            ImGui.textDisabled(editorStatus);
+            UiTheme.textColored(UiTheme.DIM, editorStatus);
+        } else {
+            UiTheme.textColored(UiTheme.DIM, "Tab completes · Ctrl+Space shows all · Ctrl+/ comments · Ctrl+P commands");
         }
+    }
+
+    private static void renderCompletionPopup(float x, float y, float s) {
+        int rows = Math.min(8, suggestions.size());
+        float lh = ImGui.getTextLineHeightWithSpacing();
+        float w = 0f;
+        for (int i = 0; i < Math.min(suggestions.size(), 40); i++) w = Math.max(w, ImGui.calcTextSizeX(suggestions.get(i).text()));
+        w = Math.min(Math.max(w + 40f * s, 260f * s), 560f * s);
+        ImGui.setNextWindowPos(x, y);
+        ImGui.setNextWindowSize(w, rows * lh + 14f * s);
+        ImGui.pushStyleVar(imgui.flag.ImGuiStyleVar.WindowPadding, 6f * s, 6f * s);
+        ImGui.pushStyleVar(imgui.flag.ImGuiStyleVar.WindowBorderSize, 1f);
+        ImGui.pushStyleVar(imgui.flag.ImGuiStyleVar.WindowRounding, 6f * s);
+        ImGui.pushStyleColor(ImGuiCol.WindowBg, UiTheme.r(UiTheme.PANEL2), UiTheme.g(UiTheme.PANEL2), UiTheme.b(UiTheme.PANEL2), 1f);
+        int flags = imgui.flag.ImGuiWindowFlags.NoTitleBar | imgui.flag.ImGuiWindowFlags.NoResize | imgui.flag.ImGuiWindowFlags.NoMove
+                | imgui.flag.ImGuiWindowFlags.NoSavedSettings | imgui.flag.ImGuiWindowFlags.NoFocusOnAppearing | imgui.flag.ImGuiWindowFlags.NoNav;
+        boolean vis = ImGui.begin("##complPopup", flags);
+        ImGui.popStyleColor();
+        ImGui.popStyleVar(3);
+        popupRect[0] = x;
+        popupRect[1] = y;
+        popupRect[2] = w;
+        popupRect[3] = rows * lh + 14f * s;
+        if (vis) {
+            ImGuiManager.pushMonoFont();
+            popupFirstRowY = ImGui.getCursorScreenPosY();
+            popupRowH = ImGui.getTextLineHeightWithSpacing();
+            for (int i = 0; i < suggestions.size(); i++) {
+                boolean sel = i == selectedSuggestion;
+                if (sel && popupNavigated) ImGui.setScrollHereY();
+                ImGui.selectable(suggestions.get(i).text() + "##sug" + i, sel);
+            }
+            ImGuiManager.popMonoFont();
+        }
+        ImGui.end();
+        popupShownFrame = ImGuiManager.framesRendered();
+    }
+
+    private static final float[] popupRect = new float[4];
+    private static float popupFirstRowY, popupRowH = 1f;
+    private static long popupShownFrame = -10;
+
+    /** A click on the completion list (handled here so the editor keeps the keyboard): accepts that completion. */
+    static boolean handlePopupClick(double mx, double my) {
+        if (ImGuiManager.framesRendered() - popupShownFrame > 1 || suggestions.isEmpty()) return false;
+        if (mx < popupRect[0] || mx > popupRect[0] + popupRect[2] || my < popupRect[1] || my > popupRect[1] + popupRect[3]) return false;
+        int i = (int) Math.floor((my - popupFirstRowY) / Math.max(1f, popupRowH));
+        if (i < 0 || i >= suggestions.size()) return true;
+        selectedSuggestion = i;
+        acceptSuggestion(i);
+        return true;
     }
 
     private static void drawSyntaxLine(ImDrawList dl, float x, float y, String line, int startOffset, int[] colors) {
@@ -720,14 +1108,11 @@ public final class DockedPanels {
         ImGui.setNextItemWidth(160f);
         ImGui.inputTextWithHint("##NewPresetName", "New preset name...", newPresetName);
         ImGui.sameLine(0f, 6f);
-        if (ImGui.button("Save script as preset##SavePresetBtn")) {
-            String nm = newPresetName.get().trim();
-            if (!nm.isEmpty() && !cfg.script.isEmpty()) {
-                cfg.presets.put(nm, new ArrayList<>(cfg.script));
-                Config.save();
-                Util.msg("Saved preset '" + nm + "' (" + cfg.script.size() + " lines).");
-            }
+        if (ImGui.button("Save selected lines##SavePresetBtn")) {
+            Util.msg(savePreset(newPresetName.get()));
         }
+        if (ImGui.isItemHovered()) ImGui.setTooltip("The lines selected in the editor, or the whole script when nothing is selected.");
+        UiTheme.textColored(UiTheme.DIM, "Insert puts a preset in at the editor's cursor line.");
 
         ImGui.separator();
         String q = presetSearch.get().trim().toLowerCase();
@@ -937,88 +1322,131 @@ public final class DockedPanels {
         }
     }
 
-    /** 5. Bottom-Left Tab 3: Capture (roles chest/bed/area/schematic, Fetch looked-at, Aim in world, sheet). */
+    /** Capture: roles (chest, bed, area, schematic ...), Fetch looked-at, Aim in world, rapid mode, the sheet and its tools. */
     public static void renderCapturePanel() {
-        ImGui.text("Set: " + cfg.captureSet + " (" + Capture.world() + ")");
-        ImGui.sameLine(0f, 8f);
-        ImGui.setNextItemWidth(90f);
+        float s = ImGuiManager.getUiScale();
+        UiTheme.textColored(UiTheme.DIM, "Set '" + cfg.captureSet + "' in " + Capture.world());
+        ImGui.sameLine();
+        ImGui.setNextItemWidth(110f * s);
         ImGui.inputTextWithHint("##CaptureSetInput", "set name", newCaptureSetBuf);
-        ImGui.sameLine(0f, 4f);
-        if (ImGui.smallButton("Switch set")) {
-            if (!newCaptureSetBuf.get().isBlank()) {
-                lastCaptureNotice = Capture.openSet(newCaptureSetBuf.get().trim());
-            }
+        ImGui.sameLine();
+        if (ImGui.button("Open set##CapOpenSet")) {
+            if (!newCaptureSetBuf.get().isBlank()) lastCaptureNotice = Capture.openSet(newCaptureSetBuf.get().trim());
         }
 
-        // Role selector buttons
+        // role
         Capture.Type curType = Capture.type();
-        ImGui.text("Role: " + curType.label + (curType.hint.isEmpty() ? "" : " (" + curType.hint + ")"));
-        Capture.Type[] allTypes = Capture.Type.values();
-        for (int i = 0; i < allTypes.length; i++) {
-            Capture.Type ty = allTypes[i];
-            if (i > 0 && i % 5 != 0) ImGui.sameLine(0f, 4f);
-            boolean active = (curType == ty);
-            if (active) ImGui.pushStyleColor(ImGuiCol.Button, 0.290f, 0.620f, 0.878f, 0.85f);
-            if (ImGui.smallButton(ty.id + "##role_" + ty.id)) {
-                cfg.captureType = ty.id;
-                Config.save();
+        ImGui.setNextItemWidth(170f * s);
+        if (ImGui.beginCombo("##CapRole", "Role: " + curType.label)) {
+            for (Capture.Type ty : Capture.Type.values()) {
+                if (ImGui.selectable(ty.label + "##role_" + ty.id, ty == curType)) {
+                    cfg.captureType = ty.id;
+                    Config.save();
+                    Capture.corner1 = null;   // a new role starts with corner 1 again
+                }
+                if (!ty.hint.isEmpty() && ImGui.isItemHovered()) ImGui.setTooltip(ty.hint);
             }
-            if (active) ImGui.popStyleColor();
+            ImGui.endCombo();
+        }
+        ImGui.sameLine();
+        boolean named = curType == Capture.Type.SPOT || curType == Capture.Type.AREA;
+        String nameHint = named ? "name" : curType.kind == Capture.Kind.AREA ? "name (same = more boxes)" : "name (optional)";
+        ImGui.setNextItemWidth(150f * s);
+        if (!captureNameBuf.get().equals(Capture.name) && !ImGui.isAnyItemActive()) captureNameBuf.set(Capture.name);
+        if (ImGui.inputTextWithHint("##CaptureVarName", nameHint, captureNameBuf)) Capture.name = captureNameBuf.get();
+        if (curType.kind == Capture.Kind.SCHEMATIC) {
+            ImGui.sameLine();
+            ImGui.setNextItemWidth(Math.max(120f * s, ImGui.getContentRegionAvailX()));
+            if (ImGui.beginCombo("##CapPlacement", Capture.schematic == null ? "Litematica placement..." : Capture.schematic)) {
+                List<String> files = Capture.placements();
+                if (files.isEmpty()) ImGui.textDisabled("Litematica has no placements (load a schematic in Litematica first).");
+                for (int i = 0; i < files.size(); i++) {
+                    if (ImGui.selectable(files.get(i) + "##pl" + i, files.get(i).equals(Capture.schematic))) Capture.schematic = files.get(i);
+                }
+                ImGui.endCombo();
+            }
+        } else if (!curType.hint.isEmpty()) {
+            ImGui.sameLine();
+            UiTheme.textColored(UiTheme.DIM, curType.hint);
         }
 
-        ImGui.setNextItemWidth(120f);
-        if (ImGui.inputTextWithHint("##CaptureVarName", "Optional name...", captureNameBuf)) {
-            Capture.name = captureNameBuf.get();
+        String looked = "Looking at: " + PlacesView.lookedAtSummary();
+        if (curType.kind == Capture.Kind.AREA) {
+            looked += Capture.corner1 == null ? "   |   next: corner 1" : "   |   corner 1 at " + Capture.corner1 + ", next: corner 2";
         }
-        ImGui.sameLine(0f, 6f);
-        ImGui.textDisabled("Looked at: " + PlacesView.lookedAtSummary());
+        UiTheme.textColored(UiTheme.DIM, looked);
 
-        // Action buttons: Fetch looked-at, Aim in world, Use #sel, Import saved, Copy full context
-        if (ImGui.button("Fetch looked-at##CapFetch")) {
+        // actions
+        if (Widgets.button("Fetch looked-at##CapFetch", 1)) {
             Capture.name = captureNameBuf.get();
             lastCaptureNotice = PlacesView.fetchLookedAt();
         }
-        ImGui.sameLine(0f, 6f);
-        if (ImGui.button("Aim in world##CapAim")) {
+        ImGui.sameLine();
+        if (ImGui.button("Aim in world (J)##CapAim")) {
             Capture.name = captureNameBuf.get();
             lastCaptureNotice = PlacesView.startAimingInWorld();
         }
+        if (ImGui.isItemHovered()) ImGui.setTooltip("Closes the workspace: look at blocks and press J to capture; K comes back.");
+        ImGui.sameLine();
+        imgui.type.ImBoolean rapid = new imgui.type.ImBoolean(cfg.captureRapid);
+        if (ImGui.checkbox("Rapid##CapRapid", rapid)) {
+            cfg.captureRapid = rapid.get();
+            Config.save();
+        }
+        if (ImGui.isItemHovered()) ImGui.setTooltip("Aim in world keeps capturing with every J press until K.");
         if (curType.kind == Capture.Kind.AREA) {
-            ImGui.sameLine(0f, 6f);
+            ImGui.sameLine();
             if (ImGui.button("Use #sel##CapUseSel")) {
                 Capture.name = captureNameBuf.get();
                 lastCaptureNotice = Capture.useSelection();
                 Util.msg(lastCaptureNotice);
             }
         }
-        ImGui.sameLine(0f, 6f);
-        if (ImGui.button("Import saved##CapImport")) {
-            lastCaptureNotice = Capture.importSaved();
-            Util.msg(lastCaptureNotice);
-        }
-        ImGui.sameLine(0f, 6f);
-        if (ImGui.button("Copy context##CapContext")) {
-            String ctx = Capture.fullContext();
-            Minecraft mc = Minecraft.getInstance();
-            if (mc != null && mc.keyboardHandler != null) mc.keyboardHandler.setClipboard(ctx);
-            lastCaptureNotice = "Copied full context (" + ctx.length() + " chars).";
-            Util.msg(lastCaptureNotice);
-        }
+        if (!lastCaptureNotice.isEmpty()) UiTheme.textColored(UiTheme.OK, Alerts.shorten(lastCaptureNotice, 160));
 
-        if (!lastCaptureNotice.isEmpty()) {
-            ImGui.textColored(0.247f, 0.698f, 0.498f, 1.0f, lastCaptureNotice);
-        }
-
+        // the sheet (re-read from its file about once a second, so outside edits show up)
         String sheet = Capture.text();
-        if (!sheet.equals(lastSyncedCaptureSheet)) {
+        if (!sheet.equals(lastSyncedCaptureSheet) && (captureSheetBuf.get().equals(lastSyncedCaptureSheet == null ? "" : lastSyncedCaptureSheet)
+                || !ImGui.isAnyItemActive())) {
             captureSheetBuf.set(sheet);
             lastSyncedCaptureSheet = sheet;
         }
-        float availH = Math.max(40f, ImGui.getContentRegionAvailY());
+        float bottomH = ImGui.getFrameHeightWithSpacing() * 2 + 4f * s;
+        float availH = Math.max(60f, ImGui.getContentRegionAvailY() - bottomH);
+        ImGuiManager.pushMonoFont();
         if (ImGui.inputTextMultiline("##CaptureSheetEdit", captureSheetBuf, -1f, availH)) {
             lastSyncedCaptureSheet = captureSheetBuf.get();
             Capture.setText(lastSyncedCaptureSheet);
         }
+        ImGuiManager.popMonoFont();
+
+        if (ImGui.button("Import saved##CapImport")) {
+            lastCaptureNotice = Capture.importSaved();
+            Util.msg(lastCaptureNotice);
+        }
+        ImGui.sameLine();
+        if (ImGui.button("Copy sheet##CapCopy")) {
+            Minecraft mc = Minecraft.getInstance();
+            if (mc != null && mc.keyboardHandler != null) mc.keyboardHandler.setClipboard(Capture.text());
+            lastCaptureNotice = "Copied the sheet. It is also in " + Capture.file();
+        }
+        ImGui.sameLine();
+        if (ImGui.button("Copy full context##CapContext")) {
+            String ctx = Capture.fullContext();
+            Minecraft mc = Minecraft.getInstance();
+            if (mc != null && mc.keyboardHandler != null) mc.keyboardHandler.setClipboard(ctx);
+            lastCaptureNotice = "Copied " + ctx.split("\n").length + " lines for the LLM; also in " + Capture.contextFile();
+            Util.msg(lastCaptureNotice);
+        }
+        ImGui.sameLine();
+        imgui.type.ImBoolean show = new imgui.type.ImBoolean(cfg.captureShow);
+        if (ImGui.checkbox("Show in world##CapShow", show)) {
+            cfg.captureShow = show.get();
+            Config.save();
+        }
+        List<String> stale = Capture.stale();
+        if (stale.isEmpty()) UiTheme.textColored(UiTheme.DIM, Alerts.shorten("Sheet: " + Capture.file(), 120));
+        else UiTheme.textColored(UiTheme.WARN, Alerts.shorten("Check: " + String.join("; ", stale), 160));
     }
 
     /** 6. Bottom-Right Tab 1: Log (LogBuffer ring buffer, filters All/Errors/Baritone, Copy, Clear, disabled Send error to Assistant). */
@@ -1052,14 +1480,6 @@ public final class DockedPanels {
             LogBuffer.clear();
             clearLogSelection();
         }
-        ImGui.sameLine(0f, 8f);
-        ImGui.beginDisabled(true);
-        ImGui.button("Send error to Assistant##LogSendAssistant");
-        ImGui.endDisabled();
-        if (ImGui.isItemHovered()) {
-            ImGui.setTooltip("Assistant is not configured yet (Stage 6).");
-        }
-
         ImGui.separator();
         List<LogBuffer.Entry> entries = LogBuffer.entries(logFilter);
         if (ImGui.beginChild("##LogEntriesScroll", 0f, 0f, false)) {
@@ -1121,12 +1541,5 @@ public final class DockedPanels {
             }
         }
         ImGui.endChild();
-    }
-
-    /** 7. Bottom-Right Tab 2: Assistant (empty tab stub only, as required by Stage 3 prompt). */
-    public static void renderAssistantPanel() {
-        ImGui.textDisabled("Assistant (Stage 6)");
-        ImGui.separator();
-        ImGui.textWrapped("The LLM Assistant tab is a stub in Stage 3. Use the Capture panel's 'Copy context' button to export world and script context for an external LLM.");
     }
 }
