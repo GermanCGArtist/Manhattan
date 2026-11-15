@@ -55,6 +55,28 @@ final class Widgets {
         return clicked;
     }
 
+    /** {@code text} cut with "…" so it is at most {@code maxW} pixels wide in the current font. */
+    static String fit(String text, float maxW) {
+        if (text == null) return "";
+        text = text.replace('\n', ' ');
+        if (maxW <= 0) return "";
+        if (ImGui.calcTextSizeX(text) <= maxW) return text;
+        int lo = 0, hi = text.length();
+        while (lo < hi) {
+            int mid = (lo + hi + 1) / 2;
+            if (ImGui.calcTextSizeX(text.substring(0, mid) + "…") <= maxW) lo = mid;
+            else hi = mid - 1;
+        }
+        return lo == 0 ? "…" : text.substring(0, lo) + "…";
+    }
+
+    /** Text that wraps at the right edge of the current window (never treated as a format string). */
+    static void wrapped(int rgb, String text) {
+        ImGui.pushTextWrapPos(0f);
+        UiTheme.textColored(rgb, text);
+        ImGui.popTextWrapPos();
+    }
+
     static void bar(float w, float h, double frac, int rgb) {
         ImDrawList dl = ImGui.getWindowDrawList();
         float x = ImGui.getCursorScreenPosX(), y = ImGui.getCursorScreenPosY();
@@ -64,12 +86,17 @@ final class Widgets {
         ImGui.dummy(w, h);
     }
 
-    /** One cell per script step: green done, accent (or red when failing) partial fill for the running one. */
+    /**
+     * The script's steps as one bar: a cell per step line, green when done, the running one filled in accent (red
+     * when failing) with a "you are here" tick; grey for steps still to come. Hover shows which line a cell is.
+     */
     static void segBar(ProgressModel.Snapshot snap, float w, float h, boolean failing) {
         ImDrawList dl = ImGui.getWindowDrawList();
         float x = ImGui.getCursorScreenPosX(), y = ImGui.getCursorScreenPosY();
         List<ProgressModel.Segment> segs = snap.segments();
         int n = segs.size();
+        int run = failing ? ERR : ACCENT;
+        float hereX = -1;
         if (n == 0) {
             dl.addRectFilled(x, y, x + w, y + h, u32(TRACK), 2f);
         } else {
@@ -83,12 +110,20 @@ final class Widgets {
                     dl.addRectFilled(x0, y, x1, y + h, u32(OK, 0.85f), gap > 0 ? 2f : 0f);
                 } else if (seg.state() == ProgressModel.State.RUNNING) {
                     float fx = x0 + Math.max(2f, (float) ((x1 - x0) * Math.max(0.0, seg.fraction())));
-                    dl.addRectFilled(x0, y, Math.min(x1, fx), y + h, u32(failing ? ERR : ACCENT), gap > 0 ? 2f : 0f);
-                    if (gap == 0f) dl.addRectFilled(x0, y - 2f, Math.max(x0 + 2f, x1), y, u32(failing ? ERR : ACCENT));
+                    dl.addRectFilled(x0, y, Math.min(x1, fx), y + h, u32(run, 0.85f), gap > 0 ? 2f : 0f);
+                    hereX = Math.min(x1, fx);
                 }
             }
         }
-        ImGui.dummy(w, h);
+        if (hereX >= 0) dl.addRectFilled(hereX - 1f * s(), y - 3f * s(), hereX + 1f * s(), y + h + 3f * s(), u32(FG));
+        ImGui.invisibleButton("##segbar", Math.max(1f, w), Math.max(1f, h));
+        if (n > 0 && ImGui.isItemHovered()) {
+            int i = (int) Math.max(0, Math.min(n - 1, (ImGui.getMousePosX() - x) / w * n));
+            ProgressModel.Segment seg = segs.get(i);
+            String st = seg.state() == ProgressModel.State.DONE ? "done" : seg.state() == ProgressModel.State.RUNNING ? "running now" : "to come";
+            ImGui.setTooltip("Step " + (i + 1) + "/" + n + " (" + st + "), line " + seg.line() + ":\n" + seg.text()
+                    + "\n\nGreen = done, white tick = where the script is, grey = still to come.");
+        }
     }
 
     static boolean failing() {
@@ -110,8 +145,10 @@ final class Widgets {
     /** Skip and Stop; Stop's rectangle is recorded for the in-game tests. */
     static void runButtons(boolean running) {
         if (!running) ImGui.beginDisabled();
+        float x = ImGui.getCursorPosX(), y = ImGui.getCursorPosY();
         if (button("Skip##skip", 0)) RunnerView.skip();
-        ImGui.sameLine();
+        float skipW = ImGui.getItemRectSizeX();
+        ImGui.setCursorPos(x + skipW + ImGui.getStyle().getItemSpacingX(), y);   // same row, same top edge
         if (button("Stop##stop", 2)) ImGuiManager.triggerStop();
         ImGuiManager.recordStopRect(ImGui.getItemRectMinX(), ImGui.getItemRectMinY(), ImGui.getItemRectSizeX(), ImGui.getItemRectSizeY());
         if (!running) ImGui.endDisabled();
@@ -228,8 +265,9 @@ final class Widgets {
         ImGui.popStyleColor();
         ImGui.endGroup();
 
-        ImGui.sameLine(w - btnW);
-        ImGui.setCursorPosY(y0 + 14f * s);
+        float btnRowW = ImGui.calcTextSizeX("Skip") + ImGui.calcTextSizeX("Stop") + 4f * ImGui.getStyle().getFramePaddingX()
+                + ImGui.getStyle().getItemSpacingX();
+        ImGui.setCursorPos(ImGui.getCursorStartPosX() + w - btnRowW, y0 + 16f * s);
         runButtons(snap.running());
     }
 
@@ -264,12 +302,14 @@ final class Widgets {
             int c = seg.state() == ProgressModel.State.PENDING ? DIM : FG;
             String right = seg.state() == ProgressModel.State.RUNNING ? snap.stepPercentText() : "";
             float rightW = right.isEmpty() ? 0 : ImGui.calcTextSizeX(right) + 8f * s;
-            int maxChars = Math.max(6, (int) ((availW - 70f * s - rightW) / (7.2f * s)));
+            String num = String.format("%3d", seg.line());
+            float textW = availW - 22f * s - ImGui.calcTextSizeX(num) - 8f * s - rightW - 4f * s;
             UiTheme.pushText(GUTTER);
-            ImGui.textUnformatted(String.format("%3d", seg.line()));
+            ImGui.textUnformatted(num);
             ImGui.popStyleColor();
             ImGui.sameLine(0f, 8f * s);
-            UiTheme.textColored(c, Alerts.shorten(seg.text(), maxChars));
+            UiTheme.textColored(c, fit(seg.text(), textW));
+            if (ImGui.isItemHovered()) ImGui.setTooltip("Line " + seg.line() + ": " + seg.text());
             if (!right.isEmpty()) {
                 ImGui.sameLine(availW - rightW + 8f * s);
                 UiTheme.textColored(ACCENT, right);
@@ -311,21 +351,26 @@ final class Widgets {
         int worn = PlayerView.wornThreshold();
         float s = s();
         float w = ImGui.getContentRegionAvailX();
-        float nameW = Math.min(140f * s, w * 0.42f), numW = 44f * s;
+        float x0 = ImGui.getCursorPosX();
+        float numW = ImGui.calcTextSizeX("0000") + 6f * s, iconW = ImGui.getTextLineHeight();
+        float nameMax = 0;
+        for (PlayerView.Slot t : tools) nameMax = Math.max(nameMax, ImGui.calcTextSizeX(PlayerView.pretty(t.id())));
+        float nameW = Math.min(nameMax, w * 0.45f);
         for (int i = 0; i < Math.min(maxRows, tools.size()); i++) {
             PlayerView.Slot t = tools.get(i);
             boolean low = t.durability() <= Math.max(worn * 2, 20);
             float y = ImGui.getCursorPosY();
-            UiTheme.textColored(low ? WARN : FG, Alerts.shorten(PlayerView.pretty(t.id()), (int) (nameW / (7f * s))));
-            ImGui.sameLine(nameW);
-            ImGui.setCursorPosY(y + ImGui.getTextLineHeight() / 2f - 3f * s);
-            float bw = Math.max(20f, w - nameW - numW);
-            float bx = ImGui.getCursorScreenPosX(), by = ImGui.getCursorScreenPosY();
+            float ix = ImGui.getCursorScreenPosX(), iy = ImGui.getCursorScreenPosY();
+            ItemIcons.draw(ImGui.getWindowDrawList(), t.id(), ix, iy, ix + iconW, iy + iconW);
+            ImGui.setCursorPos(x0 + iconW + 6f * s, y);
+            UiTheme.textColored(low ? WARN : FG, fit(PlayerView.pretty(t.id()), nameW));
+            if (ImGui.isItemHovered()) ImGui.setTooltip(PlayerView.pretty(t.id()) + ": " + t.durability() + "/" + t.maxDurability()
+                    + (worn > 5 ? "  (worn out at " + worn + ")" : ""));
+            float barX = x0 + iconW + 6f * s + nameW + 10f * s;
+            float bw = Math.max(20f, x0 + w - numW - 8f * s - barX);
+            ImGui.setCursorPos(barX, y + ImGui.getTextLineHeight() / 2f - 3f * s);
             bar(bw, 6f * s, t.durability() / (double) Math.max(1, t.maxDurability()), low ? WARN : OK);
-            float tx = bx + bw * (worn / (float) Math.max(1, t.maxDurability()));
-            ImGui.getWindowDrawList().addLine(tx, by - 2f, tx, by + 8f * s, u32(FG, 0.6f));
-            ImGui.sameLine(w - numW + 6f * s);
-            ImGui.setCursorPosY(y);
+            ImGui.setCursorPos(x0 + w - ImGui.calcTextSizeX(String.valueOf(t.durability())), y);
             UiTheme.textColored(DIM, String.valueOf(t.durability()));
         }
     }
@@ -351,13 +396,17 @@ final class Widgets {
                 if (idx >= slots.size()) continue;
                 PlayerView.Slot sl = slots.get(idx);
                 if (sl.empty()) continue;
-                int c = itemColor(sl.id());
+                float pad = Math.max(3f, cell * 0.14f);
                 UiTheme.push(UiTheme.small);
-                float tw = ImGui.calcTextSizeX(sl.label());
-                dl.addText(x + (cell - tw) / 2f, y + (cell - ImGui.getFontSize()) / 2f - 2f, u32(c), sl.label());
+                if (!ItemIcons.draw(dl, sl.id(), x + pad, y + pad, x + cell - pad, y + cell - pad)) {
+                    float tw = ImGui.calcTextSizeX(sl.label());   // no texture found: two letters instead
+                    dl.addText(x + (cell - tw) / 2f, y + (cell - ImGui.getFontSize()) / 2f - 2f, u32(itemColor(sl.id())), sl.label());
+                }
                 if (sl.count() > 1) {
                     String q = String.valueOf(sl.count());
-                    dl.addText(x + cell - ImGui.calcTextSizeX(q) - 2f, y + cell - ImGui.getFontSize(), u32(FG), q);
+                    float qx = x + cell - ImGui.calcTextSizeX(q) - 2f, qy = y + cell - ImGui.getFontSize();
+                    dl.addText(qx + 1f, qy + 1f, u32(0x000000, 0.9f), q);   // shadow, like the game
+                    dl.addText(qx, qy, u32(0xffffff), q);
                 }
                 ImGui.popFont();
                 if (sl.damageable()) {
@@ -412,9 +461,11 @@ final class Widgets {
             dl.addRectFilled(x + 6f * s, y + 6f * s, x + 9f * s, y + h - 6f * s, u32(c), 2f);
             ImGui.setCursorScreenPos(x + 18f * s, y + 6f * s);
             ImGui.beginGroup();
-            ImGui.textUnformatted(Alerts.shorten(a.title(), (int) ((w - 90f * s) / (7f * s))));
-            if (two) UiTheme.textColored(DIM, Alerts.shorten(a.detail(), (int) ((w - 30f * s) / (7f * s))));
+            float titleW = w - 28f * s - (a.level() == Alerts.Level.ERROR ? 80f * s : 0f);
+            ImGui.textUnformatted(fit(a.title(), titleW));
+            if (two) UiTheme.textColored(DIM, fit(a.detail(), w - 28f * s));
             ImGui.endGroup();
+            if (ImGui.isItemHovered()) ImGui.setTooltip(a.title() + (two ? "\n" + a.detail() : ""));
             if (a.level() == Alerts.Level.ERROR) {
                 ImGui.setCursorScreenPos(x + w - 70f * s, y + 5f * s);
                 if (button("Dismiss##al" + i, 3)) Alerts.dismiss(a);
@@ -432,22 +483,29 @@ final class Widgets {
         }
         float w = ImGui.getContentRegionAvailX();
         float s = s();
-        ImGuiManager.pushMonoFont();
+        float x0 = ImGui.getCursorPosX();
+        // two lines per handler: "on <condition>" with its state on the right, then "→ <first body line>" indented
         for (Runner.HandlerInfo h : hs) {
             String when = h.active() ? "running" : h.fired() == 0 ? "armed" : h.fired() + "×, " + ago(h.ticksSinceEnd());
+            float whenW = ImGui.calcTextSizeX(when);
+            float y = ImGui.getCursorPosY();
+            ImGuiManager.pushMonoFont();
             UiTheme.textColored(0xe29ef0, "on");
             ImGui.sameLine(0f, 6f * s);
-            UiTheme.textColored(0xecc77a, Alerts.shorten(h.condition(), 18));
-            ImGui.sameLine(0f, 6f * s);
-            UiTheme.textColored(DIM, "→");
-            ImGui.sameLine(0f, 6f * s);
-            UiTheme.textColored(0x7fc8f0, Alerts.shorten(h.body(), 16));
+            float condW = w - (ImGui.getCursorPosX() - x0) - whenW - 12f * s;
+            UiTheme.textColored(0xecc77a, fit(h.condition(), condW));
             ImGui.popFont();
-            ImGui.sameLine(w - ImGui.calcTextSizeX(when));
+            if (ImGui.isItemHovered()) ImGui.setTooltip("line " + h.line() + ": on " + h.condition() + "\n  " + h.body());
+            ImGui.setCursorPos(x0 + w - whenW, y);
             UiTheme.textColored(h.active() ? ACCENT : DIM, when);
             ImGuiManager.pushMonoFont();
+            ImGui.setCursorPosX(x0 + 18f * s);
+            UiTheme.textColored(DIM, "→");
+            ImGui.sameLine(0f, 6f * s);
+            UiTheme.textColored(0x7fc8f0, fit(h.body(), w - 18f * s - 20f * s));
+            ImGui.popFont();
+            ImGui.dummy(1, 2f * s);
         }
-        ImGuiManager.popMonoFont();
     }
 
     static String ago(long ticks) {
@@ -458,22 +516,51 @@ final class Widgets {
         return (sec / 3600) + " h ago";
     }
 
-    static void log(int n) {
+    /**
+     * The log tile: newest first, scrollable. Click selects a line (Ctrl adds, Shift a range), Ctrl+C or Copy copies
+     * the selection (everything shown when nothing is selected), hover shows the whole line, Open goes to the Log drawer.
+     */
+    static void logTile() {
+        float s = s();
+        label("Log");
+        int sel = DockedPanels.selectedLogCount();
+        String copyLabel = sel > 0 ? "Copy " + sel + "##logTileCopy" : "Copy all##logTileCopy";
+        float bw = ImGui.calcTextSizeX(copyLabel.substring(0, copyLabel.indexOf('#'))) + ImGui.calcTextSizeX("Open")
+                + 4f * ImGui.getStyle().getFramePaddingX() + ImGui.getStyle().getItemSpacingX();
+        ImGui.sameLine(ImGui.getContentRegionMaxX() - bw);
+        float by = ImGui.getCursorPosY() - 4f * s, bx = ImGui.getCursorPosX();
+        ImGui.setCursorPosY(by);
+        if (button(copyLabel, 3)) DockedPanels.copySelectedLogs();
+        ImGui.setCursorPos(bx + ImGui.getItemRectSizeX() + ImGui.getStyle().getItemSpacingX(), by);
+        if (button("Open##logTileOpen", 3)) Shell.drawer = Shell.Drawer.LOG;
+
         List<LogBuffer.Entry> all = LogBuffer.entries(LogBuffer.Filter.ALL);
         if (all.isEmpty()) {
             UiTheme.textColored(DIM, "No messages yet.");
             return;
         }
+        ImGui.beginChild("##logTileList", 0f, 0f, false);
         float w = ImGui.getContentRegionAvailX();
         ImGuiManager.pushMonoFont();
-        int maxChars = Math.max(10, (int) ((w - 80f * s()) / (8.4f * s())));
-        for (int i = all.size() - 1; i >= Math.max(0, all.size() - n); i--) {
+        float timeW = ImGui.calcTextSizeX("00:00:00") + 10f * s;
+        for (int i = all.size() - 1; i >= 0; i--) {
             LogBuffer.Entry e = all.get(i);
+            float y = ImGui.getCursorPosY(), x = ImGui.getCursorPosX();
+            boolean selected = DockedPanels.isLogSelected(e.id());
+            if (ImGui.selectable("##logrow" + e.id(), selected, 0, w, ImGui.getTextLineHeight())) {
+                DockedPanels.selectLogEntry(e.id(), ImGui.getIO().getKeyCtrl(), ImGui.getIO().getKeyShift());
+            }
+            if (ImGui.isItemHovered() && ImGui.calcTextSizeX(e.text()) > w - timeW) ImGui.setTooltip(e.text());
+            ImGui.setCursorPos(x, y);
             UiTheme.textColored(GUTTER, e.time());
-            ImGui.sameLine(0f, 10f * s());
+            ImGui.setCursorPos(x + timeW, y);
             int c = e.kind() == LogBuffer.Kind.ERROR ? ERR : e.kind() == LogBuffer.Kind.BARITONE ? 0x7fc8f0 : FG;
-            UiTheme.textColored(c, Alerts.shorten(e.text(), maxChars));
+            UiTheme.textColored(c, fit(e.text(), w - timeW));
         }
         ImGuiManager.popMonoFont();
+        if (ImGui.isWindowFocused() && ImGui.getIO().getKeyCtrl() && ImGui.isKeyPressed(imgui.flag.ImGuiKey.C)) {
+            DockedPanels.copySelectedLogs();
+        }
+        ImGui.endChild();
     }
 }

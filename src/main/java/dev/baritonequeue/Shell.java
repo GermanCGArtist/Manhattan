@@ -324,11 +324,7 @@ final class Shell {
             if (Widgets.beginTile("##alertsM", half, h)) { Widgets.label("Alerts"); Widgets.alerts(snap, 4); }
             Widgets.endTile();
             ImGui.sameLine(0f, gap);
-            if (Widgets.beginTile("##logM", half, h)) {
-                Widgets.label("Log");
-                int rows = Math.max(2, (int) ((h - 46f * s) / ImGui.getTextLineHeightWithSpacing()));
-                Widgets.log(rows);
-            }
+            if (Widgets.beginTile("##logM", half, h)) Widgets.logTile();
             Widgets.endTile();
         }
         ImGui.end();
@@ -338,6 +334,11 @@ final class Shell {
             float w = rw - 12f * s;
             if (Widgets.beginTile("##map", w, w)) {
                 Widgets.label("Map");
+                String chunks = MapLayers.summary();
+                if (!chunks.isEmpty()) {
+                    ImGui.sameLine(ImGui.getContentRegionMaxX() - ImGui.calcTextSizeX(chunks));
+                    UiTheme.textColored(ACCENT, chunks);
+                }
                 float mw = ImGui.getContentRegionAvailX();
                 MapView.draw(ImGui.getCursorScreenPosX(), ImGui.getCursorScreenPosY(), mw, Math.max(40f, ImGui.getContentRegionAvailY()));
             }
@@ -356,8 +357,8 @@ final class Shell {
     private static void renderDrawer(float W, float H, float s) {
         float a = activityW(s), sb = statusH(s);
         float y = mode == Mode.MONITOR ? topH(s) : 0f;
-        float w = Math.min(Math.max(420f * s, W * 0.30f), W - a - 40f);
-        if (mode == Mode.EDIT) w = Math.min(w, gameX - a);
+        float w = Math.min(Math.max(520f * s, W * 0.36f), W - a - 40f);
+        if (mode == Mode.EDIT) w = Math.min(Math.max(w, (gameX - a) * 0.7f), gameX - a);
         ImGui.setNextWindowPos(a, y);
         ImGui.setNextWindowSize(w, H - y - sb);
         ImGui.pushStyleVar(ImGuiStyleVar.WindowPadding, 14f * s, 10f * s);
@@ -371,17 +372,23 @@ final class Shell {
             UiTheme.push(UiTheme.numM);
             ImGui.textUnformatted(drawer.title.toUpperCase());
             ImGui.popFont();
-            ImGui.sameLine(ImGui.getContentRegionMaxX() - 60f * s);
+            float closeW = ImGui.calcTextSizeX("Close") + 2f * ImGui.getStyle().getFramePaddingX();
+            ImGui.sameLine(ImGui.getContentRegionMaxX() - closeW);
+            ImGui.setCursorPosY(ImGui.getCursorPosY() + 6f * s);   // centred on the title's height
             if (Widgets.button("Close##drawerClose", 3)) drawer = Drawer.NONE;
             ImGui.separator();
-            switch (drawer) {
-                case PRESETS -> DockedPanels.renderPresetsPanel();
-                case CHESTS -> DockedPanels.renderChestsPanel();
-                case AREAS -> DockedPanels.renderAreasPanel();
-                case CAPTURE -> DockedPanels.renderCapturePanel();
-                case LOG -> DockedPanels.renderLogPanel();
-                default -> { }
+            // the body scrolls both ways, so long lines are never just cut off
+            if (ImGui.beginChild("##drawerBody", 0f, 0f, false, ImGuiWindowFlags.HorizontalScrollbar)) {
+                switch (drawer) {
+                    case PRESETS -> DockedPanels.renderPresetsPanel();
+                    case CHESTS -> DockedPanels.renderChestsPanel();
+                    case AREAS -> DockedPanels.renderAreasPanel();
+                    case CAPTURE -> DockedPanels.renderCapturePanel();
+                    case LOG -> DockedPanels.renderLogPanel();
+                    default -> { }
+                }
             }
+            ImGui.endChild();
         } else {
             ImGui.popStyleColor();
             ImGui.popStyleVar(2);

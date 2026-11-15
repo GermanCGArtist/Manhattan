@@ -2,6 +2,18 @@
 
 Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
 
+## 2.12.1 – workspace polish, chunks on the map (2026-11-15)
+- Inventory and Tools show the real item pictures from the game's textures (letters only when there is none).
+- Nothing overlaps or is cut off any more: names, steps, alerts and handlers are shortened to the space they have
+  (the full text on hover); handlers take two lines (condition, then what runs); the drawers are wider, wrap long
+  lines and scroll.
+- The step bar's "green chunk" is explained: green = done steps, a white tick where the script is, grey = to come;
+  hovering a cell shows its step and line.
+- The Log tile: click to select (Ctrl adds, Shift a range), Ctrl+C or Copy copies, Open goes to the Log drawer.
+- Skip/Stop and the drawer's Close button are aligned.
+- MapLayers: a running job can put regions on the Monitor map (to do / working / done / failed, numbered), and the
+  map header counts them ("6/15 chunks done"). Meant for the spatial chunk runner.
+
 ## 2.12.0 – the workspace: one UI, Edit and Monitor (2026-11-15)
 The vanilla screens (editor, presets, capture menu, HUD bar) and the docked 2x2 layout are replaced by one Dear ImGui
 workspace with two fixed layouts around the live game.

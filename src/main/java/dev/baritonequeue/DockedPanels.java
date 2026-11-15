@@ -732,6 +732,10 @@ public final class DockedPanels {
         }
     }
 
+    public static boolean isLogSelected(long id) {
+        return selectedLogIds.contains(id);
+    }
+
     public static int selectedLogCount() {
         return selectedLogIds.size();
     }
@@ -1249,7 +1253,7 @@ public final class DockedPanels {
 
     /** 4. Bottom-Left Tab 2: Areas (saved areas, chests, beds, Litematica placements). */
     public static void renderAreasPanel() {
-        ImGui.text("Current #sel: " + AreasView.currentSelectionSummary());
+        Widgets.wrapped(UiTheme.FG, "Current #sel: " + AreasView.currentSelectionSummary());
         ImGui.setNextItemWidth(120f);
         ImGui.inputTextWithHint("##NewAreaName", "Area name...", newAreaName);
         ImGui.sameLine(0f, 6f);
@@ -1285,7 +1289,7 @@ public final class DockedPanels {
                 ImGui.sameLine(0f, 6f);
                 String tagPrefix = a.isLast() ? "" : a.tag() + " ";
                 String roleSuffix = a.role().equalsIgnoreCase("custom") ? "" : " [" + a.role() + "]";
-                ImGui.text(tagPrefix + a.name() + roleSuffix + ": " + a.summary());
+                Widgets.wrapped(UiTheme.FG, tagPrefix + a.name() + roleSuffix + ": " + a.summary());
             }
         }
 
@@ -1305,7 +1309,7 @@ public final class DockedPanels {
                     ChestIndexView.copyPos(sp.x(), sp.y(), sp.z());
                 }
                 ImGui.sameLine(0f, 6f);
-                ImGui.text(sp.name() + " [" + sp.kind() + "] at " + sp.x() + " " + sp.y() + " " + sp.z());
+                Widgets.wrapped(UiTheme.FG, sp.name() + " [" + sp.kind() + "] at " + sp.x() + " " + sp.y() + " " + sp.z());
             }
         }
 
@@ -1316,7 +1320,7 @@ public final class DockedPanels {
             ImGui.textDisabled("No Litematica placements in this world.");
         } else {
             for (PlacesView.SchematicEntry sc : schems) {
-                ImGui.text(sc.index() + ". " + sc.name() + " at " + sc.x() + " " + sc.y() + " " + sc.z()
+                Widgets.wrapped(UiTheme.FG, sc.index() + ". " + sc.name() + " at " + sc.x() + " " + sc.y() + " " + sc.z()
                         + " (" + sc.regions() + " region" + (sc.regions() == 1 ? "" : "s") + (sc.enabled() ? "" : ", disabled") + ")");
             }
         }

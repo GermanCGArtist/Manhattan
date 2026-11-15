@@ -531,8 +531,13 @@ def test_ui_screens(t):
     t.wait_chat("TEST ui screens started", 15)
     time.sleep(4)
     shots = []
-    for name, cmd in (("edit", "imgui open edit"), ("monitor", "imgui open monitor"), ("closed", "imgui close")):
-        t.b(cmd)
+    for name, cmds in (("edit", ["imgui open edit"]),
+                       ("monitor", ["imgui open monitor"]),
+                       ("monitor-chunks", ["imgui maplayer on"]),
+                       ("drawer-areas", ["imgui maplayer off", "imgui drawer AREAS"]),
+                       ("closed", ["imgui drawer NONE", "imgui close"])):
+        for cmd in cmds:
+            t.b(cmd)
         time.sleep(1.5)
         path = os.path.join(out, "%s.png" % name)
         t.b("imgui shot %s" % path)

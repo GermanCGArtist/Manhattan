@@ -341,6 +341,21 @@ public class TestBridge implements ClientModInitializer {
                     else CommandPalette.toggle();
                 }
                 case "scale" -> ImGuiManager.setUiScale(Float.parseFloat(a[1]));
+                case "maplayer" -> {   // imgui maplayer on|off: a sample 5x3 grid of 8-block chunks next to (100, 100)
+                    if (a.length > 1 && a[1].equals("off")) MapLayers.unregister("test");
+                    else MapLayers.register("test", () -> {
+                        java.util.List<MapLayers.Region> out = new java.util.ArrayList<>();
+                        MapLayers.State[] st = MapLayers.State.values();
+                        for (int i = 0; i < 15; i++) {
+                            int gx = i % 5, gz = i / 5;
+                            MapLayers.State s = i < 6 ? MapLayers.State.DONE : i == 6 ? MapLayers.State.ACTIVE
+                                    : i == 9 ? MapLayers.State.FAILED : MapLayers.State.PENDING;
+                            out.add(new MapLayers.Region(96 + gx * 8, 104 + gz * 8, 103 + gx * 8, 111 + gz * 8, s,
+                                    String.valueOf(i + 1), "sample chunk"));
+                        }
+                        return out;
+                    });
+                }
                 case "shot" -> ImGuiManager.requestScreenshot(java.nio.file.Path.of(String.join(" ", java.util.Arrays.copyOfRange(a, 1, a.length))));
                 case "stop" -> ImGuiManager.triggerStop();
                 case "key" -> {

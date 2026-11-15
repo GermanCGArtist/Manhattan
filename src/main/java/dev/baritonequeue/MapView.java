@@ -61,10 +61,17 @@ final class MapView {
         }
         for (Pt p : scriptPoints()) if (near(p.x(), p.z(), px, pz)) pts.add(p);
 
-        // bounds: everything shown plus the player, at least 32 blocks, square
+        List<MapLayers.Region> layer = MapLayers.regions();
+
+        // bounds: the job's chunks if there are any (that is what is being worked on), else everything shown;
+        // always the player, at least 32 blocks, square
         double minX = px - 16, maxX = px + 16, minZ = pz - 16, maxZ = pz + 16;
-        for (Box b : boxes) { minX = Math.min(minX, b.x1()); maxX = Math.max(maxX, b.x2() + 1); minZ = Math.min(minZ, b.z1()); maxZ = Math.max(maxZ, b.z2() + 1); }
-        for (Pt p : pts) { minX = Math.min(minX, p.x()); maxX = Math.max(maxX, p.x() + 1); minZ = Math.min(minZ, p.z()); maxZ = Math.max(maxZ, p.z() + 1); }
+        if (!layer.isEmpty()) {
+            for (MapLayers.Region r : layer) { minX = Math.min(minX, r.x1()); maxX = Math.max(maxX, r.x2() + 1); minZ = Math.min(minZ, r.z1()); maxZ = Math.max(maxZ, r.z2() + 1); }
+        } else {
+            for (Box b : boxes) { minX = Math.min(minX, b.x1()); maxX = Math.max(maxX, b.x2() + 1); minZ = Math.min(minZ, b.z1()); maxZ = Math.max(maxZ, b.z2() + 1); }
+            for (Pt p : pts) { minX = Math.min(minX, p.x()); maxX = Math.max(maxX, p.x() + 1); minZ = Math.min(minZ, p.z()); maxZ = Math.max(maxZ, p.z() + 1); }
+        }
         double span = Math.max(maxX - minX, maxZ - minZ) * 1.12 + 4;
         double cx = (minX + maxX) / 2, cz = (minZ + maxZ) / 2;
         float scale = (float) (Math.min(w, h) / span);
@@ -98,6 +105,38 @@ final class MapView {
             }
             if (mx >= bx1 && mx <= bx2 && my >= bz1 && my <= bz2) {
                 hover = "area " + b.name() + "  " + b.x1() + " " + b.z1() + " to " + b.x2() + " " + b.z2();
+            }
+        }
+        // the job's chunks: grey = to do, accent = being worked on (outlined), green = done, red = failed
+        for (MapLayers.Region r : layer) {
+            float rx1 = ox + (float) (r.x1() - cx) * scale, rz1 = oz + (float) (r.z1() - cz) * scale;
+            float rx2 = ox + (float) (r.x2() + 1 - cx) * scale, rz2 = oz + (float) (r.z2() + 1 - cz) * scale;
+            int c = switch (r.state()) {
+                case DONE -> OK;
+                case ACTIVE -> ACCENT;
+                case FAILED -> ERR;
+                case SKIPPED -> DIM;
+                default -> GUTTER;
+            };
+            float fill = switch (r.state()) {
+                case DONE -> 0.30f;
+                case ACTIVE -> 0.40f;
+                case FAILED -> 0.35f;
+                default -> 0.08f;
+            };
+            dl.addRectFilled(rx1 + 0.5f, rz1 + 0.5f, rx2 - 0.5f, rz2 - 0.5f, u32(c, fill));
+            dl.addRect(rx1, rz1, rx2, rz2, u32(c, r.state() == MapLayers.State.ACTIVE ? 1f : 0.55f), 0f, 0,
+                    r.state() == MapLayers.State.ACTIVE ? 2f : 1f);
+            if (!r.label().isEmpty() && rx2 - rx1 > ImGui.calcTextSizeX(r.label()) + 6) {
+                UiTheme.push(UiTheme.small);
+                float tw = ImGui.calcTextSizeX(r.label());
+                dl.addText((rx1 + rx2 - tw) / 2f, (rz1 + rz2 - ImGui.getFontSize()) / 2f,
+                        u32(r.state() == MapLayers.State.PENDING ? DIM : FG), r.label());
+                ImGui.popFont();
+            }
+            if (mx >= rx1 && mx <= rx2 && my >= rz1 && my <= rz2) {
+                hover = "chunk " + r.label() + " (" + r.state().name().toLowerCase() + ")  " + r.x1() + " " + r.z1()
+                        + " to " + r.x2() + " " + r.z2() + (r.detail().isEmpty() ? "" : "\n" + r.detail());
             }
         }
         for (Pt p : pts) {

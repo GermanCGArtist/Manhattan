@@ -45,7 +45,12 @@ acts on its own: the script starts them. The packages talk through small `Api` c
 - Look: `UiTheme` (colour tokens, the ImGui style, fonts Inter / JetBrains Mono / Barlow Condensed bundled under
   `assets/baritonequeue/fonts`, SIL OFL; rasterised at the UI scale and rebuilt when it changes), `Icons` (activity
   bar icons drawn with the draw list).
-- Tiles: `Widgets` (Now running, top strip, step list, vitals, tools with the itemSaver threshold tick, inventory,
+- Map layers: `MapLayers.register(id, supplier)` / `unregister(id)` give `MapView` regions (block x/z, state
+  PENDING / ACTIVE / DONE / FAILED / SKIPPED, label, hover detail) to draw over the map; while any are there the map
+  fits itself to them and its header counts them. A spatial job registers its chunks in its `start()` and removes
+  them when it finishes or fails. `ItemIcons` draws item pictures from the items atlas (block items from the blocks
+  atlas) with the draw list.
+- Tiles: `Widgets` (Now running, top strip, step list, vitals, tools with item icons, inventory,
   alerts, handlers, compact log), `MapView` (top-down: saved areas, `#sel`, chests and captured spots, positions
   written in the script as `let name = pos(...)`, the player and heading), `PlayerView` (inventory and tool
   durability), `Alerts` (latest error, stalled step, worn tools, low health/food, full inventory), `Runner.handlerInfos()`
