@@ -28,6 +28,7 @@ public class ImGuiNativesTest {
         eq("linux x86_64", ImGuiNatives.resourceName("linux", "x86_64"), "libimgui-java64.so");
         eq("macos x64", ImGuiNatives.resourceName("Mac OS X", "x86_64"), "libimgui-java64.dylib");
         eq("macos arm64", ImGuiNatives.resourceName("Mac OS X", "aarch64"), "libimgui-java64.dylib");
+        eq("darwin arm64", ImGuiNatives.resourceName("Darwin", "arm64"), "libimgui-java64.dylib");
         eq("linux aarch64 unsupported", ImGuiNatives.resourceName("Linux", "aarch64"), null);
         eq("unknown os", ImGuiNatives.resourceName("Plan 9", "amd64"), null);
 

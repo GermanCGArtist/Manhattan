@@ -32,8 +32,9 @@ public final class ImGuiNatives {
         String arch = osArch == null ? "" : osArch.toLowerCase(Locale.ROOT);
         boolean x64 = arch.equals("amd64") || arch.equals("x86_64");
         boolean arm64 = arch.equals("aarch64") || arch.equals("arm64");
-        if (os.contains("win")) return x64 ? "imgui-java64.dll" : null;
+        // mac first: "darwin" contains "win"
         if (os.contains("mac") || os.contains("darwin")) return x64 || arm64 ? "libimgui-java64.dylib" : null;
+        if (os.contains("win")) return x64 ? "imgui-java64.dll" : null;
         if (os.contains("linux")) return x64 ? "libimgui-java64.so" : null;
         return null;
     }
