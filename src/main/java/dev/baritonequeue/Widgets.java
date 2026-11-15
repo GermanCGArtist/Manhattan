@@ -205,7 +205,7 @@ final class Widgets {
         } else {
             ImGui.textUnformatted("Not running");
             UiTheme.pushText(DIM);
-            ImGui.textUnformatted(snap.totalSteps() + " steps in the script. Run it from the editor or Ctrl+P.");
+            ImGui.textUnformatted(snap.totalSteps() + " steps in the script. Run it from the editor or " + Platform.shortcutName() + "+P.");
             ImGui.popStyleColor();
         }
         ImGui.endGroup();
