@@ -19,6 +19,7 @@ import org.lwjgl.glfw.GLFWMonitorCallback;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL30;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static dev.baritonequeue.Config.cfg;
