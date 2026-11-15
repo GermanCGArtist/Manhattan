@@ -137,7 +137,7 @@ final class SleepProcess extends Feature {
                     + Math.round(Math.sqrt(bed.distSqr(mc.player.blockPosition()))) + " blocks away, about " + Math.round(travel / 20)
                     + " s with slack - leaving now to be there before mobs spawn.");
         }
-        EngineSelector.current().goTo(GoalSpec.near(bed, 2));
+        EngineSelector.current().goTo(GoalSpec.near(bed, 1));
     }
 
     @Override
@@ -173,7 +173,7 @@ final class SleepProcess extends Feature {
                     return;
                 }
                 if (!EngineSelector.current().isBusy()) {
-                    EngineSelector.current().goTo(GoalSpec.near(bed, 2));
+                    EngineSelector.current().goTo(GoalSpec.near(bed, 1));
                 }
             }
             case WAITING -> {

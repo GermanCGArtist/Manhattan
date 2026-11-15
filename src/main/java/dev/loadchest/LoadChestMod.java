@@ -1,6 +1,7 @@
 package dev.loadchest;
 
 import dev.midtown.api.EngineSelector;
+import dev.midtown.api.EngineStatus;
 import dev.midtown.api.GoalSpec;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
@@ -474,7 +475,7 @@ public class LoadChestMod implements ClientModInitializer {
         timer = 0;
         queue = null;
         state = State.PATHING;
-        EngineSelector.current().goTo(GoalSpec.near(target, 3));
+        EngineSelector.current().goTo(GoalSpec.near(target, 2));
         msg("Going to chest at " + target.toShortString());
         return 1;
     }
@@ -579,7 +580,10 @@ public class LoadChestMod implements ClientModInitializer {
                     timer = 0;
                     state = State.OPENING;
                 } else if (!EngineSelector.current().isBusy()) {
-                    EngineSelector.current().goTo(GoalSpec.near(target, 3));
+                    GoalSpec goal = EngineSelector.current().status() == EngineStatus.DONE
+                            ? GoalSpec.near(target, 1)
+                            : GoalSpec.near(target, 2);
+                    EngineSelector.current().goTo(goal);
                 }
             }
             case OPENING -> {
