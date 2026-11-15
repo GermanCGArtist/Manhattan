@@ -60,6 +60,9 @@ final class Modules {
             }
         }
         out.put("ui.layout", Config.cfg.uiLastMode);
+        out.put("chunk.enabled", String.valueOf(Config.cfg.chunkEnabled));
+        out.put("chunk.size", String.valueOf(Config.cfg.chunkSize));
+        out.put("chunk.order", Config.cfg.chunkOrder);
         out.put("engine", dev.midtown.api.EngineSelector.selectedName());
         return out;
     }
@@ -75,9 +78,26 @@ final class Modules {
                 throw new RuntimeException(e);
             }
         }
+        if (k.equalsIgnoreCase("chunk.enabled") || k.equalsIgnoreCase("chunk.size") || k.equalsIgnoreCase("chunk.order")) {
+            String fieldName = switch (k.toLowerCase(java.util.Locale.ROOT)) {
+                case "chunk.enabled" -> "chunkEnabled";
+                case "chunk.size" -> "chunkSize";
+                default -> "chunkOrder";
+            };
+            try {
+                Field f = Config.class.getDeclaredField(fieldName);
+                f.setAccessible(true);
+                return new Object[]{Config.cfg, f, new Group("chunk", () -> Config.cfg, Config::save)};
+            } catch (NoSuchFieldException e) {
+                throw new RuntimeException(e);
+            }
+        }
         int dot = k.indexOf('.');
-        if (dot < 0) throw Values.error("An option is named group.name, for example \"survival.eat\". Groups: survival, buildtools, loadchest. option_list() shows all.", line);
+        if (dot < 0) throw Values.error("An option is named group.name, for example \"survival.eat\". Groups: survival, buildtools, loadchest, chunk. option_list() shows all.", line);
         String group = k.substring(0, dot).toLowerCase(), name = k.substring(dot + 1);
+        if (group.equals("chunk")) {
+            throw Values.error("'chunk' has no option '" + name + "'. It has: enabled, size, order", line);
+        }
         if (group.equals("survivalkit")) group = "survival";
         for (Group g : groups()) {
             if (!g.name.equals(group)) continue;
@@ -92,7 +112,7 @@ final class Modules {
             for (Field f : cfg.getClass().getDeclaredFields()) if (settable(f)) names.add(f.getName());
             throw Values.error("'" + group + "' has no option '" + name + "'. It has: " + String.join(", ", names), line);
         }
-        throw Values.error("Unknown option group '" + group + "'. Groups: survival, buildtools, loadchest.", line);
+        throw Values.error("Unknown option group '" + group + "'. Groups: survival, buildtools, loadchest, chunk.", line);
     }
 
     static Object get(String key, int line) {
@@ -135,13 +155,21 @@ final class Modules {
                 if (!(value instanceof Boolean b)) throw Values.error(key + " is on/off: use true or false.", line);
                 f.setBoolean(r[0], b);
             } else if (t == int.class) {
-                f.setInt(r[0], Values.toInt(value, key, line));
+                int v = Values.toInt(value, key, line);
+                if (f.getName().equals("chunkSize")) v = Math.max(8, Math.min(128, v));
+                f.setInt(r[0], v);
             } else if (t == double.class) {
                 f.setDouble(r[0], Values.toNum(value, key, line));
             } else if (t == String.class) {
                 String s = value == null ? null : Values.str(value);
                 if (f.getName().equals("uiLastMode") && (s == null || (!s.equals("edit") && !s.equals("monitor")))) {
                     throw Values.error("ui.layout is \"edit\" or \"monitor\" (the layout key J opens; the old vanilla screens are gone).", line);
+                }
+                if (f.getName().equals("chunkOrder")) {
+                    s = s == null ? "" : s.trim().toLowerCase(java.util.Locale.ROOT);
+                    if (!s.equals("serpentine") && !s.equals("nearest")) {
+                        throw Values.error("chunk.order must be \"serpentine\" or \"nearest\".", line);
+                    }
                 }
                 f.set(r[0], s);
             } else if (t == int[].class) {

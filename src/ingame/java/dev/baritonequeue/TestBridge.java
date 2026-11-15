@@ -639,13 +639,13 @@ public class TestBridge implements ClientModInitializer {
             case OPENING_WORLD -> {
                 if (mc.level != null && mc.player != null && mc.getSingleplayerServer() != null) {
                     mc.player.connection.sendCommand("tp @s 100 -60 100 0 0");
-                    mc.player.connection.sendCommand("forceload add 90 90 190 110");
+                    mc.player.connection.sendCommand("forceload add 80 80 200 200");
                     benchState = BenchState.WAIT_IN_WORLD;
                     benchTicks = 0;
                 }
             }
             case WAIT_IN_WORLD -> {
-                if (benchTicks >= 30) {
+                if (benchTicks >= 40) {
                     if (mc.screen != null) mc.setScreen(null);
                     setupBenchmarkScenario(mc, BENCHMARK.trim());
                     benchState = BenchState.SETUP;
@@ -654,7 +654,7 @@ public class TestBridge implements ClientModInitializer {
             }
             case SETUP -> {
                 String scenario = BENCHMARK.trim();
-                if (benchTicks >= 40 && (setupSynced(mc, scenario) || benchTicks >= 100)) {
+                if (benchTicks >= 20 && (setupSynced(mc, scenario) || benchTicks >= 20 * 30)) {
                     List<String> script = benchmarkScript(scenario);
                     if (script == null) {
                         System.out.println("[testbridge] unknown benchmark scenario: " + BENCHMARK);
@@ -682,7 +682,7 @@ public class TestBridge implements ClientModInitializer {
                     // Runner.emitBenchmark(...) already emitted BENCHMARK_RESULT on script completion/failure
                     benchState = BenchState.DONE;
                     benchTicks = 0;
-                } else if (benchTicks >= 20 * 210) {
+                } else if (benchTicks >= 20 * 360) {
                     QueueMod.runner.halt("Benchmark timeout");
                     benchState = BenchState.DONE;
                     benchTicks = 0;
@@ -699,16 +699,29 @@ public class TestBridge implements ClientModInitializer {
 
     private static void setupBenchmarkScenario(Minecraft mc, String scenario) {
         if (mc.player == null) return;
+        var s = mc.getSingleplayerServer();
+        if (s != null) {
+            s.execute(() -> {
+                var gr = s.getGameRules();
+                gr.set(net.minecraft.world.level.gamerules.GameRules.SPAWN_MOBS, false, s);
+                gr.set(net.minecraft.world.level.gamerules.GameRules.SPAWN_MONSTERS, false, s);
+                gr.set(net.minecraft.world.level.gamerules.GameRules.KEEP_INVENTORY, true, s);
+                gr.set(net.minecraft.world.level.gamerules.GameRules.ADVANCE_TIME, false, s);
+                gr.set(net.minecraft.world.level.gamerules.GameRules.ADVANCE_WEATHER, false, s);
+            });
+        }
         List<String> cmds = new ArrayList<>();
         cmds.add("gamemode survival");
+        cmds.add("difficulty peaceful");
+        cmds.add("tick rate 50");
         cmds.add("effect clear @s");
         cmds.add("clear @s");
         cmds.add("time set noon");
         cmds.add("weather clear");
         cmds.add("kill @e[type=!player]");
-        cmds.add("fill 90 -63 90 190 -62 110 dirt");
-        cmds.add("fill 90 -61 90 190 -61 110 grass_block");
-        cmds.add("fill 90 -60 90 190 -48 110 air");
+        cmds.add("fill 90 -63 80 160 -62 130 dirt");
+        cmds.add("fill 90 -61 80 160 -61 130 grass_block");
+        cmds.add("fill 90 -60 80 160 -56 130 air");
         switch (scenario) {
             case "nav_flat_obstacle" -> {
                 cmds.add("fill 115 -60 95 115 -59 105 stone");
@@ -722,7 +735,10 @@ public class TestBridge implements ClientModInitializer {
                 cmds.add("give @s cobblestone 128");
             }
             case "interrupt_mid_action" -> {
+                cmds.add("difficulty normal");
                 cmds.add("fill 104 -60 99 108 -59 101 stone");
+                cmds.add("give @s diamond_helmet 1");
+                cmds.add("give @s diamond_chestplate 1");
                 cmds.add("give @s diamond_pickaxe 1");
                 cmds.add("give @s diamond_sword 1");
                 cmds.add("give @s bread 16");
@@ -741,14 +757,132 @@ public class TestBridge implements ClientModInitializer {
                 cmds.add("give @s cobblestone 64");
             }
             case "survival_marathon" -> {
+                cmds.add("difficulty normal");
                 cmds.add("fill 104 -60 98 107 -59 102 stone");
                 cmds.add("setblock 98 -60 100 chest");
                 cmds.add("data merge block 98 -60 100 {Items:[{Slot:0b,id:\"minecraft:bread\",count:32},{Slot:1b,id:\"minecraft:diamond_pickaxe\",count:1}]}");
                 cmds.add("setblock 98 -60 102 red_bed");
+                cmds.add("give @s diamond_helmet 1");
+                cmds.add("give @s diamond_chestplate 1");
                 cmds.add("give @s diamond_pickaxe 1");
                 cmds.add("give @s diamond_sword 1");
                 cmds.add("give @s bread 16");
                 cmds.add("summon minecraft:zombie 110 -60 100");
+            }
+            case "chunk_clear_2x2_easy" -> {
+                cmds.add("fill 104 -60 92 127 -59 115 stone");
+                cmds.add("give @s diamond_pickaxe[unbreakable={}] 1");
+                cmds.add("give @s diamond_pickaxe 1");
+                cmds.add("effect give @s haste 10000 255 true");
+            }
+            case "chunk_clear_straggler_strip" -> {
+                cmds.add("fill 104 -60 96 151 -59 107 stone");
+                cmds.add("setblock 150 -58 100 stone");
+                cmds.add("give @s diamond_pickaxe[unbreakable={}] 1");
+                cmds.add("give @s diamond_pickaxe 1");
+                cmds.add("effect give @s haste 10000 255 true");
+            }
+            case "chunk_clear_serpentine_3x3" -> {
+                cmds.add("fill 104 -60 90 133 -59 119 stone");
+                cmds.add("give @s diamond_pickaxe[unbreakable={}] 1");
+                cmds.add("give @s diamond_pickaxe 1");
+                cmds.add("effect give @s haste 10000 255 true");
+            }
+            case "chunk_clear_nearest_3x2" -> {
+                cmds.add("fill 104 -60 92 133 -59 111 stone");
+                cmds.add("give @s diamond_pickaxe[unbreakable={}] 1");
+                cmds.add("give @s diamond_pickaxe 1");
+                cmds.add("effect give @s haste 10000 255 true");
+            }
+            case "chunk_clear_l_shape" -> {
+                cmds.add("fill 104 -60 92 135 -59 103 stone");
+                cmds.add("fill 104 -60 104 115 -59 123 stone");
+                cmds.add("give @s diamond_pickaxe[unbreakable={}] 1");
+                cmds.add("give @s diamond_pickaxe 1");
+                cmds.add("effect give @s haste 10000 255 true");
+            }
+            case "chunk_clear_deep_trench" -> {
+                cmds.add("fill 104 -62 96 139 -60 105 stone");
+                cmds.add("give @s diamond_pickaxe[unbreakable={}] 1");
+                cmds.add("give @s diamond_pickaxe 1");
+                cmds.add("effect give @s haste 10000 255 true");
+            }
+            case "chunk_water_fill_2x1" -> {
+                cmds.add("fill 104 -61 96 127 -61 105 water");
+                cmds.add("setblock 98 -60 100 chest");
+                cmds.add("data merge block 98 -60 100 {Items:[{Slot:0b,id:\"minecraft:dirt\",count:64},{Slot:1b,id:\"minecraft:dirt\",count:64},{Slot:2b,id:\"minecraft:dirt\",count:64},{Slot:3b,id:\"minecraft:dirt\",count:64}]}");
+                cmds.add("give @s dirt 64");
+            }
+            case "chunk_water_fill_canal_3x1" -> {
+                cmds.add("fill 104 -62 97 139 -61 104 water");
+                cmds.add("setblock 98 -60 100 chest");
+                cmds.add("data merge block 98 -60 100 {Items:["
+                        + "{Slot:0b,id:\"minecraft:dirt\",count:64},"
+                        + "{Slot:1b,id:\"minecraft:dirt\",count:64},"
+                        + "{Slot:2b,id:\"minecraft:dirt\",count:64},"
+                        + "{Slot:3b,id:\"minecraft:dirt\",count:64},"
+                        + "{Slot:4b,id:\"minecraft:dirt\",count:64},"
+                        + "{Slot:5b,id:\"minecraft:dirt\",count:64},"
+                        + "{Slot:6b,id:\"minecraft:dirt\",count:64},"
+                        + "{Slot:7b,id:\"minecraft:dirt\",count:64},"
+                        + "{Slot:8b,id:\"minecraft:dirt\",count:64}]}");
+                cmds.add("give @s dirt 64");
+            }
+            case "chunk_flood_2x1" -> {
+                cmds.add("fill 104 -61 97 123 -61 104 air");
+                cmds.add("fill 100 -61 99 101 -61 100 water");
+                cmds.add("give @s water_bucket 2");
+                cmds.add("give @s bucket 2");
+            }
+            case "chunk_drain_2x1" -> {
+                cmds.add("fill 104 -61 97 123 -61 104 water");
+                cmds.add("give @s dirt 256");
+                cmds.add("give @s bucket 2");
+            }
+            case "chunk_needs_hook" -> {
+                cmds.add("fill 104 -61 97 127 -61 104 water");
+                cmds.add("setblock 98 -60 100 chest");
+                cmds.add("data merge block 98 -60 100 {Items:[{Slot:0b,id:\"minecraft:dirt\",count:64},{Slot:1b,id:\"minecraft:dirt\",count:64},{Slot:2b,id:\"minecraft:dirt\",count:64},{Slot:3b,id:\"minecraft:dirt\",count:64}]}");
+            }
+            case "chunk_interrupt_survival" -> {
+                cmds.add("difficulty normal");
+                cmds.add("fill 104 -60 96 127 -59 107 stone");
+                cmds.add("give @s diamond_helmet 1");
+                cmds.add("give @s diamond_chestplate 1");
+                cmds.add("give @s diamond_leggings 1");
+                cmds.add("give @s diamond_boots 1");
+                cmds.add("give @s diamond_pickaxe[unbreakable={}] 1");
+                cmds.add("give @s diamond_pickaxe 1");
+                cmds.add("give @s diamond_sword 1");
+                cmds.add("give @s bread 16");
+                cmds.add("effect give @s hunger 10 40");
+                cmds.add("effect give @s resistance 10000 1 true");
+                cmds.add("summon minecraft:zombie 108 -60 102");
+            }
+            case "chunk_protected_transit" -> {
+                cmds.add("fill 104 -60 96 127 -59 107 stone");
+                cmds.add("give @s diamond_pickaxe[unbreakable={}] 1");
+                cmds.add("give @s diamond_pickaxe 1");
+                cmds.add("effect give @s haste 10000 255 true");
+            }
+            case "chunk_job_ledger_resume" -> {
+                cmds.add("fill 104 -60 96 127 -59 107 stone");
+                cmds.add("fill 98 -60 100 98 -60 100 air");
+                cmds.add("give @s diamond_pickaxe[unbreakable={}] 1");
+                cmds.add("give @s diamond_pickaxe 1");
+                cmds.add("effect give @s haste 10000 255 true");
+            }
+            case "chunk_disabled_baseline" -> {
+                cmds.add("fill 104 -60 96 127 -59 107 stone");
+                cmds.add("give @s diamond_pickaxe[unbreakable={}] 1");
+                cmds.add("give @s diamond_pickaxe 1");
+                cmds.add("effect give @s haste 10000 255 true");
+            }
+            case "chunk_colossal_4x4" -> {
+                cmds.add("fill 104 -60 80 151 -60 127 stone");
+                cmds.add("give @s diamond_pickaxe[unbreakable={}] 1");
+                cmds.add("give @s diamond_pickaxe 1");
+                cmds.add("effect give @s haste 10000 255 true");
             }
             default -> { }
         }
@@ -771,6 +905,32 @@ public class TestBridge implements ClientModInitializer {
                     mc.level.getBlockState(new BlockPos(104, -60, 99)).is(net.minecraft.world.level.block.Blocks.STONE);
             case "schem_unsupported_reach" ->
                     mc.level.getBlockState(new BlockPos(104, -59, 99)).is(net.minecraft.world.level.block.Blocks.STONE);
+            case "chunk_clear_2x2_easy", "chunk_clear_nearest_3x2", "chunk_clear_l_shape" ->
+                    mc.level.getBlockState(new BlockPos(104, -60, 92)).is(net.minecraft.world.level.block.Blocks.STONE);
+            case "chunk_clear_straggler_strip" ->
+                    mc.level.getBlockState(new BlockPos(150, -58, 100)).is(net.minecraft.world.level.block.Blocks.STONE);
+            case "chunk_clear_serpentine_3x3" ->
+                    mc.level.getBlockState(new BlockPos(104, -60, 90)).is(net.minecraft.world.level.block.Blocks.STONE);
+            case "chunk_clear_deep_trench" ->
+                    mc.level.getBlockState(new BlockPos(104, -62, 96)).is(net.minecraft.world.level.block.Blocks.STONE);
+            case "chunk_water_fill_2x1" ->
+                    mc.level.getBlockState(new BlockPos(98, -60, 100)).is(net.minecraft.world.level.block.Blocks.CHEST)
+                            && mc.level.getFluidState(new BlockPos(104, -61, 96)).is(net.minecraft.tags.FluidTags.WATER);
+            case "chunk_water_fill_canal_3x1" ->
+                    mc.level.getBlockState(new BlockPos(98, -60, 100)).is(net.minecraft.world.level.block.Blocks.CHEST)
+                            && mc.level.getFluidState(new BlockPos(104, -62, 97)).is(net.minecraft.tags.FluidTags.WATER);
+            case "chunk_flood_2x1" ->
+                    mc.level.getBlockState(new BlockPos(104, -61, 97)).isAir()
+                            && mc.level.getFluidState(new BlockPos(100, -61, 99)).is(net.minecraft.tags.FluidTags.WATER);
+            case "chunk_drain_2x1" ->
+                    mc.level.getFluidState(new BlockPos(104, -61, 97)).is(net.minecraft.tags.FluidTags.WATER);
+            case "chunk_needs_hook" ->
+                    mc.level.getBlockState(new BlockPos(98, -60, 100)).is(net.minecraft.world.level.block.Blocks.CHEST)
+                            && mc.level.getFluidState(new BlockPos(104, -61, 97)).is(net.minecraft.tags.FluidTags.WATER);
+            case "chunk_interrupt_survival", "chunk_protected_transit", "chunk_job_ledger_resume", "chunk_disabled_baseline" ->
+                    mc.level.getBlockState(new BlockPos(104, -60, 96)).is(net.minecraft.world.level.block.Blocks.STONE);
+            case "chunk_colossal_4x4" ->
+                    mc.level.getBlockState(new BlockPos(104, -60, 80)).is(net.minecraft.world.level.block.Blocks.STONE);
             default -> true;
         };
     }
@@ -829,6 +989,133 @@ public class TestBridge implements ClientModInitializer {
                     "dump(pos(98, -60, 100))",
                     "goto(pos(100, -60, 100))"
             );
+            case "chunk_clear_2x2_easy" -> List.of(
+                    "timeout(200)",
+                    "disable()",
+                    "option(\"chunk.size\", 12)",
+                    "select(pos(104, -60, 92), pos(127, -59, 115))",
+                    "clear_area()"
+            );
+            case "chunk_clear_straggler_strip" -> List.of(
+                    "timeout(200)",
+                    "disable()",
+                    "option(\"chunk.size\", 16)",
+                    "select(pos(104, -60, 96), pos(151, -58, 107))",
+                    "clear_area()"
+            );
+            case "chunk_clear_serpentine_3x3" -> List.of(
+                    "timeout(200)",
+                    "disable()",
+                    "option(\"chunk.size\", 10)",
+                    "option(\"chunk.order\", \"serpentine\")",
+                    "select(pos(104, -60, 90), pos(133, -59, 119))",
+                    "clear_area()"
+            );
+            case "chunk_clear_nearest_3x2" -> List.of(
+                    "timeout(200)",
+                    "disable()",
+                    "option(\"chunk.size\", 10)",
+                    "option(\"chunk.order\", \"nearest\")",
+                    "select(pos(104, -60, 92), pos(133, -59, 111))",
+                    "clear_area()"
+            );
+            case "chunk_clear_l_shape" -> List.of(
+                    "timeout(200)",
+                    "disable()",
+                    "option(\"chunk.size\", 12)",
+                    "select(pos(104, -60, 92), pos(135, -59, 103))",
+                    "add_box(pos(104, -60, 104), pos(115, -59, 123))",
+                    "clear_area()"
+            );
+            case "chunk_clear_deep_trench" -> List.of(
+                    "timeout(200)",
+                    "disable()",
+                    "option(\"chunk.size\", 12)",
+                    "select(pos(104, -62, 96), pos(139, -60, 105))",
+                    "clear_area()"
+            );
+            case "chunk_water_fill_2x1" -> List.of(
+                    "timeout(200)",
+                    "disable()",
+                    "option(\"chunk.size\", 12)",
+                    "select(pos(104, -61, 96), pos(127, -61, 105))",
+                    "fill_water(\"dirt\", pos(98, -60, 100))"
+            );
+            case "chunk_water_fill_canal_3x1" -> List.of(
+                    "timeout(200)",
+                    "disable()",
+                    "option(\"chunk.size\", 12)",
+                    "select(pos(104, -62, 97), pos(139, -61, 104))",
+                    "fill_water(\"dirt\", pos(98, -60, 100))"
+            );
+            case "chunk_flood_2x1" -> List.of(
+                    "timeout(200)",
+                    "disable()",
+                    "option(\"chunk.size\", 10)",
+                    "select(pos(104, -61, 97), pos(123, -61, 104))",
+                    "flood()"
+            );
+            case "chunk_drain_2x1" -> List.of(
+                    "timeout(200)",
+                    "disable()",
+                    "option(\"chunk.size\", 10)",
+                    "select(pos(104, -61, 97), pos(123, -61, 104))",
+                    "drain()"
+            );
+            case "chunk_needs_hook" -> List.of(
+                    "timeout(200)",
+                    "disable()",
+                    "on chunk_needs",
+                    "  take(pos(98, -60, 100), \"dirt\", 64)",
+                    "end",
+                    "option(\"chunk.size\", 12)",
+                    "select(pos(104, -61, 97), pos(127, -61, 104))",
+                    "fill_water(\"dirt\", pos(98, -60, 100))"
+            );
+            case "chunk_interrupt_survival" -> List.of(
+                    "timeout(200)",
+                    "disable()",
+                    "on mobs_near(12) > 0",
+                    "  defend()",
+                    "end",
+                    "on food < 14",
+                    "  eat()",
+                    "end",
+                    "option(\"chunk.size\", 12)",
+                    "select(pos(104, -60, 96), pos(127, -59, 107))",
+                    "clear_area()"
+            );
+            case "chunk_protected_transit" -> List.of(
+                    "timeout(200)",
+                    "disable()",
+                    "option(\"chunk.size\", 12)",
+                    "select(pos(104, -60, 96), pos(127, -59, 107))",
+                    "clear_area()",
+                    "goto(pos(100, -60, 100))"
+            );
+            case "chunk_job_ledger_resume" -> List.of(
+                    "timeout(200)",
+                    "disable()",
+                    "job \"chunked_trench\"",
+                    "  option(\"chunk.size\", 12)",
+                    "  select(pos(104, -60, 96), pos(127, -59, 107))",
+                    "  clear_area()",
+                    "end"
+            );
+            case "chunk_disabled_baseline" -> List.of(
+                    "timeout(200)",
+                    "disable()",
+                    "option(\"chunk.enabled\", false)",
+                    "select(pos(104, -60, 96), pos(127, -59, 107))",
+                    "clear_area()"
+            );
+            case "chunk_colossal_4x4" -> List.of(
+                    "timeout(200)",
+                    "disable()",
+                    "option(\"chunk.size\", 12)",
+                    "select(pos(104, -60, 80), pos(151, -60, 127))",
+                    "clear_area()"
+            );
             default -> null;
         };
     }
@@ -841,7 +1128,7 @@ public class TestBridge implements ClientModInitializer {
             return ok("\"created\":false");
         }
         LevelSettings settings = new LevelSettings(name, GameType.CREATIVE,
-                new LevelSettings.DifficultySettings(Difficulty.EASY, false, false), true, WorldDataConfiguration.DEFAULT);
+                new LevelSettings.DifficultySettings(Difficulty.PEACEFUL, false, false), true, WorldDataConfiguration.DEFAULT);
         mc.createWorldOpenFlows().createFreshLevel(name, settings, new WorldOptions(seed, false, false),
                 WorldPresets::createFlatWorldDimensions, new TitleScreen());
         return ok("\"created\":true");

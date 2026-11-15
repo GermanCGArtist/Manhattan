@@ -54,6 +54,11 @@ final class Config {
     /** UI scale: 1.0f, 1.25f, 1.5f. */
     float uiScale = 1.0f;
 
+    /** Spatial chunking settings for large area/schematic tasks. */
+    public boolean chunkEnabled = true;
+    public int chunkSize = 32;
+    public String chunkOrder = "serpentine";
+
     /** Which default presets were already offered; newer ones are added once on load (deleted ones stay deleted). */
     int presetsVersion = 1;
 
@@ -94,6 +99,12 @@ final class Config {
                     if (cfg.captureType == null) cfg.captureType = "dump";
                     if (!"monitor".equals(cfg.uiLastMode)) cfg.uiLastMode = "edit";
                     if (cfg.uiScale <= 0.5f || cfg.uiScale > 2.5f) cfg.uiScale = 1.0f;
+                    if (cfg.chunkSize < 8 || cfg.chunkSize > 128) {
+                        cfg.chunkSize = cfg.chunkSize <= 0 ? 32 : Math.max(8, Math.min(128, cfg.chunkSize));
+                    }
+                    if (cfg.chunkOrder == null || (!cfg.chunkOrder.equalsIgnoreCase("serpentine") && !cfg.chunkOrder.equalsIgnoreCase("nearest"))) {
+                        cfg.chunkOrder = "serpentine";
+                    }
                     if (cfg.lastArea == null) cfg.lastArea = new ArrayList<>();
                 }
                 if (cfg.scriptVersion < 2) migrate();

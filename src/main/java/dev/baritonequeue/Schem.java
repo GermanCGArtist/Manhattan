@@ -136,9 +136,19 @@ final class Schem {
 
         /** Remembers which cells are open now (called when a build starts). */
         void markOpen(net.minecraft.world.level.Level level) {
+            markOpen(level, null);
+        }
+
+        void markOpen(net.minecraft.world.level.Level level, ChunkGrid.ColumnBox bounds) {
             open = new BitSet(st.length);
             BlockPos.MutableBlockPos mp = new BlockPos.MutableBlockPos();
-            for (int y = 0; y < sy; y++) for (int z = 0; z < sz; z++) for (int x = 0; x < sx; x++) {
+            int x0 = bounds == null ? 0 : Math.max(0, bounds.minX() - min.getX());
+            int x1 = bounds == null ? sx - 1 : Math.min(sx - 1, bounds.maxX() - min.getX());
+            int y0 = bounds == null ? 0 : Math.max(0, bounds.minY() - min.getY());
+            int y1 = bounds == null ? sy - 1 : Math.min(sy - 1, bounds.maxY() - min.getY());
+            int z0 = bounds == null ? 0 : Math.max(0, bounds.minZ() - min.getZ());
+            int z1 = bounds == null ? sz - 1 : Math.min(sz - 1, bounds.maxZ() - min.getZ());
+            for (int y = y0; y <= y1; y++) for (int z = z0; z <= z1; z++) for (int x = x0; x <= x1; x++) {
                 int i = idx(x, y, z);
                 if (st[i] == null) continue;
                 mp.set(min.getX() + x, min.getY() + y, min.getZ() + z);
@@ -146,6 +156,36 @@ final class Schem {
                 BlockState cur = level.getBlockState(mp);
                 if (cur.isAir() || replaceable(cur) || cur.getBlock() instanceof LiquidBlock) open.set(i);
             }
+        }
+
+        /** Shallow view of this plan with everything outside {@code bounds} marked excluded. */
+        Plan maskedTo(ChunkGrid.ColumnBox bounds) {
+            if (bounds == null) return this;
+            Plan copy = new Plan();
+            copy.name = name;
+            copy.min = min;
+            copy.sx = sx;
+            copy.sy = sy;
+            copy.sz = sz;
+            copy.st = st;
+            copy.open = open;
+            copy.excluded = new BitSet(st.length);
+            for (int y = 0; y < sy; y++) {
+                int wy = min.getY() + y;
+                boolean yIn = wy >= bounds.minY() && wy <= bounds.maxY();
+                for (int z = 0; z < sz; z++) {
+                    int wz = min.getZ() + z;
+                    boolean yzIn = yIn && wz >= bounds.minZ() && wz <= bounds.maxZ();
+                    for (int x = 0; x < sx; x++) {
+                        int i = idx(x, y, z);
+                        int wx = min.getX() + x;
+                        if (excluded.get(i) || !yzIn || wx < bounds.minX() || wx > bounds.maxX()) {
+                            copy.excluded.set(i);
+                        }
+                    }
+                }
+            }
+            return copy;
         }
         final List<String> notes = new ArrayList<>();      // unknown blocks, regions skipped ...
         final Map<String, Integer> fluids = new LinkedHashMap<>();
@@ -398,9 +438,20 @@ final class Schem {
     }
 
     static Counts count(Plan plan, Mode mode, Level level) {
+        return count(plan, mode, level, null);
+    }
+
+    static Counts count(Plan plan, Mode mode, Level level, ChunkGrid.ColumnBox bounds) {
         Counts c = new Counts();
+        if (plan == null || level == null) return c;
+        int x0 = bounds == null ? 0 : Math.max(0, bounds.minX() - plan.min.getX());
+        int x1 = bounds == null ? plan.sx - 1 : Math.min(plan.sx - 1, bounds.maxX() - plan.min.getX());
+        int y0 = bounds == null ? 0 : Math.max(0, bounds.minY() - plan.min.getY());
+        int y1 = bounds == null ? plan.sy - 1 : Math.min(plan.sy - 1, bounds.maxY() - plan.min.getY());
+        int z0 = bounds == null ? 0 : Math.max(0, bounds.minZ() - plan.min.getZ());
+        int z1 = bounds == null ? plan.sz - 1 : Math.min(plan.sz - 1, bounds.maxZ() - plan.min.getZ());
         BlockPos.MutableBlockPos mp = new BlockPos.MutableBlockPos();
-        for (int y = 0; y < plan.sy; y++) for (int z = 0; z < plan.sz; z++) for (int x = 0; x < plan.sx; x++) {
+        for (int y = y0; y <= y1; y++) for (int z = z0; z <= z1; z++) for (int x = x0; x <= x1; x++) {
             BlockState d = plan.st[plan.idx(x, y, z)];
             if (d == null) continue;
             if (plan.excluded.get(plan.idx(x, y, z))) { c.excluded++; continue; }

@@ -15,7 +15,7 @@ import static dev.baritonequeue.Config.cfg;
  * it (so a fight interrupts the walk to bed, but not the other way round). A death or a dropped connection (with the
  * respawn/reconnect helpers) suspends and resumes the same way.
  */
-final class Runner {
+public final class Runner {
     private boolean running;
     private Ast.Env globals;
     private Fiber main;
@@ -235,6 +235,8 @@ final class Runner {
         String resume = Jobs.startRun(scriptName);   // the saved ledger of this world: what an earlier run finished
         if (resume != null) Util.msg(resume);
         globals = new Ast.Env(Builtins.root());
+        globals.define("chunk_needs", Values.newMap());
+        globals.define("chunk_id", -1.0);
         main = new Fiber("queue-script", () -> Ast.run(program, mainIn, globals));
         mainIn = new Interp(this, main);
         condIn = new Interp(this, null);
@@ -388,7 +390,11 @@ final class Runner {
                 return;
             }
             if (!stack.isEmpty() && f == stack.peek().f() && !f.exited) {
-                stack.pop().h().lastEnd = tickCounter;
+                Frame popped = stack.pop();
+                popped.h().lastEnd = tickCounter;
+                if (referencesVar(popped.h().on.cond, "chunk_needs")) {
+                    popped.h().env.assign("chunk_needs", Values.newMap());
+                }
                 interruptsHandled++;
                 Fiber m = active();   // what it interrupted carries on
                 if (m != null && m.action != null && !m.action.done) {
@@ -453,6 +459,7 @@ final class Runner {
         if (!stack.isEmpty()) limit = handlers.indexOf(stack.peek().h());
         for (int i = 0; i < limit; i++) {
             Handler h = handlers.get(i);
+            if (referencesVar(h.on.cond, "chunk_needs")) continue;
             boolean inStack = false;
             for (Frame fr : stack) if (fr.h() == h) inStack = true;
             if (inStack) continue;
@@ -494,6 +501,75 @@ final class Runner {
         holder[0] = new Interp(this, f);
         stack.push(new Frame(h, f, holder[0]));
         Util.msg("'on' in line " + h.on.line + " (" + lineText(h.on.line) + ") fired.");
+    }
+
+    /** Fires an active {@code on} handler referencing {@code chunk_needs}, populating {@code chunk_needs} and {@code chunk_id}. */
+    public boolean triggerChunkNeeds(java.util.Map<String, Integer> deficit, ChunkGrid.ColumnBox chunk) {
+        if (!running || deficit == null || deficit.isEmpty() || handlers.isEmpty()) return false;
+        int limit = handlers.size();
+        if (!stack.isEmpty()) limit = handlers.indexOf(stack.peek().h());
+        java.util.Map<Object, Object> needsMap = Values.newMap();
+        deficit.forEach((k, v) -> needsMap.put(k, v == null ? 0.0 : v.doubleValue()));
+        double chunkId = chunk != null ? (double) chunk.index() : -1.0;
+
+        for (int i = 0; i < limit; i++) {
+            Handler h = handlers.get(i);
+            if (!referencesVar(h.on.cond, "chunk_needs")) continue;
+            boolean inStack = false;
+            for (Frame fr : stack) if (fr.h() == h) { inStack = true; break; }
+            if (inStack) continue;
+
+            h.env.assign("chunk_needs", needsMap);
+            h.env.assign("chunk_id", chunkId);
+            condIn.resetBudget();
+            boolean matches;
+            try {
+                matches = Values.truthy(h.on.cond.eval(condIn, h.env));
+            } catch (Values.ScriptError e) {
+                running = false;
+                endAll();
+                Util.msg("PROBLEM in the 'on' condition of line " + h.on.line + ": " + e.getMessage());
+                if (Config.cfg.logoffOnError) {
+                    dev.survivalkit.Api.disconnect("Script stopped: " + e.getMessage());
+                }
+                return false;
+            }
+            if (!matches) continue;
+            h.wasTrue = true;
+            h.fired++;
+            fire(h);
+            return true;
+        }
+        return false;
+    }
+
+    private static boolean referencesVar(Ast.Expr e, String name) {
+        if (e == null) return false;
+        if (e instanceof Ast.Var v) return name.equals(v.name);
+        if (e instanceof Ast.Unary u) return referencesVar(u.e, name);
+        if (e instanceof Ast.Logic l) return referencesVar(l.a, name) || referencesVar(l.b, name);
+        if (e instanceof Ast.Binary b) return referencesVar(b.a, name) || referencesVar(b.b, name);
+        if (e instanceof Ast.Call c) {
+            if (referencesVar(c.callee, name)) return true;
+            for (Ast.Expr arg : c.args) if (referencesVar(arg, name)) return true;
+            return false;
+        }
+        if (e instanceof Ast.Index ix) return referencesVar(ix.obj, name) || referencesVar(ix.index, name);
+        if (e instanceof Ast.Member m) return referencesVar(m.obj, name);
+        if (e instanceof Ast.Concat cc) {
+            for (Ast.Expr p : cc.parts) if (referencesVar(p, name)) return true;
+            return false;
+        }
+        if (e instanceof Ast.ListLit ll) {
+            for (Ast.Expr item : ll.items) if (referencesVar(item, name)) return true;
+            return false;
+        }
+        if (e instanceof Ast.MapLit ml) {
+            for (Ast.Expr k : ml.keys) if (referencesVar(k, name)) return true;
+            for (Ast.Expr v : ml.values) if (referencesVar(v, name)) return true;
+            return false;
+        }
+        return false;
     }
 
     // ------------------------------------------------------------------ death and reconnects

@@ -1,6 +1,7 @@
 package dev.baritonequeue;
 
 import dev.baritonequeue.Ledger.State;
+import net.minecraft.core.BlockPos;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -19,7 +20,7 @@ import java.util.regex.Pattern;
  * line and its arguments: {@code script/schem_build@212(all,add)#1/1748,-1400}. n counts how often the same action
  * started in this run (a loop gives #1, #2 ...). A script job itself has just its name as id.
  */
-final class Jobs {
+public final class Jobs {
     private Jobs() {}
 
     /** Name of the ledger file when the script has no name of its own (the editor's first tab, chat /queue run). */
@@ -34,6 +35,7 @@ final class Jobs {
         final String label;
         final Node parent;
         final List<Node> kids = new ArrayList<>();
+        public ChunkGrid.ColumnBox box;
         State state = State.PENDING;
         int tries, left;
         String reason;
@@ -136,6 +138,15 @@ final class Jobs {
         String id = base + "#" + n;
         for (Node k : job.kids) if (k.id.equals(id)) return k;   // the same action again (a rerun in chat): same node
         return new Node(Kind.ACTION, id, fn + " (line " + line + ")", job);
+    }
+
+    /** Registers a spatial chunk leaf node under an action node. */
+    static Node chunk(Node action, ChunkGrid.ColumnBox box) {
+        String key = box.minX() + "," + box.minZ();
+        String label = box.minX() + " " + box.minZ() + " .. " + box.maxX() + " " + box.maxZ();
+        Node c = new Node(Kind.CHUNK, action.id + "/" + key, label, action);
+        c.box = box;
+        return c;
     }
 
     /** Sets a node's state and writes it into the ledger. */
@@ -308,6 +319,40 @@ final class Jobs {
             }
         }
         return null;
+    }
+
+    /** Snapshot of a spatial chunk for UI/HUD progress reporting. */
+    public record ChunkSnapshot(String id, int index, int total, Ledger.State state, BlockPos min, BlockPos max, int left, String reason) {}
+
+    /** Returns chunk snapshots for the currently active chunked action, or empty when none is running. */
+    public static List<ChunkSnapshot> activeChunks() {
+        Node active = null;
+        for (Node job : root.kids) {
+            for (Node a : job.kids) {
+                if (a.kids.isEmpty()) continue;
+                boolean isRunning = a.state == State.RUNNING;
+                if (!isRunning) {
+                    for (Node c : a.kids) {
+                        if (c.state == State.RUNNING) {
+                            isRunning = true;
+                            break;
+                        }
+                    }
+                }
+                if (isRunning) active = a;
+            }
+        }
+        if (active == null) return List.of();
+        int total = active.kids.size();
+        List<ChunkSnapshot> out = new ArrayList<>(total);
+        for (int i = 0; i < total; i++) {
+            Node c = active.kids.get(i);
+            int idx = c.box != null ? c.box.index() : i;
+            BlockPos min = c.box != null ? c.box.min() : BlockPos.ZERO;
+            BlockPos max = c.box != null ? c.box.max() : BlockPos.ZERO;
+            out.add(new ChunkSnapshot(c.id, idx, total, c.state, min, max, c.left, c.reason));
+        }
+        return out;
     }
 
     // ------------------------------------------------------------------ the Queue panel

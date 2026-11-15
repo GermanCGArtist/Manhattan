@@ -48,7 +48,7 @@ import static dev.buildtools.Config.cfg;
  * after an interruption (bed, eating, a fight) it simply walks back.
  * With sand, gravel or concrete powder it drops the block into the top of a column; it sinks by itself.
  */
-final class TerminatorProcess extends Feature {
+public final class TerminatorProcess extends Feature {
     private static final Logger LOGGER = LoggerFactory.getLogger(TerminatorProcess.class);
 
     private static final double REACH = 4.3;
@@ -1069,5 +1069,28 @@ final class TerminatorProcess extends Feature {
     @Override
     public void onLostControl() {   // e.g. #stop
         if (working) cancel();
+    }
+
+    /** Counts wet cells inside {@code boxes} that TerminatorProcess targets (water, seagrass, kelp, etc.). */
+    public static int countWater(Level level, List<int[]> boxes) {
+        if (level == null || boxes == null || boxes.isEmpty()) return 0;
+        int count = 0;
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+        for (int[] b : boxes) {
+            if (b == null || b.length < 6) continue;
+            int x0 = Math.min(b[0], b[3]), x1 = Math.max(b[0], b[3]);
+            int y0 = Math.min(b[1], b[4]), y1 = Math.max(b[1], b[4]);
+            int z0 = Math.min(b[2], b[5]), z1 = Math.max(b[2], b[5]);
+            for (int x = x0; x <= x1; x++) {
+                for (int z = z0; z <= z1; z++) {
+                    for (int y = y0; y <= y1; y++) {
+                        pos.set(x, y, z);
+                        if (!level.hasChunkAt(pos)) continue;
+                        if (wet(level, pos)) count++;
+                    }
+                }
+            }
+        }
+        return count;
     }
 }

@@ -1,6 +1,9 @@
 package dev.baritonequeue;
 
 import dev.baritonequeue.Values.Pos;
+import dev.buildtools.DrainProcess;
+import dev.buildtools.FillProcess;
+import dev.buildtools.TerminatorProcess;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
@@ -347,6 +350,36 @@ final class GameBuiltins {
             if (chest != null && it == null) throw error("fill_water with a chest needs the block too: fill_water(\"dirt\", chest)", l);
             int trip = a.size() > 2 ? Math.max(1, toInt(a.get(2), "per_trip", l)) : 512;
             String text = "fill_water" + (it == null ? "" : " " + ChestOp.name(it));
+            List<int[]> initialBoxes = Areas.read();
+            if (ChunkGrid.shouldChunk(initialBoxes, cfg.chunkSize, cfg.chunkEnabled)) {
+                String blockName = it == null ? null : ChestOp.name(it);
+                BlockPos chestPos = chest == null ? null : (BlockPos) chest[0];
+                String chestLabel = chest == null ? null : (String) chest[1];
+                Object r = in.await(() -> new ChunkRunner(new ChunkRunner.ChunkWorkload() {
+                    @Override public String actionKind() { return "fill_water"; }
+                    @Override public List<int[]> fullBounds() { return initialBoxes; }
+                    @Override public Actions.Action createChunkAction(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
+                        Minecraft mc = Minecraft.getInstance();
+                        if (mc != null && mc.level != null && TerminatorProcess.countWater(mc.level, clippedBoxes) == 0) {
+                            return new Actions.Now(() -> 0.0);
+                        }
+                        return fillWaterChunkAction(it, blockName, chestPos, chestLabel, trip);
+                    }
+                    @Override public int countRemaining(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
+                        Minecraft mc = Minecraft.getInstance();
+                        return mc == null || mc.level == null ? 0 : TerminatorProcess.countWater(mc.level, clippedBoxes);
+                    }
+                    @Override public Map<String, Integer> requiredItems(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
+                        if (blockName == null) return Map.of();
+                        Minecraft mc = Minecraft.getInstance();
+                        int waterCount = mc == null || mc.level == null ? 0 : TerminatorProcess.countWater(mc.level, clippedBoxes);
+                        return waterCount > 0 ? Map.of(blockName, waterCount) : Map.of();
+                    }
+                }), text, l);
+                if (r instanceof Double d) return d;
+                Minecraft mc = Minecraft.getInstance();
+                return mc == null || mc.level == null ? 0.0 : (double) TerminatorProcess.countWater(mc.level, initialBoxes);
+            }
             int trips = 0, rounds = 0;
             while (true) {
                 if (chest != null && count(player(l), ChestOp.name(it)) == 0) {   // nothing to fill with: fetch first
@@ -387,39 +420,113 @@ final class GameBuiltins {
         def(g, "schem_build", 0, 3, "schem_build([n | \"name\" | \"all\"] [, \"add\" | \"fix\" | \"exact\"] [, \"skip\" | \"strict\"])", "build the Litematica placement n (or all enabled ones) with Baritone's builder, phase by phase (clear, full blocks, shaped, attached, redstone, power); add = only fill empty spots, fix = also replace wrong blocks, exact = also dig out schematic air; skip (default) = blocks you have no item for are left out and the rest is built, strict = stop when an item is missing; waits; returns the blocks still wrong (0 = done)", (in, a, l) -> {
             String[] sm = schemArgs(a, "schem_build()", l, "add");
             QueueMod.schem.skipMissing(!"strict".equals(sm[2]));
-            Object r = in.await(() -> new Actions.Feature(
-                    () -> {
-                        String[] err = new String[1];
-                        var pls = SchemCmd.select(sm[0], err);
-                        if (pls == null) return err[0];
-                        return QueueMod.schem.begin(pls, Schem.Mode.of(sm[1]));
-                    },
-                    QueueMod.schem::working,
-                    QueueMod.schem::cancel,
-                    () -> QueueMod.schem.failure() != null ? new Modules.Failure(QueueMod.schem.failure()) : (Object) QueueMod.schem.result())
-                    .resumable(QueueMod.schem::suspendRun, QueueMod.schem::carryOn), "schem_build", l);
+            Schem.Mode mode = Schem.Mode.of(sm[1]);
+            Object r = in.await(() -> {
+                String[] err = new String[1];
+                var pls = SchemCmd.select(sm[0], err);
+                if (pls == null) {
+                    return new Actions.Feature(
+                            () -> err[0],
+                            QueueMod.schem::working,
+                            QueueMod.schem::cancel,
+                            () -> QueueMod.schem.failure() != null ? new Modules.Failure(QueueMod.schem.failure()) : (Object) QueueMod.schem.result())
+                            .resumable(QueueMod.schem::suspendRun, QueueMod.schem::carryOn);
+                }
+                SchemProcess.prepare(pls, mode);
+                List<int[]> bounds = SchemProcess.placementBounds(pls);
+                if (!ChunkGrid.shouldChunk(bounds, cfg.chunkSize, cfg.chunkEnabled)) {
+                    QueueMod.schem.setChunkBounds(null);
+                    return schemFeature(pls, mode, null);
+                }
+                return new ChunkRunner(new ChunkRunner.ChunkWorkload() {
+                    @Override public String actionKind() { return "schem_build"; }
+                    @Override public List<int[]> fullBounds() { return bounds; }
+                    @Override public boolean usesSelectionNarrowing() { return false; }
+                    @Override public void onChunkStart(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
+                        QueueMod.schem.setChunkBounds(chunk);
+                    }
+                    @Override public void onChunkEnd(ChunkGrid.ColumnBox chunk) {
+                        QueueMod.schem.setChunkBounds(null);
+                    }
+                    @Override public Actions.Action createChunkAction(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
+                        return schemFeature(pls, mode, chunk);
+                    }
+                    @Override public int countRemaining(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
+                        Minecraft mc = Minecraft.getInstance();
+                        return mc == null || mc.level == null ? 0 : SchemProcess.countRemainingIn(mc.level, chunk);
+                    }
+                    @Override public Map<String, Integer> requiredItems(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
+                        Minecraft mc = Minecraft.getInstance();
+                        return mc == null || mc.level == null ? Map.of() : SchemProcess.requiredItemsIn(mc.level, chunk);
+                    }
+                });
+            }, "schem_build", l);
             return r instanceof Double d ? d : 0.0;
         });
-        def(g, "clear_area", 0, 1, "clear_area([layers])", "mine out the selection from the top, 3 layers per pass (or 2: clear_area(2)), everything in reach at each stop, picking up drops on the way; returns the blocks left (finish those with #sel ca)", (in, a, l) ->
-                in.await(() -> new Actions.Feature(
-                        () -> QueueMod.clear.begin(a.isEmpty() ? 3 : toInt(a.get(0), "The layers of clear_area()", l)),
-                        QueueMod.clear::working,
-                        QueueMod.clear::cancel,
-                        () -> QueueMod.clear.failure() != null ? new Modules.Failure(QueueMod.clear.failure()) : (Object) QueueMod.clear.result())
-                        .resumable(QueueMod.clear::suspendRun, QueueMod.clear::carryOn)
-                        .withEstimate(Estimate.solid()), "clear_area", l));
+        def(g, "clear_area", 0, 1, "clear_area([layers])", "mine out the selection from the top, 3 layers per pass (or 2: clear_area(2)), everything in reach at each stop, picking up drops on the way; returns the blocks left (finish those with #sel ca)", (in, a, l) -> {
+            int layers = a.isEmpty() ? 3 : toInt(a.get(0), "The layers of clear_area()", l);
+            return in.await(() -> {
+                List<int[]> boxes = Areas.read();
+                if (!ChunkGrid.shouldChunk(boxes, cfg.chunkSize, cfg.chunkEnabled)) {
+                    return clearFeature(layers);
+                }
+                return new ChunkRunner(new ChunkRunner.ChunkWorkload() {
+                    @Override public String actionKind() { return "clear_area"; }
+                    @Override public List<int[]> fullBounds() { return boxes; }
+                    @Override public Actions.Action createChunkAction(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
+                        return clearFeature(layers);
+                    }
+                    @Override public int countRemaining(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
+                        Minecraft mc = Minecraft.getInstance();
+                        return mc == null || mc.level == null ? 0 : ClearProcess.countSolid(mc.level, clippedBoxes);
+                    }
+                });
+            }, "clear_area", l);
+        });
         def(g, "clear_trees", 0, 1, "clear_trees([chest])", "mine every tree in the selection, one by one, nearest first (logs, mangrove roots, huge mushrooms, vines, bee nests; leaves are left to decay), picking up the drops and taking the scaffolding down after each tree, then sweeping for saplings; with a chest, a full inventory and the end go into it; returns what was gained (item -> count)", (in, a, l) -> {
             Object[] c = a.isEmpty() || a.get(0) == null ? null : chest(a.get(0), "clear_trees()", l);
             return TreeClear.run(in, l, c == null ? null : (BlockPos) c[0], c == null ? null : (String) c[1]);
         });
         def(g, "drain", 0, 0, "drain()", "remove the flowing water that blocks the builder (selection, or 8 blocks around you)", (in, a, l) ->
-                in.await(() -> new Actions.Feature(dev.buildtools.Api::drainNow, dev.buildtools.Api::draining, dev.buildtools.Api::stopDraining, () -> true), "drain", l));
+                in.await(() -> {
+                    List<int[]> boxes = Areas.read();
+                    if (!ChunkGrid.shouldChunk(boxes, cfg.chunkSize, cfg.chunkEnabled)) {
+                        return drainFeature();
+                    }
+                    return new ChunkRunner(new ChunkRunner.ChunkWorkload() {
+                        @Override public String actionKind() { return "drain"; }
+                        @Override public List<int[]> fullBounds() { return boxes; }
+                        @Override public Actions.Action createChunkAction(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
+                            return drainFeature();
+                        }
+                        @Override public int countRemaining(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
+                            Minecraft mc = Minecraft.getInstance();
+                            return mc == null || mc.level == null ? 0 : DrainProcess.countFluid(mc.level, clippedBoxes);
+                        }
+                    });
+                }, "drain", l));
         def(g, "flood", 0, 0, "flood()", "fill the selection WITH water, using buckets (seals the open sides first)", (in, a, l) ->
-                in.await(() -> new Actions.Feature(dev.buildtools.Api::floodNow, dev.buildtools.Api::flooding, dev.buildtools.Api::stopFlooding,
-                        () -> {   // a stop with a reason (no water to refill from, cells out of reach ...) fails the script
-                            String why = dev.buildtools.Api.floodFailure();
-                            return why == null ? (Object) Boolean.TRUE : new Modules.Failure(why);
-                        }).resumable(dev.buildtools.Api::pauseFlooding, dev.buildtools.Api::resumeFlooding), "flood", l));
+                in.await(() -> {
+                    List<int[]> boxes = Areas.read();
+                    if (!ChunkGrid.shouldChunk(boxes, cfg.chunkSize, cfg.chunkEnabled)) {
+                        return floodFeature();
+                    }
+                    return new ChunkRunner(new ChunkRunner.ChunkWorkload() {
+                        @Override public String actionKind() { return "flood"; }
+                        @Override public List<int[]> fullBounds() { return boxes; }
+                        @Override public Actions.Action createChunkAction(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
+                            Minecraft mc = Minecraft.getInstance();
+                            if (mc != null && mc.level != null && FillProcess.countUnflooded(mc.level, clippedBoxes) == 0) {
+                                return new Actions.Now(() -> true);
+                            }
+                            return floodFeature();
+                        }
+                        @Override public int countRemaining(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
+                            Minecraft mc = Minecraft.getInstance();
+                            return mc == null || mc.level == null ? 0 : FillProcess.countUnflooded(mc.level, clippedBoxes);
+                        }
+                    });
+                }, "flood", l));
         def(g, "collect_scaffold", 0, 0, "collect_scaffold()", "take down the blocks Baritone placed to reach things, and pick them up", (in, a, l) ->
                 in.await(() -> new Actions.Feature(dev.buildtools.Api::collectScaffoldNow, dev.buildtools.Api::collectingScaffold, dev.buildtools.Api::stopCollectingScaffold, () -> true), "collect_scaffold", l));
 
@@ -442,6 +549,126 @@ final class GameBuiltins {
         def(g, "pickup", 0, 0, "pickup()", "pick up every dropped item nearby", (in, a, l) ->
                 in.await(() -> new Actions.Feature(() -> { dev.loadchest.LoadChestMod.pickupNow(); return null; },
                         dev.loadchest.LoadChestMod::pickingUp, null, () -> true), "pickup", l));
+    }
+
+    private static Actions.Action clearFeature(int layers) {
+        return new Actions.Feature(
+                () -> QueueMod.clear.begin(layers),
+                QueueMod.clear::working,
+                QueueMod.clear::cancel,
+                () -> QueueMod.clear.failure() != null ? new Modules.Failure(QueueMod.clear.failure()) : (Object) QueueMod.clear.result())
+                .resumable(QueueMod.clear::suspendRun, QueueMod.clear::carryOn)
+                .withEstimate(Estimate.solid());
+    }
+
+    private static Actions.Action drainFeature() {
+        return new Actions.Feature(dev.buildtools.Api::drainNow, dev.buildtools.Api::draining, dev.buildtools.Api::stopDraining, () -> true);
+    }
+
+    private static Actions.Action floodFeature() {
+        return new Actions.Feature(dev.buildtools.Api::floodNow, dev.buildtools.Api::flooding, dev.buildtools.Api::stopFlooding,
+                () -> {   // a stop with a reason (no water to refill from, cells out of reach ...) fails the script
+                    String why = dev.buildtools.Api.floodFailure();
+                    return why == null ? (Object) Boolean.TRUE : new Modules.Failure(why);
+                }).resumable(dev.buildtools.Api::pauseFlooding, dev.buildtools.Api::resumeFlooding);
+    }
+
+    private static Actions.Action schemFeature(List<SchemSource.Placement> pls, Schem.Mode mode, ChunkGrid.ColumnBox bounds) {
+        return new Actions.Feature(
+                () -> {
+                    QueueMod.schem.setChunkBounds(bounds);
+                    return QueueMod.schem.begin(pls, mode);
+                },
+                QueueMod.schem::working,
+                QueueMod.schem::cancel,
+                () -> QueueMod.schem.failure() != null ? new Modules.Failure(QueueMod.schem.failure()) : (Object) QueueMod.schem.result())
+                .resumable(QueueMod.schem::suspendRun, QueueMod.schem::carryOn);
+    }
+
+    private static Actions.Action fillWaterChunkAction(Item it, String blockName, BlockPos chestPos, String chestLabel, int trip) {
+        Actions.Action simple = new Actions.Feature(
+                () -> dev.buildtools.Api.fillWater(it),
+                dev.buildtools.Api::fillingWater,
+                dev.buildtools.Api::stopFillingWater,
+                () -> (double) dev.buildtools.Api.lastFill()[1]).withEstimate(Estimate.water());
+        if (chestPos == null || it == null || blockName == null) return simple;
+        return new Actions.Action() {
+            private Actions.Action current;
+            private int trips;
+
+            @Override
+            void start() {
+                Minecraft mc = Minecraft.getInstance();
+                LocalPlayer p = mc == null ? null : mc.player;
+                if (p == null) { fail("Not in a world."); return; }
+                if (count(p, blockName) == 0) {
+                    startFetch();
+                } else {
+                    startFill();
+                }
+            }
+
+            private void startFetch() {
+                ChestOp op = new ChestOp(chestLabel, ChestOp.Kind.GET, it, trip, true);
+                current = new Actions.Chest(op, chestPos);
+                current.start();
+            }
+
+            private void startFill() {
+                current = new Actions.Feature(
+                        () -> dev.buildtools.Api.fillWater(it),
+                        dev.buildtools.Api::fillingWater,
+                        dev.buildtools.Api::stopFillingWater,
+                        () -> (double) dev.buildtools.Api.lastFill()[1]).withEstimate(Estimate.water());
+                current.start();
+            }
+
+            @Override
+            void tick() {
+                if (current == null) { finish(0.0); return; }
+                current.ticks++;
+                current.tick();
+                if (!current.done) return;
+                if (current instanceof Actions.Chest) {
+                    trips++;
+                    if (current.error != null) { fail(current.error); return; }
+                    Minecraft mc = Minecraft.getInstance();
+                    LocalPlayer p = mc == null ? null : mc.player;
+                    if (p == null || count(p, blockName) == 0) {
+                        finish((double) dev.buildtools.Api.lastFill()[1]);
+                        return;
+                    }
+                    startFill();
+                    return;
+                }
+                if (current.error != null) { fail(current.error); return; }
+                double left = current.result instanceof Double d ? d : 0.0;
+                if (left > 0 && dev.buildtools.Api.fillRanOut() && trips < 200) {
+                    Util.msg("Out of " + blockName + " with " + Values.num(left) + " water left: fetching more.");
+                    startFetch();
+                    return;
+                }
+                finish(left);
+            }
+
+            @Override
+            void cancel() {
+                if (current != null) current.cancel();
+            }
+
+            @Override
+            void suspend() {
+                if (current != null) current.suspend();
+            }
+
+            @Override
+            void resume() {
+                done = false;
+                ticks = 0;
+                if (current != null) current.resume();
+                else start();
+            }
+        };
     }
 
     // ------------------------------------------------------------------ chests
@@ -643,6 +870,7 @@ final class GameBuiltins {
             Areas.addBox(new BlockPos(p.x(), p.y(), p.z()), new BlockPos(q.x(), q.y(), q.z()));
             return null;
         });
+        Builtins.alias("select_add", "add_box");
         def(g, "clear_selection", 0, 0, "clear_selection()", "no selection any more", (in, a, l) -> {
             Areas.clearSelection();
             return null;

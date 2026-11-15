@@ -100,7 +100,19 @@ tasks.register('midtownTest', JavaExec) {
     classpath = sourceSets.test.runtimeClasspath
     mainClass = 'dev.midtown.MidtownTest'
 }
-tasks.named('check') { dependsOn 'langTest', 'parseScripts', 'midtownTest' }
+tasks.register('chunkGridTest', JavaExec) {
+    group = 'verification'
+    description = 'Runs ChunkGrid offline unit tests.'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.baritonequeue.ChunkGridTest'
+}
+tasks.register('chunkRunnerTest', JavaExec) {
+    group = 'verification'
+    description = 'Runs ChunkRunner offline unit tests.'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.baritonequeue.ChunkRunnerTest'
+}
+tasks.named('check') { dependsOn 'langTest', 'parseScripts', 'midtownTest', 'chunkGridTest', 'chunkRunnerTest' }
 tasks.named('test') { failOnNoDiscoveredTests = false }   // the tests above are plain programs, not JUnit
 
 java {
