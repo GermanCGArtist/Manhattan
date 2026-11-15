@@ -118,7 +118,7 @@ final class Recovery {
         long now = System.currentTimeMillis();
         if (Util.baritoneBusy()) {
             busyAt = now;
-            if (waiting) cancel();   // something else is running again (started by hand)
+            if (waiting && !queueMode) cancel();   // something else is running again (started by hand)
             return;
         }
         if (!waiting || ++check % 20 != 0) return;
