@@ -19,7 +19,6 @@ import org.lwjgl.glfw.GLFWMonitorCallback;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL30;
 
-import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -323,26 +322,11 @@ public final class ImGuiManager {
 
     private static synchronized void prepareNatives() throws Exception {
         if (nativesPrepared) return;
-        Path dir = FabricLoader.getInstance().getConfigDir().resolve("manhattan-natives");
-        Files.createDirectories(dir);
-        Path dll = dir.resolve("imgui-java64.dll");
-        try (InputStream in = ImGuiManager.class.getClassLoader().getResourceAsStream("io/imgui/java/native-bin/imgui-java64.dll")) {
-            if (in != null) {
-                byte[] bytes = in.readAllBytes();
-                if (!Files.exists(dll) || Files.size(dll) != bytes.length) {
-                    Files.write(dll, bytes);
-                }
-                // imgui.library.path is global: other mods with their own imgui-java (Flashback) read it too and
-                // then look for their dll in our folder. So set it only while our ImGui class loads its library.
-                String before = System.getProperty("imgui.library.path");
-                System.setProperty("imgui.library.path", dir.toAbsolutePath().toString());
-                try {
-                    Class.forName("imgui.ImGui", true, ImGuiManager.class.getClassLoader());
-                } finally {
-                    if (before == null) System.clearProperty("imgui.library.path");
-                    else System.setProperty("imgui.library.path", before);
-                }
-            }
+        try {
+            ImGuiNatives.load(FabricLoader.getInstance().getConfigDir().resolve("manhattan-natives"), ImGuiManager.class.getClassLoader());
+        } catch (Exception e) {
+            org.slf4j.LoggerFactory.getLogger(ImGuiManager.class).warn("[Manhattan] ImGui workspace disabled: {}", e.getMessage());
+            throw e;
         }
         nativesPrepared = true;
     }
@@ -358,7 +342,7 @@ public final class ImGuiManager {
         boolean textActive = !unfocusRequested && Backend.wantsTextInput();
         boolean uiHasKeys = !gameFocused || focused || textActive;
         if (action == GLFW.GLFW_PRESS) {
-            boolean ctrl = (mods & GLFW.GLFW_MOD_CONTROL) != 0;
+            boolean ctrl = Platform.shortcutDown(mods);   // Cmd on macOS
             if (ctrl && key == GLFW.GLFW_KEY_P) {
                 CommandPalette.toggle();
                 setGameFocused(false);

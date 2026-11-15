@@ -1,0 +1,36 @@
+name: build
+
+# Builds the mod and runs the offline checks (language, scripts, Midtown, chunking, ImGui natives) on all three
+# desktop platforms, so the ImGui workspace's native loading is proven on Windows, Linux and macOS (Apple Silicon; the dylib is universal).
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - name: Fetch the Baritone API jar (libs/ is not in git)
+        shell: bash
+        run: |
+          mkdir -p libs
+          curl -fsSL -o libs/baritone-api-fabric-1.18.0.jar \
+            https://github.com/cabaletta/baritone/releases/download/v1.18.0/baritone-api-fabric-1.18.0.jar
+      - name: Build and check
+        shell: bash
+        run: ./gradlew build --stacktrace
+      - uses: actions/upload-artifact@v4
+        if: matrix.os == 'ubuntu-latest'
+        with:
+          name: manhattan-jar
+          path: build/libs/*.jar

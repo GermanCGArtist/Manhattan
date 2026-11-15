@@ -23,12 +23,14 @@ dependencies {
     implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
 
 
-    // Dear ImGui (imgui-java) + Windows natives bundled into the mod jar
+    // Dear ImGui (imgui-java) + natives for Windows, Linux (x86_64) and macOS (universal) bundled into the mod jar
     shade("io.github.spair:imgui-java-binding:1.90.0")
     shade("io.github.spair:imgui-java-lwjgl3:1.90.0") {
         exclude group: 'org.lwjgl'
     }
     shade("io.github.spair:imgui-java-natives-windows:1.90.0")
+    shade("io.github.spair:imgui-java-natives-linux:1.90.0")
+    shade("io.github.spair:imgui-java-natives-macos:1.90.0")
 }
 
 jar {
@@ -112,7 +114,13 @@ tasks.register('chunkRunnerTest', JavaExec) {
     classpath = sourceSets.test.runtimeClasspath
     mainClass = 'dev.baritonequeue.ChunkRunnerTest'
 }
-tasks.named('check') { dependsOn 'langTest', 'parseScripts', 'midtownTest', 'chunkGridTest', 'chunkRunnerTest' }
+tasks.register('nativesTest', JavaExec) {
+    group = 'verification'
+    description = 'Checks the ImGui native library mapping, bundling and loading.'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.baritonequeue.ImGuiNativesTest'
+}
+tasks.named('check') { dependsOn 'langTest', 'parseScripts', 'midtownTest', 'chunkGridTest', 'chunkRunnerTest', 'nativesTest' }
 tasks.named('test') { failOnNoDiscoveredTests = false }   // the tests above are plain programs, not JUnit
 
 java {

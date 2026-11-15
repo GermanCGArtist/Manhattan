@@ -248,7 +248,7 @@ final class Shell {
                   + snap.stepTailText() + "   elapsed " + snap.elapsedText()
                 : DockedPanels.activeTabName() + " · " + snap.totalSteps() + " steps";
         dl.addText(x, ty, u32(DIM), Alerts.shorten(mid, (int) (W * 0.55f / (6.5f * s))));
-        String right = "J: workspace   Ctrl+P: commands   Esc: panels   " + Math.round(s * 100) + "%";
+        String right = "J: workspace   " + Platform.shortcutName() + "+P: commands   Esc: panels   " + Math.round(s * 100) + "%";
         dl.addText(W - ImGui.calcTextSizeX(right) - 12f * s, ty, u32(DIM), right);
         ImGui.popFont();
         ImGui.end();
