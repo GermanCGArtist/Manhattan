@@ -182,6 +182,9 @@ final class ChestProcess {
                     fail("Could not find a path to the chest " + op.chest + ".");
                     return;
                 }
+                if (st == EngineStatus.IDLE) {
+                    EngineSelector.current().goTo(GoalSpec.near(chest, 3));
+                }
                 if (++timer > PATH_TIMEOUT) fail("Could not reach the chest " + op.chest + " in time.");
             }
             case OPENING -> {
