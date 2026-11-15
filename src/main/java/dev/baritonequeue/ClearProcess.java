@@ -516,6 +516,10 @@ final class ClearProcess {
                     midtownTraveling = true;
                 }
                 EngineStatus engStatus = EngineSelector.current().status();
+                if (engStatus == EngineStatus.IDLE) {
+                    EngineSelector.current().goTo(GoalSpec.near(target, 2));
+                    engStatus = EngineSelector.current().status();
+                }
                 boolean closeWithWork = p.blockPosition().distSqr(target) <= 4 && workAt(level, p.blockPosition(), reach(p));
                 if (p.blockPosition().equals(target) || engStatus == EngineStatus.DONE || closeWithWork) {
                     EngineSelector.current().cancel();

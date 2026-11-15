@@ -835,6 +835,66 @@ def test_clear_resume(t):
     return "strip cleared, resumed once eating was done (%s)" % resumed[0].split("] ", 1)[-1][:80]
 
 
+def test_clear_overnight_stress(t):
+    """Multi-layer 10x4x10 clear_area with on full->dump, on restock_needed->restock, on bed_time->sleep, on mobs->defend, on food->eat."""
+    new_world(t, "clear-overnight-stress", kit=False)
+    t.cmd("/setblock 96 -60 95 minecraft:white_bed[part=foot,facing=south]",
+          "/setblock 96 -60 96 minecraft:white_bed[part=head,facing=south]")
+    # Put bed at 96 -60 95 (foot) and 95 -60 95? No, avoid colliding with return_chest at 96 -60 96:
+    t.cmd("/setblock 96 -60 95 air", "/setblock 96 -60 96 air",
+          "/setblock 96 -60 94 minecraft:white_bed[part=head,facing=north]",
+          "/setblock 96 -60 95 minecraft:white_bed[part=foot,facing=north]")
+    eff = '{"minecraft:efficiency":5}'
+    chest_with(t, (96, -60, 97), [("diamond_pickaxe[enchantments=%s]" % eff, 1)] * 2
+                                 + [("diamond_shovel[enchantments=%s]" % eff, 1)] * 2
+                                 + [("diamond_sword", 1), ("bread", 32)])
+    chest_with(t, (96, -60, 96), [])
+    chest_with(t, (96, -60, 99), [])
+    fill(t, (102, -60, 102, 109, -59, 109), "stone")
+    fill(t, (102, -58, 102, 109, -58, 109), "dirt")
+    fill(t, (102, -57, 102, 109, -57, 109), "gravel")
+    t.cmd("/give @s diamond_pickaxe[damage=1530,enchantments=%s] 1" % eff,
+          "/give @s diamond_shovel[enchantments=%s] 1" % eff,
+          "/give @s diamond_sword 1",
+          "/give @s bread 16",
+          "/give @s cobblestone 1728",
+          "/give @s rotten_flesh 128",
+          "/tp @s 101 -57 101 0 0")
+    time.sleep(1)
+
+    t.run("clear-overnight-stress.txt")
+    t.wait_chat("TEST stress armed", 15)
+    t.wait_chat("TEST stress restocked", 60)
+
+    # Trigger bed_time -> sleep
+    t.cmd("/time set night")
+    t.wait_chat("TEST stress slept", 90)
+    t.cmd("/time set noon")
+
+    # Trigger hunger -> eat
+    t.cmd("/effect give @s minecraft:hunger 15 50 true")
+    t.b.wait(lambda: t.state()["food"] < 18, 40, what="food < 18")
+    t.cmd("/effect clear @s minecraft:hunger")
+    t.wait_chat("TEST stress ate", 40)
+
+    # Trigger zombie -> defend (daytime so bed_time doesn't race with defend)
+    t.cmd("/summon minecraft:zombie 101 -60 101 {PersistenceRequired:1b}")
+    t.wait_chat("TEST stress defended", 60)
+
+    line = wait_marker_or_end(t, "TEST stress done", 480)
+    t.script_done(60)
+    if "left=0" not in line:
+        raise Fail("clear_area did not finish cleanly: %s" % line)
+    solid = [(x, y, z) for x in range(102, 110) for y in range(-60, -56) for z in range(102, 110)
+             if "air" not in t.block((x, y, z))]
+    if solid:
+        raise Fail("%d blocks left in area, e.g. %s" % (len(solid), solid[:5]))
+    dumped = sum("TEST stress dumped" in l for l in t.lines())
+    if dumped < 1:
+        raise Fail("expected at least 1 dump interruption, got %d" % dumped)
+    return "256 blocks cleared with restock, sleep, eat, defend, %dx dump" % dumped
+
+
 def test_dump(t):
     """dump() keeps only what the want-list asks for (the better copy) and good food; junk and the hotbar go."""
     reset_area(t)
@@ -2165,7 +2225,7 @@ def _forest(group):
 TREE_TESTS = [("trees_small", test_trees_small)] + [("trees_forest_" + g, _forest(g)) for g in FOREST_GROUPS]
 
 
-TESTS = [("smoke", test_smoke), ("imgui_spike", test_imgui_spike), ("viewport", test_viewport), ("docked_shell", test_docked_shell), ("panels", test_panels), ("fill_water", test_fill_water), ("fill_water_deep", test_fill_water_deep), ("fill_water_shaft", test_fill_water_shaft), ("fill_water_submerged_shaft", test_fill_water_submerged_shaft), ("fill_water_submerged_pocket", test_fill_water_submerged_pocket), ("eat", test_eat), ("defend", test_defend), ("clear_resume", test_clear_resume), ("dump", test_dump), ("chest_index", test_chest_index), ("hotbar_tools", test_hotbar_tools), ("air", test_air), ("clear_wet", test_clear_wet),
+TESTS = [("smoke", test_smoke), ("imgui_spike", test_imgui_spike), ("viewport", test_viewport), ("docked_shell", test_docked_shell), ("panels", test_panels), ("fill_water", test_fill_water), ("fill_water_deep", test_fill_water_deep), ("fill_water_shaft", test_fill_water_shaft), ("fill_water_submerged_shaft", test_fill_water_submerged_shaft), ("fill_water_submerged_pocket", test_fill_water_submerged_pocket), ("eat", test_eat), ("defend", test_defend), ("clear_resume", test_clear_resume), ("clear_overnight_stress", test_clear_overnight_stress), ("dump", test_dump), ("chest_index", test_chest_index), ("hotbar_tools", test_hotbar_tools), ("air", test_air), ("clear_wet", test_clear_wet),
          ("schem_list", test_schem_list), ("schem_add", test_schem_add), ("schem_fix", test_schem_fix), ("schem_fix_wrong", test_schem_fix_wrong), ("schem_exact", test_schem_exact),
          ("colossal_schem", test_colossal_schem)]
 

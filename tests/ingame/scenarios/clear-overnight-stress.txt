@@ -1,0 +1,53 @@
+// clear_overnight_stress: large multi-layer clear_area with dump, restock, sleep, defend, and eat interruptions
+let bed          = pos(96, -60, 95)
+let supply_chest = pos(96, -60, 97)
+let return_chest = pos(96, -60, 96)
+let dump_chest   = pos(96, -60, 99)
+
+protect("home", pos(94, -61, 93), pos(99, -56, 101))
+
+option("survival.bed", bed)
+option("survival.supply", supply_chest)
+option("survival.returnChest", return_chest)
+option("survival.bedLead", 5)
+option("survival.eatBelow", 18)
+
+enable("escape", "pickup")
+set("allowBreak", true)
+set("itemSaver", true)
+set("itemSaverThreshold", 50)
+
+want("diamond_pickaxe", 2)
+want("diamond_shovel", 1)
+want("diamond_sword", 1)
+want("food", 16)
+
+on mobs > 0 and health >= 8
+  defend()
+  print("TEST stress defended")
+end
+
+on food < 18 or (health < 16 and food < 20)
+  eat()
+  print("TEST stress ate")
+end
+
+on bed_time
+  sleep()
+  print("TEST stress slept")
+end
+
+on restock_needed
+  restock()
+  print("TEST stress restocked")
+end
+
+on full
+  dump(dump_chest)
+  print("TEST stress dumped")
+end
+
+print("TEST stress armed")
+select(pos(102, -60, 102), pos(109, -57, 109))
+let left = clear_area()
+print("TEST stress done left={left}")
