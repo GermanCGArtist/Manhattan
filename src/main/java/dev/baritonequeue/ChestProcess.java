@@ -196,7 +196,7 @@ final class ChestProcess {
                     return;
                 }
                 if (timer == 1) Util.readyToOpen(p);   // never place a block on top of it or pour a bucket
-                if (timer == 4) {   // let the player come to a stop first
+                if (timer == 4 || timer == 24 || timer == 44 || timer == 64) {   // let the player come to a stop first, retry if a server lag spike drops the click
                     Util.readyToOpen(p);
                     BlockHitResult hit = new BlockHitResult(Vec3.atCenterOf(chest), Direction.UP, chest, false);
                     mc.gameMode.useItemOn(p, InteractionHand.MAIN_HAND, hit);
