@@ -391,7 +391,7 @@ public class ChunkRunner extends Actions.Action {
         boolean unloaded = !allMcChunksLoaded(chunk);
 
         if (far || unloaded) {
-            issueWalkToChunk(chunk, playerPos);
+            issueWalkToChunk(chunk);
             step = Step.WALK_TO_CHUNK;
         } else {
             step = Step.WAIT_CHUNK_LOAD;
@@ -399,12 +399,9 @@ public class ChunkRunner extends Actions.Action {
         }
     }
 
-    private void issueWalkToChunk(ChunkGrid.ColumnBox chunk, BlockPos playerPos) {
-        int y = playerPos != null
-                ? Math.max(chunk.minY(), Math.min(chunk.maxY(), playerPos.getY()))
-                : chunk.minY();
-        BlockPos walkTarget = chunk.centerXZ(y);
-        env.goTo(GoalSpec.near(walkTarget, 3));
+    private void issueWalkToChunk(ChunkGrid.ColumnBox chunk) {
+        BlockPos walkTarget = chunk.centerXZ(chunk.minY());
+        env.goTo(GoalSpec.xz(walkTarget.getX(), walkTarget.getZ()));
         walkIssued = true;
     }
 
@@ -619,7 +616,7 @@ public class ChunkRunner extends Actions.Action {
         if (currentChunk == null) return;
         if (step == Step.WALK_TO_CHUNK) {
             walkTicks = 0;
-            issueWalkToChunk(currentChunk, env.playerBlockPos());
+            issueWalkToChunk(currentChunk);
             return;
         }
         if (step == Step.RUN_CHUNK) {

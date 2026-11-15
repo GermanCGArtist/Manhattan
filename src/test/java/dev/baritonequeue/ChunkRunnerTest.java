@@ -75,6 +75,9 @@ public class ChunkRunnerTest {
                     playerPos = n.pos();
                 } else if (goal instanceof GoalSpec.Exact e) {
                     playerPos = e.pos();
+                } else if (goal instanceof GoalSpec.XZ xz) {
+                    int y = playerPos != null ? playerPos.getY() : 60;
+                    playerPos = new BlockPos(xz.x(), y, xz.z());
                 }
                 status = EngineStatus.DONE;
                 busy = false;
@@ -359,7 +362,7 @@ public class ChunkRunnerTest {
         // Tick 1: picks chunk, sees far & unloaded -> issues goTo, enters WALK_TO_CHUNK
         runner.tick();
         eq("issued goTo", env.goToCalls, 1);
-        check("goal is Near(..., 3)", env.lastGoal instanceof GoalSpec.Near n && n.range() == 3);
+        check("goal is XZ(5, 5)", env.lastGoal instanceof GoalSpec.XZ xz && xz.x() == 5 && xz.z() == 5);
         eq("step is WALK_TO_CHUNK", runner.step(), ChunkRunner.Step.WALK_TO_CHUNK);
 
         // Advance 200 walk ticks while engine stays MOVING

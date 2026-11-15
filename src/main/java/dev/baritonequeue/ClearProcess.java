@@ -108,9 +108,9 @@ public final class ClearProcess {
         for (int[] b : boxes) { yTop = Math.max(yTop, b[4]); yBottom = Math.min(yBottom, b[1]); }
         feetY = Math.max(yBottom, yTop - (pass - 1));
         lastPass = feetY == yBottom;
-        planPass(mc.level);
         skipped.clear();
         ignoredItems.clear();
+        planPass(mc.level);
         broken = tBreak = tWalk = tTravel = tPick = tOther = nearFluid = resumes = travelFails = 0;
         workTicks = 0;
         started = System.currentTimeMillis();
@@ -184,7 +184,7 @@ public final class ClearProcess {
         return false;
     }
 
-    /** The stops of one pass: lanes along the long side of each box, serpentine. */
+    /** The stops of one pass: lanes along the long side of each box, serpentine, plus ledges/bridges. */
     private void planPass(Level level) {
         stops.clear();
         stop = 0;
@@ -209,6 +209,82 @@ public final class ClearProcess {
                 forward = !forward;
             }
         }
+        addUncoveredBridgeStops(level);
+    }
+
+    /** Appends standing stops for any wanted blocks in this pass band not reachable from a solid grid stop. */
+    private void addUncoveredBridgeStops(Level level) {
+        final double reach = 4.4;
+        final double reachSq = reach * reach;
+        List<BlockPos> validStops = new ArrayList<>();
+        for (BlockPos s : stops) {
+            if (dev.buildtools.Api.solid(level, s.below())) validStops.add(s);
+        }
+        int bandTop = Math.min(yTop, feetY + pass);
+        for (int[] b : boxes) {
+            int yMin = Math.max(feetY, b[1]);
+            int yMax = Math.min(bandTop, b[4]);
+            if (yMin > yMax) continue;
+            for (int y = yMax; y >= yMin; y--) {
+                for (int x = b[0]; x <= b[3]; x++) {
+                    for (int z = b[2]; z <= b[5]; z++) {
+                        BlockPos pos = new BlockPos(x, y, z);
+                        if (!level.hasChunkAt(pos) || !wanted(level, pos) || nextToFluid(level, pos)) continue;
+                        if (coveredByStop(validStops, pos, reachSq)) continue;
+                        BlockPos stand = findStand(level, pos, reachSq);
+                        if (stand != null) {
+                            stops.add(stand);
+                            validStops.add(stand);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private static double eyeDistSq(BlockPos feet, BlockPos target) {
+        double dx = target.getX() - feet.getX();
+        double dy = (target.getY() + 0.5) - (feet.getY() + 1.62);
+        double dz = target.getZ() - feet.getZ();
+        return dx * dx + dy * dy + dz * dz;
+    }
+
+    private static boolean coveredByStop(List<BlockPos> validStops, BlockPos target, double reachSq) {
+        for (BlockPos s : validStops) {
+            if (Math.abs(s.getX() - target.getX()) <= 5
+                    && Math.abs(s.getZ() - target.getZ()) <= 5
+                    && eyeDistSq(s, target) <= reachSq) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Finds a safe standable spot within 4 blocks and eye reach of {@code target}, preferring floor below over bridge top. */
+    private static BlockPos findStand(Level level, BlockPos target, double reachSq) {
+        BlockPos best = null;
+        int bestTier = Integer.MAX_VALUE;
+        int bestDistSq = Integer.MAX_VALUE;
+        for (int dy = -3; dy <= 2; dy++) {
+            for (int dx = -4; dx <= 4; dx++) {
+                for (int dz = -4; dz <= 4; dz++) {
+                    int distSq = dx * dx + dy * dy + dz * dz;
+                    if (distSq > 16) continue;
+                    BlockPos stand = target.offset(dx, dy, dz);
+                    if (!level.hasChunkAt(stand)) continue;
+                    if (eyeDistSq(stand, target) > reachSq) continue;
+                    if (!dev.buildtools.Api.solid(level, stand.below())) continue;
+                    if (!passable(level, stand) || !passable(level, stand.above())) continue;
+                    int tier = stand.getY() <= target.getY() ? 0 : (!stand.below().equals(target) ? 1 : 2);
+                    if (tier < bestTier || (tier == bestTier && distSq < bestDistSq)) {
+                        best = stand;
+                        bestTier = tier;
+                        bestDistSq = distSq;
+                    }
+                }
+            }
+        }
+        return best;
     }
 
     /** Goes to the next pass down; false when this was the last one. */
@@ -252,9 +328,10 @@ public final class ClearProcess {
     private boolean workAt(Level level, BlockPos feet, double reach) {
         Vec3 eye = new Vec3(feet.getX() + 0.5, feet.getY() + 1.62, feet.getZ() + 0.5);
         int r = (int) Math.ceil(reach);
+        int minDy = Math.max(-r, feetY - feet.getY());
         for (int dx = -r; dx <= r; dx++) {
             for (int dz = -r; dz <= r; dz++) {
-                for (int dy = 0; dy <= r + 1; dy++) {
+                for (int dy = minDy; dy <= r + 1; dy++) {
                     BlockPos b = feet.offset(dx, dy, dz);
                     if (eye.distanceTo(Vec3.atCenterOf(b)) > reach) continue;
                     if (wanted(level, b) && !nextToFluid(level, b)) return true;
@@ -284,8 +361,13 @@ public final class ClearProcess {
                 }
             }
         }
-        // highest first (nothing is left hanging), then nearest
-        cand.sort((a, b) -> a.getY() != b.getY() ? b.getY() - a.getY() : Double.compare(eye.distanceToSqr(Vec3.atCenterOf(a)), eye.distanceToSqr(Vec3.atCenterOf(b))));
+        // highest first (nothing is left hanging); below feet break farthest-first so footing stays until last
+        int playerY = p.getBlockY();
+        cand.sort((a, b) -> a.getY() != b.getY()
+                ? b.getY() - a.getY()
+                : (a.getY() < playerY
+                        ? Double.compare(eye.distanceToSqr(Vec3.atCenterOf(b)), eye.distanceToSqr(Vec3.atCenterOf(a)))
+                        : Double.compare(eye.distanceToSqr(Vec3.atCenterOf(a)), eye.distanceToSqr(Vec3.atCenterOf(b)))));
         for (BlockPos b : cand) {
             BlockHitResult hit = level.clip(new ClipContext(eye, Vec3.atCenterOf(b), ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, p));
             if (hit.getType() == HitResult.Type.BLOCK && hit.getBlockPos().equals(b)) return hit;
@@ -561,7 +643,12 @@ public final class ClearProcess {
             BlockPos s = stops.get(stop);
             if (++checked > 400) return;   // carry on next tick
             if (!workAt(level, s, reach)) { stop++; continue; }
-            if (!dev.buildtools.Api.solid(level, s.below())) { stop++; continue; }   // nothing to stand on there
+            if (!dev.buildtools.Api.solid(level, s.below())) {
+                BlockPos lower = lowerFloorStop(level, s, reach);
+                if (lower == null) { stop++; continue; }
+                target = lower;
+                break;
+            }
             target = s;
             break;
         }
@@ -577,6 +664,18 @@ public final class ClearProcess {
         travelBest = Double.MAX_VALUE;
         EngineSelector.current().goTo(GoalSpec.near(target, 2));
         midtownTraveling = true;
+    }
+
+    /** Looks 1..3 blocks below {@code s} for a solid floor where {@link #workAt} still finds blocks to break. */
+    private BlockPos lowerFloorStop(Level level, BlockPos s, double reach) {
+        for (int d = 1; d <= 3; d++) {
+            BlockPos lowerStop = s.below(d);
+            if (!dev.buildtools.Api.solid(level, lowerStop.below())) continue;
+            if (!passable(level, lowerStop)) continue;
+            if (!passable(level, lowerStop.above()) && !wanted(level, lowerStop.above())) continue;
+            if (workAt(level, lowerStop, reach)) return lowerStop;
+        }
+        return null;
     }
 
     private ItemEntity nearestDrop(LocalPlayer p, Level level) {

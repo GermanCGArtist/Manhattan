@@ -31,34 +31,14 @@ final class Scaffold {
             if (!level.isClientSide() || !Config.cfg.scaffoldRecord) return InteractionResult.PASS;
             if (!(player.getItemInHand(hand).getItem() instanceof BlockItem bi)) return InteractionResult.PASS;
             if (!Util.isThrowaway(player.getItemInHand(hand))) return InteractionResult.PASS;
-            Minecraft mc = Minecraft.getInstance();
-            if (!dev.midtown.api.EngineSelector.current().isBusy() || mc.options == null || !mc.options.keyUse.isDown()) return InteractionResult.PASS;
+            if (!dev.midtown.api.EngineSelector.current().isBusy()) return InteractionResult.PASS;
             BlockPos clicked = hit.getBlockPos();
             BlockPos placed = level.getBlockState(clicked).canBeReplaced() ? clicked : clicked.relative(hit.getDirection());
             var outside = Api.scaffoldOutsideSchematic;   // a schematic build knows which blocks are wanted
             if (outside != null && !outside.test(placed, bi.getBlock())) return InteractionResult.PASS;   // the schematic wants it: not scaffolding
-            if (dev.midtown.api.EngineSelector.current().isBusy() && !clearingStep()) {   // builder/engine may be building
-                if (outside == null || !outside.test(placed, bi.getBlock())) return InteractionResult.PASS;
-            }
             if (spots.size() < MAX) spots.put(placed.immutable(), bi.getBlock());
             return InteractionResult.PASS;
         });
-    }
-
-    /** The queue step that runs now only clears: whatever the builder places is scaffolding. */
-    private static boolean clearingStep() {
-        String step = System.getProperty("baritonequeue.step");
-        if (step == null) return false;
-        String[] w = step.trim().toLowerCase().split("\\s+");
-        if (w.length < 2 || !(w[0].equals("sel") || w[0].equals("selection") || w[0].equals("s"))) return false;
-        switch (w[1]) {
-            case "ca", "cleararea" -> { return true; }
-            case "replace", "r", "set", "fill", "s", "f" -> {
-                String last = w[w.length - 1];
-                return last.equals("air") || last.equals("minecraft:air");
-            }
-            default -> { return false; }
-        }
     }
 
     /** Called every tick: the list belongs to one dimension. */
