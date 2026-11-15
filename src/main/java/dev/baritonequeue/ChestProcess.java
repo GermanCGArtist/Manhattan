@@ -209,7 +209,8 @@ final class ChestProcess {
             case TRANSFER -> {
                 AbstractContainerMenu h = p.containerMenu;
                 if (h == p.inventoryMenu) {
-                    if (todo == null && ++reopen <= 3) {   // closed before we did anything: open it again
+                    if (++reopen <= 3) {   // server lag or closing mid-transfer: open it again and re-plan
+                        todo = null;
                         state = State.OPENING;
                         timer = 0;
                         return;

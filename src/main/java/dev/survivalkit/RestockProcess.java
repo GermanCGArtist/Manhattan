@@ -1,6 +1,7 @@
 package dev.survivalkit;
 
 import dev.midtown.api.EngineSelector;
+import dev.midtown.api.EngineStatus;
 import dev.midtown.api.GoalSpec;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
@@ -206,7 +207,7 @@ final class RestockProcess extends Feature {
         timer = 0;
         queue = null;
         state = State.PATHING;
-        EngineSelector.current().goTo(GoalSpec.near(chest, 3));
+        EngineSelector.current().goTo(GoalSpec.near(chest, 2));
     }
 
     /**
@@ -313,7 +314,10 @@ final class RestockProcess extends Feature {
                     return;
                 }
                 if (!EngineSelector.current().isBusy()) {
-                    EngineSelector.current().goTo(GoalSpec.near(chest, 3));
+                    GoalSpec goal = EngineSelector.current().status() == EngineStatus.DONE
+                            ? GoalSpec.near(chest, 1)
+                            : GoalSpec.near(chest, 2);
+                    EngineSelector.current().goTo(goal);
                 }
             }
             case OPENING -> {
@@ -396,7 +400,7 @@ final class RestockProcess extends Feature {
         }
         timer = 0;
         state = State.PATHING;
-        EngineSelector.current().goTo(GoalSpec.near(chest, 3));
+        EngineSelector.current().goTo(GoalSpec.near(chest, 2));
     }
 
     /** Puts every worn-out damageable item that matches a want-rule into the return chest. */
