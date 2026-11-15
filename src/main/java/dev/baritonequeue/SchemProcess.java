@@ -39,7 +39,7 @@ import java.util.Set;
  * (bottom-up; the clear phase top-down) and when it is done the next phase starts. Never goes through the Litematica
  * printer.
  */
-final class SchemProcess {
+public final class SchemProcess {
     private static final int FIRST_CHECK = 20;      // ticks before "builder idle" counts as finished
     private static final int STALL_STEP = 40;       // how often progress is looked at
     private static final int STALL_TICKS = 20 * 60; // no new correct block for this long ends the phase
@@ -47,6 +47,10 @@ final class SchemProcess {
     private boolean working, paused;
     private Plan plan;
     private Mode mode;
+    private ChunkGrid.ColumnBox activeChunkBounds;
+    private static List<SchemSource.Placement> preparedPlacements;
+    private static Mode preparedMode = Mode.ADD;
+    private static Plan preparedPlan;
     private final List<Phase> phases = new ArrayList<>();
     private final SchemPlacer placer = new SchemPlacer();
     private int pi, since, noProgress, lastTodo;
@@ -81,16 +85,84 @@ final class SchemProcess {
 
     Plan plan() { return plan; }
 
+    public void setChunkBounds(ChunkGrid.ColumnBox bounds) {
+        this.activeChunkBounds = bounds;
+    }
+
+    static void prepare(List<SchemSource.Placement> pls, Mode mode) {
+        preparedPlacements = pls;
+        preparedMode = mode != null ? mode : Mode.ADD;
+        if (pls != null && !pls.isEmpty()) {
+            preparedPlan = Schem.plan(pls, new String[1]);
+        } else {
+            preparedPlan = null;
+        }
+    }
+
+    public static List<int[]> placementBounds() {
+        return placementBounds(SchemCmd.select(null, new String[1]));
+    }
+
+    static List<int[]> placementBounds(List<SchemSource.Placement> pls) {
+        if (pls == null || pls.isEmpty()) return List.of();
+        Plan p = pls.equals(preparedPlacements) && preparedPlan != null
+                ? preparedPlan
+                : Schem.plan(pls, new String[1]);
+        if (p == null) return List.of();
+        preparedPlacements = pls;
+        preparedPlan = p;
+        return List.of(new int[]{
+                p.min.getX(), p.min.getY(), p.min.getZ(),
+                p.min.getX() + p.sx - 1, p.min.getY() + p.sy - 1, p.min.getZ() + p.sz - 1
+        });
+    }
+
+    private static Plan resolveActivePlan() {
+        if (QueueMod.schem.plan != null) return QueueMod.schem.plan;
+        if (preparedPlan != null) return preparedPlan;
+        List<SchemSource.Placement> pls = SchemCmd.select(null, new String[1]);
+        if (pls == null || pls.isEmpty()) return null;
+        preparedPlacements = pls;
+        preparedPlan = Schem.plan(pls, new String[1]);
+        return preparedPlan;
+    }
+
+    private static Mode resolveActiveMode() {
+        if (QueueMod.schem.mode != null) return QueueMod.schem.mode;
+        return preparedMode != null ? preparedMode : Mode.ADD;
+    }
+
+    public static int countRemainingIn(Level level, ChunkGrid.ColumnBox box) {
+        if (level == null || box == null) return 0;
+        Plan p = resolveActivePlan();
+        if (p == null) return 0;
+        return Schem.count(p, resolveActiveMode(), level, box).todoTotal();
+    }
+
+    public static Map<String, Integer> requiredItemsIn(Level level, ChunkGrid.ColumnBox box) {
+        if (level == null || box == null) return Map.of();
+        Plan p = resolveActivePlan();
+        if (p == null) return Map.of();
+        Schem.Counts c = Schem.count(p, resolveActiveMode(), level, box);
+        if (c.items.isEmpty()) return Map.of();
+        Map<String, Integer> out = new LinkedHashMap<>();
+        c.items.forEach((it, n) -> out.put(Schem.itemName(it), n));
+        return out;
+    }
+
     /** Starts building; returns an error text, "" when there is nothing to do, or null when it started. */
     String begin(List<SchemSource.Placement> pls, Mode mode) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.level == null) return "Not in a world.";
         if (working) return "A schematic is already being built. /schem stop ends it.";
         String[] err = new String[1];
-        Plan p = Schem.plan(pls, err);
+        Plan p = (pls.equals(preparedPlacements) && preparedPlan != null) ? preparedPlan : Schem.plan(pls, err);
         if (p == null) return err[0];
-        p.markOpen(mc.level);
-        Schem.Counts c = Schem.count(p, mode, mc.level);
+        preparedPlacements = pls;
+        preparedMode = mode;
+        preparedPlan = p;
+        p.markOpen(mc.level, activeChunkBounds);
+        Schem.Counts c = Schem.count(p, mode, mc.level, activeChunkBounds);
         choosePhases(c, mode);
         round = 0;
         plan = p;
@@ -164,7 +236,7 @@ final class SchemProcess {
 
     private void startPhase() {
         Phase ph = phases.get(pi);
-        Schem.Counts c = Schem.count(plan, mode, Minecraft.getInstance().level);
+        Schem.Counts c = Schem.count(plan, mode, Minecraft.getInstance().level, activeChunkBounds);
         int todo = c.todoByPhase.getOrDefault(ph, 0);
         lastTodo = todo;
         attemptTodo = todo;
@@ -174,7 +246,7 @@ final class SchemProcess {
         Util.msg("Phase " + (pi + 1) + "/" + phases.size() + ": " + ph.label + ", " + todo + " blocks" + (ph == Phase.CLEAR ? " (top-down, our own digging)" : " (bottom-up)") + ".");
         if (ph == Phase.ORIENTED || ph == Phase.CLEAR) {
             EngineSelector.current().cancel();
-            placer.begin(plan, mode, ph);
+            placer.begin(activeChunkBounds != null ? plan.maskedTo(activeChunkBounds) : plan, mode, ph);
             return;
         }
         neededItems.clear();
@@ -217,6 +289,7 @@ final class SchemProcess {
             var d = plan.st[i];
             if (d == null || d.isAir() || plan.excluded.get(i) || giveUp.contains(i)) continue;
             mp.set(plan.min.getX() + x, plan.min.getY() + y, plan.min.getZ() + z);
+            if (activeChunkBounds != null && !activeChunkBounds.contains(mp)) continue;
             if (!mc.level.hasChunkAt(mp)) continue;
             var cur = Schem.norm(mc.level.getBlockState(mp));
             if (cur.equals(d) || Schem.phaseAt(plan, i, d, cur) != ph || !Schem.todo(plan, i, mode, d, cur)) continue;
@@ -247,7 +320,7 @@ final class SchemProcess {
     /** "stone x5, gravel x3" for the blocks of this phase left out for want of items. */
     private String skippedText(Phase ph) {
         if (!skipMissing) return "";
-        Schem.Counts c = Schem.count(plan, mode, Minecraft.getInstance().level);
+        Schem.Counts c = Schem.count(plan, mode, Minecraft.getInstance().level, activeChunkBounds);
         StringBuilder sb = new StringBuilder();
         for (var e : c.items.entrySet()) {
             if (Schem.have(e.getKey()) > 0) continue;
@@ -280,7 +353,7 @@ final class SchemProcess {
     }
 
     private void endPhase(Phase ph, String why) {
-        Schem.Counts c = Schem.count(plan, mode, Minecraft.getInstance().level);
+        Schem.Counts c = Schem.count(plan, mode, Minecraft.getInstance().level, activeChunkBounds);
         int left = c.todoByPhase.getOrDefault(ph, 0);
         if (left > 0 && why == null && skipMissing) {
             String sk = skippedText(ph);
@@ -456,13 +529,20 @@ final class SchemProcess {
         mtStallPass = 0;
         Level level = Minecraft.getInstance().level;
         if (level == null) return;
-        for (int y = 0; y < plan.sy; y++) {
-            for (int z = 0; z < plan.sz; z++) {
-                for (int x = 0; x < plan.sx; x++) {
+        int x0 = activeChunkBounds == null ? 0 : Math.max(0, activeChunkBounds.minX() - plan.min.getX());
+        int x1 = activeChunkBounds == null ? plan.sx - 1 : Math.min(plan.sx - 1, activeChunkBounds.maxX() - plan.min.getX());
+        int y0 = activeChunkBounds == null ? 0 : Math.max(0, activeChunkBounds.minY() - plan.min.getY());
+        int y1 = activeChunkBounds == null ? plan.sy - 1 : Math.min(plan.sy - 1, activeChunkBounds.maxY() - plan.min.getY());
+        int z0 = activeChunkBounds == null ? 0 : Math.max(0, activeChunkBounds.minZ() - plan.min.getZ());
+        int z1 = activeChunkBounds == null ? plan.sz - 1 : Math.min(plan.sz - 1, activeChunkBounds.maxZ() - plan.min.getZ());
+        for (int y = y0; y <= y1; y++) {
+            for (int z = z0; z <= z1; z++) {
+                for (int x = x0; x <= x1; x++) {
                     int idx = plan.idx(x, y, z);
                     BlockState d = plan.st[idx];
                     if (d == null || d.isAir() || plan.excluded.get(idx)) continue;
                     BlockPos w = plan.world(x, y, z);
+                    if (activeChunkBounds != null && !activeChunkBounds.contains(w)) continue;
                     if (!level.hasChunkAt(w)) continue;
                     BlockState cur = Schem.norm(level.getBlockState(w));
                     if (Schem.phaseAt(plan, idx, d, cur) == ph
@@ -693,6 +773,10 @@ final class SchemProcess {
         var it = mtQueue.iterator();
         while (it.hasNext()) {
             BlockPos w = it.next();
+            if (activeChunkBounds != null && !activeChunkBounds.contains(w)) {
+                it.remove();
+                continue;
+            }
             if (!level.hasChunkAt(w)) continue;
             int idx = plan.idx(w.getX() - plan.min.getX(), w.getY() - plan.min.getY(), w.getZ() - plan.min.getZ());
             BlockState d = plan.st[idx];
@@ -726,6 +810,7 @@ final class SchemProcess {
             minLayerY = retryY;
             for (BlockPos w : mtQueue) {
                 if (w.getY() != retryY) continue;
+                if (activeChunkBounds != null && !activeChunkBounds.contains(w)) continue;
                 int idx = plan.idx(w.getX() - plan.min.getX(), w.getY() - plan.min.getY(), w.getZ() - plan.min.getZ());
                 BlockState d = plan.st[idx];
                 Object[] cost = Schem.cost(d);

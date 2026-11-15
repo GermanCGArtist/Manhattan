@@ -1,0 +1,439 @@
+{
+  "name": "midtown-spatial-chunk-matrix-16",
+  "instances": [
+    {
+      "id": "midtown-chunk-clear-2x2-easy",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/baritonequeue-2.11.3.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.11.3.jar" }
+      ],
+      "account": { "offline": { "username": "BenchChunk01" } },
+      "ram_mb": 2560,
+      "cpu_cores": 2,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=chunk_clear_2x2_easy",
+        "-Dmanhattan.testbridge.port=25581"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_clear_2x2_easy pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_clear_2x2_easy pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "midtown-chunk-clear-straggler-strip",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/baritonequeue-2.11.3.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.11.3.jar" }
+      ],
+      "account": { "offline": { "username": "BenchChunk02" } },
+      "ram_mb": 2560,
+      "cpu_cores": 2,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=chunk_clear_straggler_strip",
+        "-Dmanhattan.testbridge.port=25582"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_clear_straggler_strip pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_clear_straggler_strip pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "midtown-chunk-clear-serpentine-3x3",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/baritonequeue-2.11.3.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.11.3.jar" }
+      ],
+      "account": { "offline": { "username": "BenchChunk03" } },
+      "ram_mb": 2560,
+      "cpu_cores": 2,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=chunk_clear_serpentine_3x3",
+        "-Dmanhattan.testbridge.port=25583"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_clear_serpentine_3x3 pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_clear_serpentine_3x3 pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "midtown-chunk-clear-nearest-3x2",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/baritonequeue-2.11.3.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.11.3.jar" }
+      ],
+      "account": { "offline": { "username": "BenchChunk04" } },
+      "ram_mb": 2560,
+      "cpu_cores": 2,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=chunk_clear_nearest_3x2",
+        "-Dmanhattan.testbridge.port=25584"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_clear_nearest_3x2 pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_clear_nearest_3x2 pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "midtown-chunk-clear-l-shape",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/baritonequeue-2.11.3.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.11.3.jar" }
+      ],
+      "account": { "offline": { "username": "BenchChunk05" } },
+      "ram_mb": 2560,
+      "cpu_cores": 2,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=chunk_clear_l_shape",
+        "-Dmanhattan.testbridge.port=25585"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_clear_l_shape pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_clear_l_shape pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "midtown-chunk-clear-deep-trench",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/baritonequeue-2.11.3.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.11.3.jar" }
+      ],
+      "account": { "offline": { "username": "BenchChunk06" } },
+      "ram_mb": 2560,
+      "cpu_cores": 2,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=chunk_clear_deep_trench",
+        "-Dmanhattan.testbridge.port=25586"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_clear_deep_trench pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_clear_deep_trench pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "midtown-chunk-water-fill-2x1",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/baritonequeue-2.11.3.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.11.3.jar" }
+      ],
+      "account": { "offline": { "username": "BenchChunk07" } },
+      "ram_mb": 2560,
+      "cpu_cores": 2,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=chunk_water_fill_2x1",
+        "-Dmanhattan.testbridge.port=25587"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_water_fill_2x1 pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_water_fill_2x1 pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "midtown-chunk-water-fill-canal-3x1",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/baritonequeue-2.11.3.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.11.3.jar" }
+      ],
+      "account": { "offline": { "username": "BenchChunk08" } },
+      "ram_mb": 2560,
+      "cpu_cores": 2,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=chunk_water_fill_canal_3x1",
+        "-Dmanhattan.testbridge.port=25588"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_water_fill_canal_3x1 pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_water_fill_canal_3x1 pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "midtown-chunk-flood-2x1",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/baritonequeue-2.11.3.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.11.3.jar" }
+      ],
+      "account": { "offline": { "username": "BenchChunk09" } },
+      "ram_mb": 2560,
+      "cpu_cores": 2,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=chunk_flood_2x1",
+        "-Dmanhattan.testbridge.port=25589"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_flood_2x1 pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_flood_2x1 pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "midtown-chunk-drain-2x1",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/baritonequeue-2.11.3.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.11.3.jar" }
+      ],
+      "account": { "offline": { "username": "BenchChunk10" } },
+      "ram_mb": 2560,
+      "cpu_cores": 2,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=chunk_drain_2x1",
+        "-Dmanhattan.testbridge.port=25590"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_drain_2x1 pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_drain_2x1 pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "midtown-chunk-needs-hook",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/baritonequeue-2.11.3.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.11.3.jar" }
+      ],
+      "account": { "offline": { "username": "BenchChunk11" } },
+      "ram_mb": 2560,
+      "cpu_cores": 2,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=chunk_needs_hook",
+        "-Dmanhattan.testbridge.port=25591"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_needs_hook pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_needs_hook pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "midtown-chunk-interrupt-survival",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/baritonequeue-2.11.3.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.11.3.jar" }
+      ],
+      "account": { "offline": { "username": "BenchChunk12" } },
+      "ram_mb": 2560,
+      "cpu_cores": 2,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=chunk_interrupt_survival",
+        "-Dmanhattan.testbridge.port=25592"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_interrupt_survival pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_interrupt_survival pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "midtown-chunk-protected-transit",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/baritonequeue-2.11.3.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.11.3.jar" }
+      ],
+      "account": { "offline": { "username": "BenchChunk13" } },
+      "ram_mb": 2560,
+      "cpu_cores": 2,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=chunk_protected_transit",
+        "-Dmanhattan.testbridge.port=25593"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_protected_transit pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_protected_transit pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "midtown-chunk-job-ledger-resume",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/baritonequeue-2.11.3.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.11.3.jar" }
+      ],
+      "account": { "offline": { "username": "BenchChunk14" } },
+      "ram_mb": 2560,
+      "cpu_cores": 2,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=chunk_job_ledger_resume",
+        "-Dmanhattan.testbridge.port=25594"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_job_ledger_resume pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_job_ledger_resume pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "midtown-chunk-disabled-baseline",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/baritonequeue-2.11.3.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.11.3.jar" }
+      ],
+      "account": { "offline": { "username": "BenchChunk15" } },
+      "ram_mb": 2560,
+      "cpu_cores": 2,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=chunk_disabled_baseline",
+        "-Dmanhattan.testbridge.port=25595"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_disabled_baseline pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_disabled_baseline pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "midtown-chunk-colossal-4x4",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/baritonequeue-2.11.3.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.11.3.jar" }
+      ],
+      "account": { "offline": { "username": "BenchChunk16" } },
+      "ram_mb": 2560,
+      "cpu_cores": 2,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=chunk_colossal_4x4",
+        "-Dmanhattan.testbridge.port=25596"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_colossal_4x4 pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_colossal_4x4 pass=false|FATAL"
+        }
+      }
+    }
+  ],
+  "server": null,
+  "timeout_secs": 420
+}

@@ -118,7 +118,8 @@ public final class ProgressModel {
         long etaTicks = running ? e.etaTicks() : -1L;
         String etaText = etaTicks >= 0 ? "about " + Estimate.duration(etaTicks) + " left" : "";
 
-        StringBuilder tail = new StringBuilder(pctText);
+        String chunk = running ? Jobs.chunkText() : null;
+        StringBuilder tail = new StringBuilder(chunk == null || chunk.isEmpty() ? pctText : chunk + "  -  " + pctText);
         if (!leftText.isEmpty()) tail.append("  -  ").append(leftText);
         if (!etaText.isEmpty()) tail.append("  -  ").append(etaText);
         else if (!known && a != null) tail.append("  -  ").append(Estimate.duration(a.ticks));

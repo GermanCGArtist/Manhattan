@@ -39,7 +39,7 @@ import java.util.Set;
  * stop it was at and carries on, keeping the blocks it already gave up on. Every 5 minutes of work it writes where the
  * time went so far into the game log ("[Queue] clear_area progress").
  */
-final class ClearProcess {
+public final class ClearProcess {
     private static final int LANE = 6, STEP = 3;
     private int pass = 3;   // layers per pass (2 or 3: feet and head, plus the block above the head)
     private static final int TRAVEL_TIMEOUT = 20 * 45, WALK_STUCK = 30, BREAK_TIMEOUT = 20 * 8, PICK_TIMEOUT = 20 * 3;
@@ -637,5 +637,33 @@ final class ClearProcess {
 
     private static String pct(int part, int total) {
         return Math.round(100.0 * part / total) + "%";
+    }
+
+    /** Counts remaining breakable blocks inside {@code boxes} using ClearProcess's block filter. */
+    public static int countSolid(Level level, List<int[]> boxes) {
+        if (level == null || boxes == null || boxes.isEmpty()) return 0;
+        int count = 0;
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+        for (int[] b : boxes) {
+            if (b == null || b.length < 6) continue;
+            int x0 = Math.min(b[0], b[3]), x1 = Math.max(b[0], b[3]);
+            int y0 = Math.min(b[1], b[4]), y1 = Math.max(b[1], b[4]);
+            int z0 = Math.min(b[2], b[5]), z1 = Math.max(b[2], b[5]);
+            for (int x = x0; x <= x1; x++) {
+                for (int z = z0; z <= z1; z++) {
+                    for (int y = y0; y <= y1; y++) {
+                        pos.set(x, y, z);
+                        if (!level.hasChunkAt(pos)) continue;
+                        BlockState s = level.getBlockState(pos);
+                        if (s.isAir() || !s.getFluidState().isEmpty()) continue;
+                        if (s.is(net.minecraft.world.level.block.Blocks.BEDROCK)
+                                || s.is(net.minecraft.world.level.block.Blocks.END_PORTAL_FRAME)) continue;
+                        if (s.getDestroySpeed(level, pos) < 0) continue;
+                        count++;
+                    }
+                }
+            }
+        }
+        return count;
     }
 }

@@ -19,7 +19,7 @@ import static dev.buildtools.Config.cfg;
 /**
  * Gets water out of the way of building operations.
  */
-final class DrainProcess extends Feature {
+public final class DrainProcess extends Feature {
     private record Task(BlockPos pos, boolean bucket, boolean dam) {}
 
     private static final int MAX_TASKS = 400;
@@ -269,5 +269,31 @@ final class DrainProcess extends Feature {
             current = null;
             EngineSelector.current().cancel();
         }
+    }
+
+    /** Counts fluid cells inside {@code boxes} that DrainProcess targets (non-regenerating water). */
+    public static int countFluid(Level level, List<int[]> boxes) {
+        if (level == null || boxes == null || boxes.isEmpty()) return 0;
+        int count = 0;
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+        for (int[] b : boxes) {
+            if (b == null || b.length < 6) continue;
+            int x0 = Math.min(b[0], b[3]), x1 = Math.max(b[0], b[3]);
+            int y0 = Math.min(b[1], b[4]), y1 = Math.max(b[1], b[4]);
+            int z0 = Math.min(b[2], b[5]), z1 = Math.max(b[2], b[5]);
+            for (int x = x0; x <= x1; x++) {
+                for (int z = z0; z <= z1; z++) {
+                    for (int y = y0; y <= y1; y++) {
+                        pos.set(x, y, z);
+                        if (!level.hasChunkAt(pos)) continue;
+                        BlockState s = level.getBlockState(pos);
+                        if (!Util.isWater(s)) continue;
+                        if (Util.isSourceWater(s) && Util.regenerates(level, pos)) continue;
+                        count++;
+                    }
+                }
+            }
+        }
+        return count;
     }
 }

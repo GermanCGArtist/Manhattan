@@ -22,7 +22,7 @@ import java.util.Set;
  * Replaces the air in the selection with water source blocks, using buckets.
  * Layer by layer from the bottom: put a source on every second cell, wait for that to spread, then place the remaining gaps directly.
  */
-final class FillProcess extends Feature {
+public final class FillProcess extends Feature {
     private enum State { IDLE, FILLING }
 
     private static final int MAX_CELLS = 30_000;
@@ -647,5 +647,31 @@ final class FillProcess extends Feature {
             setState(State.IDLE);
             cur = null;
         }
+    }
+
+    /** Counts cells inside {@code boxes} that FillProcess targets (air/open or non-source water). */
+    public static int countUnflooded(Level level, List<int[]> boxes) {
+        if (level == null || boxes == null || boxes.isEmpty()) return 0;
+        int count = 0;
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+        for (int[] b : boxes) {
+            if (b == null || b.length < 6) continue;
+            int x0 = Math.min(b[0], b[3]), x1 = Math.max(b[0], b[3]);
+            int y0 = Math.min(b[1], b[4]), y1 = Math.max(b[1], b[4]);
+            int z0 = Math.min(b[2], b[5]), z1 = Math.max(b[2], b[5]);
+            for (int x = x0; x <= x1; x++) {
+                for (int z = z0; z <= z1; z++) {
+                    for (int y = y0; y <= y1; y++) {
+                        pos.set(x, y, z);
+                        if (!level.hasChunkAt(pos)) continue;
+                        BlockState st = level.getBlockState(pos);
+                        if (Util.isSolid(level, pos) || Util.isSourceWater(st)) continue;
+                        if (!Util.isOpen(level, pos) && !Util.isWater(st)) continue;
+                        count++;
+                    }
+                }
+            }
+        }
+        return count;
     }
 }
