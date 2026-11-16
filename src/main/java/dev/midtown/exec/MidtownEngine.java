@@ -44,6 +44,8 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class MidtownEngine implements PathEngine {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(MidtownEngine.class);
+    /** {@code -Dmanhattan.midtownTrace=true}: one log line per moving tick (node, player, keys) for debugging. */
+    private static final boolean TRACE = Boolean.getBoolean("manhattan.midtownTrace");
 
     private final MidtownCoordinator coordinator;
     private final MidtownExecutor executor;
@@ -250,7 +252,10 @@ public final class MidtownEngine implements PathEngine {
 
         TickAction action = coordinator.tick(player.getX(), player.getY(), player.getZ());
         switch (action) {
-            case TickAction.MoveTo move -> executor.tick(mc, move.node());
+            case TickAction.MoveTo move -> {
+                executor.tick(mc, move.node());
+                if (TRACE) trace(mc, player, move.node());
+            }
             case TickAction.Idle _, TickAction.Done _, TickAction.Failed _ -> executor.releaseAllInputs(mc);
         }
 
@@ -551,28 +556,37 @@ public final class MidtownEngine implements PathEngine {
     /**
      * The block the planner should start from. While the player is airborne (mid pillar jump,
      * stepping up, falling) its feet block often has nothing under it yet, so a plan from there can
-     * only fall into a neighbouring column. Snap down to the first standable block of this column
-     * (at most 3 below) so a stalled pillar is retried in place instead of dropping off and
-     * pillaring again one block over.
+     * only fall into a neighbouring column. Snap down one block onto solid ground so a stalled
+     * pillar is retried in place instead of dropping off and pillaring again one block over. Only ever one block, and never while anything is under the hitbox:
+     * snapping further put the start on the ground while the player still stood on a pillar edge.
      */
     static BlockPos groundedStart(Minecraft mc, LocalPlayer player, BlockPos feet) {
         if (mc.level == null || player == null || feet == null) return feet;
-        if (player.isInWater() || player.isInLava() || player.onClimbable()) return feet;
-        if (!mc.level.getBlockState(feet.below()).getCollisionShape(mc.level, feet.below()).isEmpty()) {
-            return feet;
-        }
-        BlockPos.MutableBlockPos p = feet.mutable();
-        for (int d = 1; d <= 3; d++) {
-            p.setY(feet.getY() - d);
-            if (!mc.level.getBlockState(p).getCollisionShape(mc.level, p).isEmpty()) {
-                return feet;
-            }
-            BlockPos below = p.below();
-            if (!mc.level.getBlockState(below).getCollisionShape(mc.level, below).isEmpty()) {
-                return p.immutable();
-            }
+        // on the ground it is supported, maybe by the edge of a neighbouring block: never snap down then
+        if (player.onGround() || player.isInWater() || player.isInLava() || player.onClimbable()) return feet;
+        // anything under the hitbox within 0.6 (also a neighbour's edge): it lands on this level
+        if (!mc.level.noCollision(player, player.getBoundingBox().move(0.0, -0.6, 0.0))) return feet;
+        // a pillar jump lifts the player at most ~1.25 above its block: snap one block, onto solid ground only
+        BlockPos down = feet.below();
+        BlockPos support = down.below();
+        if (mc.level.getBlockState(down).getCollisionShape(mc.level, down).isEmpty()
+                && !mc.level.getBlockState(support).getCollisionShape(mc.level, support).isEmpty()) {
+            return down;
         }
         return feet;
+    }
+
+    private static void trace(Minecraft mc, LocalPlayer p, PathNode node) {
+        var o = mc.options;
+        var v = p.getDeltaMovement();
+        LOGGER.info("[MidtownTrace] {}@{} tb={} p={} {} {} v={} {} {} ground={} yaw={} pitch={} keys={}{}{}{}{}{}",
+                node.action(), node.pos().toShortString().replace(" ", ""),
+                node.targetBlock() == null ? "-" : node.targetBlock().toShortString().replace(" ", ""),
+                String.format("%.2f", p.getX()), String.format("%.2f", p.getY()), String.format("%.2f", p.getZ()),
+                String.format("%.2f", v.x), String.format("%.2f", v.y), String.format("%.2f", v.z),
+                p.onGround(), String.format("%.0f", p.getYRot()), String.format("%.0f", p.getXRot()),
+                o.keyUp.isDown() ? "W" : "", o.keyDown.isDown() ? "S" : "", o.keyLeft.isDown() ? "A" : "",
+                o.keyRight.isDown() ? "D" : "", o.keyJump.isDown() ? "J" : "", o.keyShift.isDown() ? "Sh" : "");
     }
 
     /** Compact one-line path description for the log: {@code ACTION@x,y,z} per node (first 40). */

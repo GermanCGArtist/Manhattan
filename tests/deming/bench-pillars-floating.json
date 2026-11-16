@@ -156,6 +156,46 @@
           "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=clear_pillars_floating pass=false|FATAL"
         }
       }
+    },
+    {
+      "id": "nav_bridge_off_pillar",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        {
+          "modrinth": {
+            "project_id_or_slug": "fabric-api",
+            "version_id": null
+          }
+        },
+        {
+          "local_path": "build/libs/baritonequeue-2.12.1.jar"
+        },
+        {
+          "local_path": "build/libs/manhattan-testbridge-2.12.1.jar"
+        }
+      ],
+      "account": {
+        "offline": {
+          "username": "T_bridge_off"
+        }
+      },
+      "ram_mb": 4096,
+      "cpu_cores": 2,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.midtownTrace=true",
+        "-Dmanhattan.benchmark=nav_bridge_off_pillar"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=nav_bridge_off_pillar pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=nav_bridge_off_pillar pass=false|FATAL"
+        }
+      }
     }
   ],
   "server": null,

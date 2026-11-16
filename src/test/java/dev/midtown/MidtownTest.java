@@ -583,6 +583,16 @@ public class MidtownTest {
             assertTrue("parkour complete", parkourResult.isComplete());
             assertTrue("has ParkourEdge", parkourResult.edges().stream().anyMatch(e -> e instanceof MoveEdge.ParkourEdge));
 
+            // 7b. No long parkour over a deep drop: a 2-block gap between 1-wide ledges 8 above the floor
+            GridWorldSnapshot highGapWorld = GridWorldSnapshot.builder(-1, 0, -2, 5, 12, 2)
+                    .fillFloor(0, BlockKind.SOLID)
+                    .set(0, 8, 0, BlockKind.SOLID)
+                    .set(3, 8, 0, BlockKind.SOLID)
+                    .build();
+            PlanResult highJump = planner.planSync(highGapWorld, parkourCtx, new BlockPos(0, 9, 0), GoalSpec.exact(new BlockPos(3, 9, 0)));
+            assertTrue("no long parkour over a deep drop",
+                    highJump.edges().stream().noneMatch(e -> e instanceof MoveEdge.ParkourEdge));
+
             // 8. Hazard Avoidance (routing around lava)
             GridWorldSnapshot hazardWorld = GridWorldSnapshot.builder(0, 0, -2, 5, 5, 5)
                     .fillFloor(0, BlockKind.SOLID)

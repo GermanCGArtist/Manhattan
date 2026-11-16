@@ -787,6 +787,8 @@ public final class MidtownPlanner {
                 }
                 if (!arcClear) break; // Further gaps along this ray are also blocked
                 if (!hasActualGap) continue;
+                // A long jump over a deep drop: a miss means a big fall and climbing back up; bridge instead.
+                if (gap >= 2 && gapDeeperThan(world, x, y, z, dx, dz, gap, ctx.maxSafeFall())) break;
 
                 // Landing at same Y (gaps 1..3)
                 tryParkourLanding(world, ctx, hazards, x, y, z, tx, y, tz, gap, dist * horizCost, placedSoFar, out);
@@ -833,6 +835,25 @@ public final class MidtownPlanner {
                 out.add(tx, ty, tz, cost, EDGE_PARKOUR, (byte) (gap | 8), BlockPos.asLong(tx, ty - 1, tz), Long.MIN_VALUE, placedSoFar + 1);
             }
         }
+    }
+
+    /** True if under any gap column the first standable block is more than {@code maxFall} below {@code y}. */
+    private static boolean gapDeeperThan(BlockView world, int x, int y, int z, int dx, int dz, int gap, int maxFall) {
+        for (int k = 1; k <= gap; k++) {
+            int gx = x + dx * k;
+            int gz = z + dz * k;
+            boolean shallow = false;
+            for (int drop = 1; drop <= maxFall; drop++) {
+                if (!world.isInYBounds(y - drop - 1)) break;
+                if (world.isWater(gx, y - drop, gz) || world.canStandOn(gx, y - drop - 1, gz)) {
+                    shallow = true;
+                    break;
+                }
+                if (!world.isPassable(gx, y - drop, gz)) break;
+            }
+            if (!shallow) return true;
+        }
+        return false;
     }
 
     private static boolean hasAdjacentSolidSupport(BlockView world, int x, int y, int z) {

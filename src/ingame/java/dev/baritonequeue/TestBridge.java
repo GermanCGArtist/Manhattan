@@ -740,6 +740,11 @@ public class TestBridge implements ClientModInitializer {
                 cmds.add("give @s diamond_pickaxe 1");
                 cmds.add("give @s cobblestone 64");
             }
+            case "nav_bridge_off_pillar" -> {
+                cmds.add("fill 90 -55 80 160 -50 130 air");
+                cmds.add("fill 106 -60 98 106 -58 98 stone");
+                cmds.add("give @s cobblestone 64");
+            }
             case "nav_pillar_up" -> {
                 cmds.add("fill 90 -55 80 160 -50 130 air");
                 cmds.add("give @s cobblestone 64");
@@ -902,6 +907,7 @@ public class TestBridge implements ClientModInitializer {
             default -> { }
         }
         cmds.add("tp @s 100 -60 100 0 0");
+        if (scenario.equals("nav_bridge_off_pillar")) cmds.add("tp @s 106.5 -57 98.5 0 0");
         for (String c : cmds) {
             mc.player.connection.sendCommand(c);
         }
@@ -914,6 +920,8 @@ public class TestBridge implements ClientModInitializer {
                     mc.level.getBlockState(new BlockPos(98, -60, 100)).is(net.minecraft.world.level.block.Blocks.CHEST);
             case "nav_flat_obstacle" ->
                     mc.level.getBlockState(new BlockPos(115, -60, 100)).is(net.minecraft.world.level.block.Blocks.STONE);
+            case "nav_bridge_off_pillar" ->
+                    mc.player != null && mc.player.blockPosition().equals(new BlockPos(106, -57, 98)) && mc.player.onGround();
             case "nav_pillar_up" ->
                     mc.player != null && mc.player.blockPosition().equals(new BlockPos(100, -60, 100))
                             && mc.level.getBlockState(new BlockPos(100, -61, 100)).is(net.minecraft.world.level.block.Blocks.GRASS_BLOCK);
@@ -961,6 +969,11 @@ public class TestBridge implements ClientModInitializer {
                     "timeout(180)",
                     "disable()",
                     "goto(pos(180, -60, 100))"
+            );
+            case "nav_bridge_off_pillar" -> List.of(
+                    "timeout(120)",
+                    "disable()",
+                    "goto(pos(106, -54, 100))"
             );
             case "nav_pillar_up" -> List.of(
                     "timeout(120)",
