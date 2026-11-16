@@ -63,6 +63,7 @@ public final class ClearProcess {
     private final List<BlockPos> stops = new ArrayList<>();
     private int stop;
     private BlockPos target, breaking;
+    private boolean exactTarget;     // target is a spot in the air reached by pillaring: go exactly there
     private ItemEntity item;
     private int stateTicks, breakTicks, stuck;
     private double lastDist;
@@ -635,7 +636,7 @@ public final class ClearProcess {
                     releaseKeys();
                     state = State.TRAVEL;
                     stateTicks = 0;
-                    EngineSelector.current().goTo(GoalSpec.near(target, 2));
+                    EngineSelector.current().goTo(travelGoal());
                     midtownTraveling = true;
                     return;
                 }
@@ -646,16 +647,19 @@ public final class ClearProcess {
                 tTravel++;
                 releaseKeys();
                 if (!midtownTraveling) {
-                    EngineSelector.current().goTo(GoalSpec.near(target, 2));
+                    EngineSelector.current().goTo(travelGoal());
                     midtownTraveling = true;
                 }
                 EngineStatus engStatus = EngineSelector.current().status();
                 if (engStatus == EngineStatus.IDLE) {
-                    EngineSelector.current().goTo(GoalSpec.near(target, 2));
+                    EngineSelector.current().goTo(travelGoal());
                     engStatus = EngineSelector.current().status();
                 }
-                boolean closeWithWork = p.blockPosition().distSqr(target) <= 4 && workAt(level, p.blockPosition(), reach(p));
-                if (p.blockPosition().equals(target) || engStatus == EngineStatus.DONE || closeWithWork) {
+                // a pillar-beside stand is only worth it at its height: climb all the way
+                boolean closeWithWork = !exactTarget && p.blockPosition().distSqr(target) <= 4 && workAt(level, p.blockPosition(), reach(p));
+                // a pillar-beside stand counts once standing on it, not at the top of the last jump
+                boolean arrived = p.blockPosition().equals(target) && (!exactTarget || p.onGround());
+                if (arrived || engStatus == EngineStatus.DONE || closeWithWork) {
                     EngineSelector.current().cancel();
                     midtownTraveling = false;
                     state = State.WORK;
@@ -684,6 +688,7 @@ public final class ClearProcess {
 
         // NEXT: the next stop that has something to do
         tOther++;
+        exactTarget = false;
         releaseKeys();
         double reach = reach(p);
         int checked = 0;
@@ -707,13 +712,17 @@ public final class ClearProcess {
                 // climbing up there means pillaring next to it, mining its own footing and dropping off again
                 BlockPos ground = groundStop(level, s, reach);
                 if (ground != null) { target = ground; break; }
+                // too high to reach from the ground: pillar up beside it rather than standing on it, so the last
+                // block broken under the feet is our own column (a one block drop) instead of a long fall
+                BlockPos beside = pillarStand(level, s, reach);
+                if (beside != null) { target = beside; exactTarget = true; break; }
             }
             target = s;
             break;
         }
         stateTicks = 0;
         System.out.println("[Queue] clear_area stop " + (stop + 1) + "/" + stops.size() + " y=" + feetY + ": "
-                + stops.get(stop).toShortString() + " -> stand " + target.toShortString());
+                + stops.get(stop).toShortString() + " -> stand " + target.toShortString() + (exactTarget ? " (pillar beside)" : ""));
         if (p.blockPosition().equals(target)) { state = State.WORK; return; }
         if (straight(level, p.blockPosition(), target)) {
             state = State.WALK;
@@ -723,7 +732,7 @@ public final class ClearProcess {
         }
         state = State.TRAVEL;
         travelBest = Double.MAX_VALUE;
-        EngineSelector.current().goTo(GoalSpec.near(target, 2));
+        EngineSelector.current().goTo(travelGoal());
         midtownTraveling = true;
     }
 
@@ -762,6 +771,39 @@ public final class ClearProcess {
                     best = c;
                     bestScore = score;
                 }
+            }
+        }
+        return best;
+    }
+
+    private GoalSpec travelGoal() {
+        return exactTarget ? GoalSpec.exact(target) : GoalSpec.near(target, 2);
+    }
+
+    /**
+     * A spot in the air next to {@code s} (same level or one lower) above a clear column down to steady ground
+     * (at most 11 deep), from where {@link #workAt} finds blocks to break: Midtown pillars straight up to it.
+     * The lowest such column wins. Null if there is none.
+     */
+    private BlockPos pillarStand(Level level, BlockPos s, double reach) {
+        int[][] dirs = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}, {1, -1}, {-1, 1}, {-1, -1}};
+        BlockPos best = null;
+        int bestScore = Integer.MAX_VALUE;
+        for (int dy = -1; dy <= 0; dy++) {
+            for (int[] d : dirs) {
+                BlockPos c = s.offset(d[0], dy, d[1]);
+                if (!level.hasChunkAt(c) || !passable(level, c) || !passable(level, c.above())) continue;
+                int h = 0;
+                BlockPos q = c.below();
+                while (h < 12 && level.hasChunkAt(q) && passable(level, q) && level.getBlockState(q).getFluidState().isEmpty()) {
+                    q = q.below();
+                    h++;
+                }
+                if (h == 0 || h >= 12) continue;
+                if (!dev.buildtools.Api.solid(level, q) || precarious(level, q)) continue;
+                if (!workAt(level, c, reach)) continue;
+                int score = h * 4 + Math.abs(d[0]) + Math.abs(d[1]);
+                if (score < bestScore) { best = c; bestScore = score; }
             }
         }
         return best;
