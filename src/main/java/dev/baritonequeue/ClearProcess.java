@@ -47,8 +47,11 @@ public final class ClearProcess {
 
     private enum State { NEXT, TRAVEL, WALK, WORK, PICK }
 
+    private static volatile boolean activeClear;
+
     private boolean working;
     private boolean paused;          // suspended by an "on" block: carryOn() goes on from here
+    private boolean scaffoldCleanupPass;
     private List<int[]> pausedBoxes;
     private int resumes, travelFails;
     private double travelBest;       // closest Baritone has got to the stop it travels to
@@ -75,6 +78,10 @@ public final class ClearProcess {
     private long started;
     private String failure;
     private double result;
+
+    public static boolean isClearWorking() {
+        return activeClear;
+    }
 
     boolean working() {
         return working;
@@ -108,6 +115,7 @@ public final class ClearProcess {
         for (int[] b : boxes) { yTop = Math.max(yTop, b[4]); yBottom = Math.min(yBottom, b[1]); }
         feetY = Math.max(yBottom, yTop - (pass - 1));
         lastPass = feetY == yBottom;
+        scaffoldCleanupPass = false;
         skipped.clear();
         ignoredItems.clear();
         planPass(mc.level);
@@ -121,6 +129,7 @@ public final class ClearProcess {
         // the way between stops may need digging: Baritone may break blocks while this runs
         breakBefore = dev.buildtools.Api.setOwnBreak(true);   // near a safe area it still stays off there
         working = true;
+        activeClear = true;
         Util.msg("Clearing the area from the top, " + pass + " layers per pass.");
         return null;
     }
@@ -129,6 +138,7 @@ public final class ClearProcess {
         paused = false;
         if (!working) return;
         working = false;
+        activeClear = false;
         end();
     }
 
@@ -136,6 +146,7 @@ public final class ClearProcess {
     void suspendRun() {
         if (!working) { paused = false; return; }
         working = false;
+        activeClear = false;
         end();
         paused = true;
         pausedBoxes = new ArrayList<>(boxes);
@@ -157,6 +168,7 @@ public final class ClearProcess {
         resumes++;
         breakBefore = dev.buildtools.Api.setOwnBreak(true);
         working = true;
+        activeClear = true;
         Util.msg("Carrying on clearing at stop " + Math.min(stop + 1, stops.size()) + " of " + stops.size()
                 + " (layer y " + feetY + ", " + broken + " blocks so far).");
         return null;
@@ -178,8 +190,14 @@ public final class ClearProcess {
     // ------------------------------------------------------------------ the plan
 
     private boolean inSelection(BlockPos p) {
+        return inSelection(p, 0);
+    }
+
+    private boolean inSelection(BlockPos p, int pad) {
         for (int[] b : boxes) {
-            if (p.getX() >= b[0] && p.getX() <= b[3] && p.getY() >= b[1] && p.getY() <= b[4] && p.getZ() >= b[2] && p.getZ() <= b[5]) return true;
+            if (p.getX() >= b[0] - pad && p.getX() <= b[3] + pad
+                    && p.getY() >= b[1] - pad && p.getY() <= b[4] + pad
+                    && p.getZ() >= b[2] - pad && p.getZ() <= b[5] + pad) return true;
         }
         return false;
     }
@@ -240,6 +258,28 @@ public final class ClearProcess {
                 }
             }
         }
+        addUncoveredScaffoldStops(level, validStops, reachSq);
+    }
+
+    /** Appends top-down stops for any recorded scaffold blocks within {@code selection.inflate(2)} at {@code y >= feetY}. */
+    private void addUncoveredScaffoldStops(Level level, List<BlockPos> validStops, double reachSq) {
+        List<BlockPos> spots = new ArrayList<>();
+        for (BlockPos pos : dev.buildtools.Api.scaffoldSpots()) {
+            if (pos.getY() >= feetY && inSelection(pos, 2)) {
+                spots.add(pos);
+            }
+        }
+        if (spots.isEmpty()) return;
+        spots.sort((a, b) -> Integer.compare(b.getY(), a.getY()));
+        for (BlockPos pos : spots) {
+            if (!level.hasChunkAt(pos) || !wanted(level, pos) || nextToFluid(level, pos)) continue;
+            if (coveredByStop(validStops, pos, reachSq)) continue;
+            BlockPos stand = findStand(level, pos, reachSq);
+            if (stand != null) {
+                stops.add(stand);
+                validStops.add(stand);
+            }
+        }
     }
 
     private static double eyeDistSq(BlockPos feet, BlockPos target) {
@@ -289,7 +329,16 @@ public final class ClearProcess {
 
     /** Goes to the next pass down; false when this was the last one. */
     private boolean nextPass(Level level) {
-        if (lastPass) return false;
+        if (lastPass) {
+            if (!scaffoldCleanupPass) {
+                scaffoldCleanupPass = true;
+                stops.clear();
+                stop = 0;
+                addUncoveredScaffoldStops(level, new ArrayList<>(), 4.4 * 4.4);
+                if (!stops.isEmpty()) return true;
+            }
+            return false;
+        }
         feetY = Math.max(yBottom, feetY - pass);
         lastPass = feetY == yBottom;
         planPass(level);
@@ -312,7 +361,8 @@ public final class ClearProcess {
 
     /** A block of the selection this pass (and anything above it that is still there) should break. */
     private boolean wanted(Level level, BlockPos p) {
-        if (p.getY() < feetY || !inSelection(p) || skipped.contains(p)) return false;
+        if (p.getY() < feetY || skipped.contains(p)) return false;
+        if (!inSelection(p) && !(inSelection(p, 2) && dev.buildtools.Api.isScaffold(level, p))) return false;
         BlockState s = level.getBlockState(p);
         if (s.isAir() || !s.getFluidState().isEmpty()) return false;
         float hard = s.getDestroySpeed(level, p);
@@ -378,7 +428,7 @@ public final class ClearProcess {
     // ------------------------------------------------------------------ tools
 
     /** Puts the fastest tool for the block in the hand (sparing nearly-broken tools). */
-    static void equipFor(Minecraft mc, LocalPlayer p, BlockState s) {
+    public static void equipFor(Minecraft mc, LocalPlayer p, BlockState s) {
         int saverThreshold = 5;
         var engine = EngineSelector.current();
         if ("true".equalsIgnoreCase(engine.getSetting("itemSaver"))) {
@@ -464,6 +514,7 @@ public final class ClearProcess {
                 t.printStackTrace();
                 failure = "clear_area hit an error (" + t + "). Details are in the game log.";
                 working = false;
+                activeClear = false;
                 end();
             }
         } else if (keysHeld && stepTick < tickCount - 1) {
@@ -525,7 +576,7 @@ public final class ClearProcess {
         // a block being broken that takes several ticks
         if (breaking != null) {
             tBreak++;
-            if (!wanted(level, breaking)) { breaking = null; broken++; }
+            if (!wanted(level, breaking)) { dev.buildtools.Api.forgetScaffold(breaking); breaking = null; broken++; }
             else if (++breakTicks > BREAK_TIMEOUT) { skipped.add(breaking); mc.gameMode.stopDestroyBlock(); breaking = null; }
             else {
                 aim(p, Vec3.atCenterOf(breaking));
@@ -553,6 +604,7 @@ public final class ClearProcess {
                 if (s.getDestroyProgress(p, level, b) >= 1.0f) {   // breaks at once: one per tick
                     mc.gameMode.startDestroyBlock(b, hit.getDirection());
                     p.swing(InteractionHand.MAIN_HAND);
+                    if (level.getBlockState(b).isAir()) dev.buildtools.Api.forgetScaffold(b);
                     broken++;
                 } else {
                     breaking = b;
@@ -645,14 +697,23 @@ public final class ClearProcess {
             if (!workAt(level, s, reach)) { stop++; continue; }
             if (!dev.buildtools.Api.solid(level, s.below())) {
                 BlockPos lower = lowerFloorStop(level, s, reach);
+                if (lower == null) lower = groundStop(level, s, reach);
                 if (lower == null) { stop++; continue; }
                 target = lower;
                 break;
+            }
+            if (precarious(level, s.below())) {
+                // the stop stands on a lone pillar top or a floating block that is itself to be cleared:
+                // climbing up there means pillaring next to it, mining its own footing and dropping off again
+                BlockPos ground = groundStop(level, s, reach);
+                if (ground != null) { target = ground; break; }
             }
             target = s;
             break;
         }
         stateTicks = 0;
+        System.out.println("[Queue] clear_area stop " + (stop + 1) + "/" + stops.size() + " y=" + feetY + ": "
+                + stops.get(stop).toShortString() + " -> stand " + target.toShortString());
         if (p.blockPosition().equals(target)) { state = State.WORK; return; }
         if (straight(level, p.blockPosition(), target)) {
             state = State.WALK;
@@ -666,11 +727,52 @@ public final class ClearProcess {
         midtownTraveling = true;
     }
 
+    /** A support block that is itself to be cleared (now or in a later pass) and has at most one solid block beside it (a 1x1 pillar top or a floating block). */
+    private boolean precarious(Level level, BlockPos support) {
+        // to be cleared in this pass or a later one (wanted() only looks at this pass)
+        if (!inSelection(support) || skipped.contains(support)) return false;
+        BlockState st = level.getBlockState(support);
+        if (st.isAir() || !st.getFluidState().isEmpty() || st.getDestroySpeed(level, support) < 0) return false;
+        // at most one solid side: a lone pillar, a floating block, or such a pillar with our own scaffold column
+        // beside it (solid terrain to stand on has more)
+        int sides = 0;
+        for (Direction d : Direction.Plane.HORIZONTAL) {
+            if (dev.buildtools.Api.solid(level, support.relative(d))) sides++;
+        }
+        return sides <= 1;
+    }
+
+    /**
+     * A stand on steady ground near {@code s} (up to 7 below, 3 to the side) from where {@link #workAt}
+     * still finds blocks to break; the nearest, highest one. Null if there is none.
+     */
+    private BlockPos groundStop(Level level, BlockPos s, double reach) {
+        BlockPos best = null;
+        int bestScore = Integer.MAX_VALUE;
+        for (int dy = 0; dy <= 7; dy++) {
+            for (int dx = -3; dx <= 3; dx++) {
+                for (int dz = -3; dz <= 3; dz++) {
+                    int score = (dx * dx + dz * dz) * 4 + dy;
+                    if (score >= bestScore) continue;
+                    BlockPos c = s.offset(dx, -dy, dz);
+                    if (!level.hasChunkAt(c)) continue;
+                    if (!passable(level, c) || !passable(level, c.above())) continue;
+                    if (!dev.buildtools.Api.solid(level, c.below()) || precarious(level, c.below())) continue;
+                    if (!workAt(level, c, reach)) continue;
+                    best = c;
+                    bestScore = score;
+                }
+            }
+        }
+        return best;
+    }
+
     /** Looks 1..3 blocks below {@code s} for a solid floor where {@link #workAt} still finds blocks to break. */
     private BlockPos lowerFloorStop(Level level, BlockPos s, double reach) {
         for (int d = 1; d <= 3; d++) {
             BlockPos lowerStop = s.below(d);
             if (!dev.buildtools.Api.solid(level, lowerStop.below())) continue;
+            if (precarious(level, lowerStop.below())) continue;
             if (!passable(level, lowerStop)) continue;
             if (!passable(level, lowerStop.above()) && !wanted(level, lowerStop.above())) continue;
             if (workAt(level, lowerStop, reach)) return lowerStop;
@@ -705,6 +807,7 @@ public final class ClearProcess {
                         left++;
                         if (protectedOrForbidden(s, pos)) guarded++;
                         else if (nextToFluid(level, pos)) wet++;
+                        else if (left - wet - guarded <= 10) System.out.println("[Queue] clear_area left: " + pos.toShortString());
                         if (left > 200_000) break outer;
                     }
                 }
@@ -713,6 +816,7 @@ public final class ClearProcess {
         int open = left - wet - guarded;
         result = open;   // what is still worth another go; the wet and protected ones never are
         working = false;
+        activeClear = false;
         end();
         int total = Math.max(1, tBreak + tWalk + tTravel + tPick + tOther);
         long secs = (System.currentTimeMillis() - started) / 1000;

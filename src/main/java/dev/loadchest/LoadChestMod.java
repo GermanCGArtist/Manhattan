@@ -27,6 +27,7 @@ import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.network.chat.Component;
+import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.core.BlockPos;
@@ -525,6 +526,7 @@ public class LoadChestMod implements ClientModInitializer {
         if (p == null || mc.level == null || mc.gameMode == null) { state = State.IDLE; return; }
 
         if (PauseWatch.paused) {   // #pause: no chest trips, no pickups
+            pickupProcess.releaseDirectWalk(mc);
             if (state != State.IDLE) {
                 if (p.containerMenu != p.inventoryMenu) p.closeContainer();
                 stop("Paused - chest trip cancelled.");
@@ -570,6 +572,7 @@ public class LoadChestMod implements ClientModInitializer {
             return;
         }
 
+        pickupProcess.releaseDirectWalk(mc);
         System.setProperty("loadchest.busy", "1");
         switch (state) {
             case PATHING -> {
@@ -911,6 +914,22 @@ public class LoadChestMod implements ClientModInitializer {
         return dev.midtown.api.EngineSelector.current().isBusy();
     }
 
+    /** True when combat, eating, clearing, scaffolding, recovery, UI, or another engine task owns control. */
+    static boolean anyHigherPriorityTaskBusy() {
+        Minecraft mc = Minecraft.getInstance();
+        boolean engineBusy = EngineSelector.current().isBusy();
+        boolean pickupOwnsEngine = INSTANCE != null && INSTANCE.pickupProcess.owningPath;
+        return (engineBusy && !pickupOwnsEngine)
+                || dev.survivalkit.Api.fighting()
+                || dev.survivalkit.Api.eating()
+                || dev.survivalkit.Api.busy()
+                || dev.buildtools.Api.busy()
+                || dev.baritonequeue.ClearProcess.isClearWorking()
+                || System.getProperty("baritonequeue.step") != null
+                || System.getProperty("survivalkit.recovering") != null
+                || (mc != null && mc.screen != null);
+    }
+
     /** Whether the main inventory (hotbar included) has room for this stack, counting partial stacks. */
     private static boolean canHold(LocalPlayer p, ItemStack st) {
         for (int i = 0; i < 36; i++) {
@@ -921,12 +940,18 @@ public class LoadChestMod implements ClientModInitializer {
     }
 
     private class PickupProcess {
-        private ItemEntity item;
-        private int itemTimer;    // ticks spent on this item
+        private ItemEntity targetItem;
+        private BlockPos lastGoalPos;
+        private int pathTicks;    // ticks spent on this item
         private int touchTimer;   // ticks spent within reach without the item being picked up
         private final Set<Integer> ignored = new HashSet<>();   // items we gave up on
         private boolean collecting;   // a batch run is in progress
-        private boolean lastBusy;     // engine was busy last time we looked
+        private boolean wasBusy;      // higher-priority task was busy last time we looked
+        private int idleTicksAfterBusy;
+        private boolean owningPath;   // PickupProcess started the active EngineSelector path
+        private boolean walkingDirect;
+        private boolean triedExact;
+        private boolean triedNear;
         private int scanTick;
         private int oldCount;         // drops on the ground for at least PICKUP_MIN_AGE (set by findDrop)
         private boolean staleFound;   // a drop has been lying around for at least cfg.pickupWait seconds
@@ -937,78 +962,180 @@ public class LoadChestMod implements ClientModInitializer {
             forced = true;
             forcedTicks = 0;
             collecting = true;
-            item = null;
+            targetItem = null;
+            pathTicks = 0;
+            touchTimer = 0;
+            triedExact = false;
+            triedNear = false;
+            lastGoalPos = null;
+        }
+
+        void releaseDirectWalk(Minecraft mc) {
+            if (!walkingDirect) return;
+            if (mc != null && mc.options != null) mc.options.keyUp.setDown(false);
+            walkingDirect = false;
+        }
+
+        private void resetTarget() {
+            targetItem = null;
+            pathTicks = 0;
+            touchTimer = 0;
+            triedExact = false;
+            triedNear = false;
+            lastGoalPos = null;
+            owningPath = false;
         }
 
         boolean isActive() {
             Minecraft mc = Minecraft.getInstance();
             if (forced && (++forcedTicks > 20 * 120 || mc.player == null)) forced = false;   // never longer than 2 min
             if ((!scriptOn("pickup", cfg.pickup) && !forced) || (addonOff("pickup") && !forced) || state != State.IDLE || mc.player == null || mc.level == null) {
-                item = null;
+                resetTarget();
                 collecting = false;
-                lastBusy = false;
+                wasBusy = false;
+                idleTicksAfterBusy = 0;
+                releaseDirectWalk(mc);
                 return false;
             }
-            if (baritoneBusy()) {
-                lastBusy = true;
-            } else if (lastBusy) {   // the task just ended: one final sweep for whatever is left on the ground
-                lastBusy = false;
-                collecting = true;
-                debug("task finished - final sweep");
-            } else if (!collecting) {
-                item = null;
+            if (!forced && anyHigherPriorityTaskBusy()) {
+                wasBusy = true;
+                idleTicksAfterBusy = 0;
+                collecting = false;
+                resetTarget();
+                releaseDirectWalk(mc);
                 return false;
             }
-            if (item == null || !item.isAlive()) {
+            if (!forced) {
+                if (wasBusy) {
+                    if (++idleTicksAfterBusy < 5) {
+                        if (!collecting) {
+                            resetTarget();
+                            releaseDirectWalk(mc);
+                            return false;
+                        }
+                    } else {   // the task settled after ending: one final sweep for whatever is left on the ground
+                        wasBusy = false;
+                        idleTicksAfterBusy = 0;
+                        collecting = true;
+                        debug("task finished - final sweep");
+                    }
+                } else if (!collecting) {
+                    resetTarget();
+                    releaseDirectWalk(mc);
+                    return false;
+                }
+            }
+            if (targetItem == null || !targetItem.isAlive()) {
                 // Chasing each drop right after every broken block would interrupt the builder/miner constantly.
                 // So wait until a batch has piled up, then collect everything in one go.
                 if (!collecting && ++scanTick % 10 != 0) return false;
-                item = findDrop(mc, collecting);
+                targetItem = findDrop(mc, collecting);
                 if (!collecting) {
-                    if (item != null && (oldCount >= cfg.pickupBatch || staleFound)) {
+                    if (targetItem != null && (oldCount >= cfg.pickupBatch || staleFound)) {
                         collecting = true;
                         debug("collecting " + oldCount + " drops");
                     } else {
-                        item = null;
+                        targetItem = null;
                     }
-                } else if (item == null) {
+                } else if (targetItem == null) {
                     collecting = false;
                     forced = false;
+                    owningPath = false;
+                    releaseDirectWalk(mc);
                     debug("all drops collected");
                 }
-                itemTimer = 0;
+                pathTicks = 0;
                 touchTimer = 0;
-                if (item != null) {
-                    debug("target " + item.getItem().getHoverName().getString() + " x" + item.getItem().getCount()
-                            + " at " + String.format("%.1f %.1f %.1f", item.getX(), item.getY(), item.getZ())
-                            + ", " + String.format("%.1f", Math.sqrt(item.distanceToSqr(mc.player))) + " blocks away");
+                triedExact = false;
+                triedNear = false;
+                lastGoalPos = null;
+                if (targetItem != null) {
+                    debug("target " + targetItem.getItem().getHoverName().getString() + " x" + targetItem.getItem().getCount()
+                            + " at " + String.format("%.1f %.1f %.1f", targetItem.getX(), targetItem.getY(), targetItem.getZ())
+                            + ", " + String.format("%.1f", Math.sqrt(targetItem.distanceToSqr(mc.player))) + " blocks away");
                 }
             }
-            return item != null;
+            return targetItem != null;
         }
 
         void tick(Minecraft mc, LocalPlayer p) {
-            if (!isActive() || item == null) return;
+            if (!forced && anyHigherPriorityTaskBusy()) {
+                wasBusy = true;
+                idleTicksAfterBusy = 0;
+                collecting = false;
+                resetTarget();
+                releaseDirectWalk(mc);
+                return;
+            }
+            if (!isActive() || targetItem == null) {
+                releaseDirectWalk(mc);
+                return;
+            }
 
-            if (p.getBoundingBox().inflate(1.0, 0.5, 1.0).intersects(item.getBoundingBox())) {
-                if (++touchTimer > 50) giveUp("in reach but not picked up (pickup delay / no room)");
+            if (p.getBoundingBox().inflate(1.0, 0.5, 1.0).intersects(targetItem.getBoundingBox())) {
+                if (++touchTimer > 50) giveUp(mc, "in reach but not picked up (pickup delay / no room)");
             } else {
                 touchTimer = 0;
             }
-            if (item != null && ++itemTimer > PICKUP_TIMEOUT) giveUp("took too long to reach");
-            if (item == null) {
+            if (targetItem != null && ++pathTicks > PICKUP_TIMEOUT) giveUp(mc, "took too long to reach");
+            if (targetItem == null) {
+                releaseDirectWalk(mc);
+                owningPath = false;
                 EngineSelector.current().cancel();
                 return;
             }
+            double dx = targetItem.getX() - p.getX();
+            double dz = targetItem.getZ() - p.getZ();
+            double horizDist = Math.hypot(dx, dz);
+            double dy = Math.abs(targetItem.getY() - p.getY());
+            if (horizDist <= 2.2 && dy <= 1.2) {
+                if (owningPath || EngineSelector.current().isBusy()) {
+                    EngineSelector.current().cancel();
+                    owningPath = false;
+                }
+                float yaw = (float) (Math.toDegrees(Math.atan2(dz, dx)) - 90.0);
+                float err = Mth.wrapDegrees(yaw - p.getYRot());
+                p.setYRot(p.getYRot() + Mth.clamp(err, -45f, 45f));
+                boolean aligned = Math.abs(err) < 35.0 || horizDist >= 1.5;
+                mc.options.keyUp.setDown(aligned);
+                walkingDirect = true;
+                return;
+            }
+            releaseDirectWalk(mc);
             if (!EngineSelector.current().isBusy()) {
-                EngineSelector.current().goTo(GoalSpec.near(item.blockPosition(), 1));
+                owningPath = false;
+                EngineStatus st = EngineSelector.current().status();
+                if (!triedExact) {
+                    triedExact = true;
+                    lastGoalPos = targetItem.blockPosition();
+                    EngineSelector.current().goTo(GoalSpec.exact(lastGoalPos));
+                    owningPath = true;
+                } else if (!triedNear && (st == EngineStatus.FAILED || st == EngineStatus.DONE)) {
+                    triedNear = true;
+                    lastGoalPos = targetItem.blockPosition();
+                    EngineSelector.current().goTo(GoalSpec.near(lastGoalPos, 1));
+                    owningPath = true;
+                } else if (triedNear && st == EngineStatus.FAILED) {
+                    giveUp(mc, "path failed to item");
+                } else if (triedNear && st == EngineStatus.DONE) {
+                    if (lastGoalPos == null || targetItem.blockPosition().distSqr(lastGoalPos) > 4) {
+                        triedExact = true;
+                        triedNear = false;
+                        lastGoalPos = targetItem.blockPosition();
+                        EngineSelector.current().goTo(GoalSpec.exact(lastGoalPos));
+                        owningPath = true;
+                    } else {
+                        giveUp(mc, "unreachable item");
+                    }
+                }
             }
         }
 
-        private void giveUp(String why) {
+        private void giveUp(Minecraft mc, String why) {
             debug("skipping item: " + why);
-            ignored.add(item.getId());
-            item = null;
+            if (targetItem != null) ignored.add(targetItem.getId());
+            resetTarget();
+            releaseDirectWalk(mc);
             EngineSelector.current().cancel();
         }
 

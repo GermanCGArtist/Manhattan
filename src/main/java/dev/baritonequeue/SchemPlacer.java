@@ -57,7 +57,7 @@ final class SchemPlacer {
     private Stage stage;
     private Cand chosen;
     private List<Cand> cands;
-    private int ticks, stageTicks, attempts, clicks, stagnant, turned;
+    private int ticks, stageTicks, attempts, clicks, stagnant, turned, walkCooldown;
     private boolean breaking;
     private BlockPos breakPos, lastSpot;
     private final java.util.Set<BlockPos> badSpots = new java.util.HashSet<>();
@@ -75,6 +75,7 @@ final class SchemPlacer {
         placed = 0;
         cur = null;
         stagnant = 0;
+        walkCooldown = 0;
         badSpots.clear();
         Level level = Minecraft.getInstance().level;
         for (int y = 0; y < plan.sy; y++) for (int z = 0; z < plan.sz; z++) for (int x = 0; x < plan.sx; x++) {
@@ -96,6 +97,7 @@ final class SchemPlacer {
         dev.midtown.api.EngineSelector.current().cancel();
         stopBreaking();
         cur = null;
+        walkCooldown = 0;
         queue.clear();
     }
 
@@ -191,12 +193,27 @@ final class SchemPlacer {
         return best;
     }
 
+    private boolean canBreakInClear(Level level, BlockPos pos) {
+        if (pos.equals(cur)) return true;
+        int rx = pos.getX() - plan.min.getX();
+        int ry = pos.getY() - plan.min.getY();
+        int rz = pos.getZ() - plan.min.getZ();
+        if (rx < 0 || rx >= plan.sx || rz < 0 || rz >= plan.sz || ry < 0) return false;
+        if (ry >= plan.sy) return true;
+        int idx = plan.idx(rx, ry, rz);
+        if (plan.excluded.get(idx)) return false;
+        BlockState d = plan.st[idx];
+        return d == null || d.isAir() || (mode != Mode.ADD && !Schem.norm(level.getBlockState(pos)).equals(d));
+    }
+
     /** A spot to stand on from which some candidate is in reach with a clear line; the nearest one to the player. */
     private BlockPos standSpot(Level level, LocalPlayer p) {
         List<Cand> uniq = new ArrayList<>();
         for (Cand c : cands) if (uniq.stream().noneMatch(u -> u.against().equals(c.against()) && u.face() == c.face() && u.hit().equals(c.hit()))) uniq.add(c);
         BlockPos best = null;
         double bestD = Double.MAX_VALUE;
+        BlockPos fallback = null;
+        double fallbackD = Double.MAX_VALUE;
         for (int dx = -4; dx <= 4; dx++) for (int dz = -4; dz <= 4; dz++) for (int dy = -4; dy <= 2; dy++) {
             BlockPos s = cur.offset(dx, dy, dz);
             if (s.equals(cur) || s.above().equals(cur)) continue;
@@ -207,19 +224,30 @@ final class SchemPlacer {
             if (!level.getFluidState(s.above()).isEmpty()) continue;
             if (level.getBlockState(s.below()).getCollisionShape(level, s.below()).isEmpty() && !wet) continue;
             if (badSpots.contains(s)) continue;
+            int rx = s.getX() - plan.min.getX();
+            int rz = s.getZ() - plan.min.getZ();
+            boolean insideFootprint = rx >= 0 && rx < plan.sx && rz >= 0 && rz < plan.sz;
             double d = s.distSqr(p.blockPosition()) + 40.0 * Math.max(0, s.getY() - p.blockPosition().getY())   // climbing is expensive
-                    + (wet ? 12 : 0);
-            if (d >= bestD) continue;
+                    + (wet ? 12 : 0) + (clearing && !insideFootprint ? 100 : 0);
             Vec3 eye = new Vec3(s.getX() + 0.5, s.getY() + 1.62, s.getZ() + 0.5);
-            if (clearing) {   // the way may need digging: only the distance counts
-                if (eye.distanceTo(Vec3.atCenterOf(cur)) <= REACH - 0.7) { best = s; bestD = d; }
+            if (clearing) {
+                if (eye.distanceTo(Vec3.atCenterOf(cur)) <= REACH - 0.5) {
+                    BlockHitResult r = level.clip(new ClipContext(eye, Vec3.atCenterOf(cur), ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, p));
+                    BlockPos hitPos = r.getType() == HitResult.Type.BLOCK ? r.getBlockPos() : cur;
+                    if (canBreakInClear(level, hitPos)) {
+                        if (d < bestD) { best = s; bestD = d; }
+                    } else if (rx >= -1 && rx <= plan.sx && rz >= -1 && rz <= plan.sz && s.getY() >= cur.getY()) {
+                        if (d < fallbackD) { fallback = s; fallbackD = d; }
+                    }
+                }
                 continue;
             }
+            if (d >= bestD) continue;
             for (Cand c : uniq) {
                 if (sees(level, p, eye, c)) { best = s; bestD = d; break; }
             }
         }
-        return best;
+        return best != null ? best : fallback;
     }
 
     // ------------------------------------------------------------------ items
@@ -275,7 +303,7 @@ final class SchemPlacer {
         queue.remove(pick);
         cur = pick;
         want = plan.at(cur.getX() - plan.min.getX(), cur.getY() - plan.min.getY(), cur.getZ() - plan.min.getZ());
-        attempts = clicks = ticks = stageTicks = turned = 0;
+        attempts = clicks = ticks = stageTicks = turned = walkCooldown = 0;
         cands = null;
         chosen = null;
         lastSpot = null;
@@ -311,6 +339,7 @@ final class SchemPlacer {
         }
         ticks++;
         stageTicks++;
+        if (walkCooldown > 0) walkCooldown--;
         if (ticks > 20 * 90) { fail("took too long"); return false; }
         switch (stage) {
             case APPROACH -> {
@@ -324,7 +353,8 @@ final class SchemPlacer {
                         return false;
                     }
                     if (stageTicks > 20 * 40) { fail("could not get into reach to take away what is in the way"); return false; }
-                    if (stageTicks % 100 == 1 && !dev.midtown.api.EngineSelector.current().isBusy()) {
+                    if (walkCooldown == 0 && !dev.midtown.api.EngineSelector.current().isBusy()) {
+                        walkCooldown = 10;
                         dev.midtown.api.EngineSelector.current().goTo(dev.midtown.api.GoalSpec.near(cur, 2));
                     }
                     return false;
@@ -342,20 +372,24 @@ final class SchemPlacer {
                 }
                 if (clearing && p.getEyePosition().distanceTo(Vec3.atCenterOf(cur)) <= REACH - 0.3) {
                     BlockHitResult r = level.clip(new ClipContext(p.getEyePosition(), Vec3.atCenterOf(cur), ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, p));
-                    breakPos = r.getType() == HitResult.Type.BLOCK ? r.getBlockPos() : cur;
-                    if (dev.buildtools.Api.protectedAt(breakPos)) { fail("a safe area is in the way at " + breakPos.toShortString()); return false; }
-                    dev.midtown.api.EngineSelector.current().cancel();
-                    chosen = null;
-                    stage = Stage.BREAK;
-                    stageTicks = 0;
-                    return false;
+                    BlockPos hitPos = r.getType() == HitResult.Type.BLOCK ? r.getBlockPos() : cur;
+                    if (canBreakInClear(level, hitPos)) {
+                        breakPos = hitPos;
+                        if (dev.buildtools.Api.protectedAt(breakPos)) { fail("a safe area is in the way at " + breakPos.toShortString()); return false; }
+                        dev.midtown.api.EngineSelector.current().cancel();
+                        chosen = null;
+                        stage = Stage.BREAK;
+                        stageTicks = 0;
+                        return false;
+                    }
                 }
                 BlockPos feet = p.blockPosition();
                 boolean inside = !clearing && (feet.equals(cur) || feet.above().equals(cur));
                 chosen = inside ? null : clearing ? null : reachable(level, p);
                 if (chosen == null) {
                     if (stageTicks > 20 * 40) { fail("could not get into reach"); return false; }
-                    if (stageTicks % 100 == 1 && !dev.midtown.api.EngineSelector.current().isBusy()) {
+                    if (walkCooldown == 0 && !dev.midtown.api.EngineSelector.current().isBusy()) {
+                        walkCooldown = 10;
                         if (lastSpot != null) badSpots.add(lastSpot);   // it walked there (or tried) and still no reach: not that one
                         BlockPos spot = standSpot(level, p);
                         lastSpot = spot;
@@ -398,7 +432,7 @@ final class SchemPlacer {
                 if (slot < 0) { fail("no " + Schem.itemName(item) + " in the inventory"); return false; }
                 equip(mc, p, slot);
                 if (!aim(p, chosen.yaw(), chosen.pitch())) { turned = 0; return false; }
-                if (++turned < 6) return false;   // let the rotation reach the server before clicking
+                if (++turned < 2) return false;   // let the rotation reach the server before clicking
                 turned = 0;
                 mc.gameMode.useItemOn(p, InteractionHand.MAIN_HAND, new BlockHitResult(chosen.hit(), chosen.face(), chosen.against(), false));
                 p.swing(InteractionHand.MAIN_HAND);

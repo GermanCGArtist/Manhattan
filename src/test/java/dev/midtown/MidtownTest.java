@@ -54,6 +54,8 @@ public class MidtownTest {
         testEdgeTracker();
         testDirectStepPlanner();
         testMidtownCoordinator();
+        testNearGoalConsistency();
+        testStartGoalWithPathActionPreservation();
         testHazardCost();
         testMidtownPlanner();
         testItemSaverSettings();
@@ -829,6 +831,107 @@ public class MidtownTest {
         } finally {
             planner.shutdown();
         }
+    }
+
+    private static void testNearGoalConsistency() {
+        System.out.println("Checking MidtownCoordinator.isGoalSatisfied consistency with MidtownPlanner.NearGoal...");
+        BlockPos target = new BlockPos(10, 64, 10);
+
+        // range = 1: exact, cardinal (1,0,0), vertical (0,1,0) satisfy; diagonals (1,1,0) and (1,0,1) do NOT
+        GoalSpec.Near near1 = GoalSpec.near(target, 1);
+        assertTrue("near(1) exact satisfied", MidtownCoordinator.isGoalSatisfied(near1, 10.5, 64.0, 10.5));
+        assertTrue("near(1) cardinal (1,0,0) satisfied", MidtownCoordinator.isGoalSatisfied(near1, 11.5, 64.0, 10.5));
+        assertTrue("near(1) vertical (0,1,0) satisfied", MidtownCoordinator.isGoalSatisfied(near1, 10.5, 65.0, 10.5));
+        assertFalse("near(1) diagonal (1,1,0) NOT satisfied", MidtownCoordinator.isGoalSatisfied(near1, 11.5, 65.0, 10.5));
+        assertFalse("near(1) diagonal (1,0,1) NOT satisfied", MidtownCoordinator.isGoalSatisfied(near1, 11.5, 64.0, 11.5));
+
+        // range = 2: cardinal (2,0,0) and diagonal (1,0,1) satisfy; (2,1,0) and (2,0,1) do NOT
+        GoalSpec.Near near2 = GoalSpec.near(target, 2);
+        assertTrue("near(2) cardinal (2,0,0) satisfied", MidtownCoordinator.isGoalSatisfied(near2, 12.5, 64.0, 10.5));
+        assertTrue("near(2) diagonal (1,0,1) satisfied", MidtownCoordinator.isGoalSatisfied(near2, 11.5, 64.0, 11.5));
+        assertFalse("near(2) diagonal (2,1,0) NOT satisfied", MidtownCoordinator.isGoalSatisfied(near2, 12.5, 65.0, 10.5));
+        assertFalse("near(2) diagonal (2,0,1) NOT satisfied", MidtownCoordinator.isGoalSatisfied(near2, 12.5, 64.0, 11.5));
+
+        // Cross-check with MidtownPlanner on a flat world: if planner produces edges, coordinator must not short-circuit at start
+        GridWorldSnapshot flat = GridWorldSnapshot.builder(0, 0, 0, 15, 4, 15)
+                .fillFloor(0, BlockKind.SOLID)
+                .build();
+        MidtownPlanner planner = new MidtownPlanner();
+        try {
+            BlockPos goalPos = new BlockPos(5, 1, 5);
+            BlockPos diagStart1 = new BlockPos(6, 1, 6); // (1,0,1) offset from (5,1,5)
+            PlanResult r1 = planner.planSync(flat, CalculationContext.defaults(), diagStart1, GoalSpec.near(goalPos, 1));
+            assertTrue("planner moves from (1,0,1) for near(1)", r1.isComplete() && !r1.edges().isEmpty());
+            assertFalse("coordinator agrees (1,0,1) not satisfied for near(1)",
+                    MidtownCoordinator.isGoalSatisfied(GoalSpec.near(goalPos, 1), 6.5, 1.0, 6.5));
+
+            BlockPos diagStart2 = new BlockPos(7, 1, 6); // (2,0,1) offset from (5,1,5)
+            PlanResult r2 = planner.planSync(flat, CalculationContext.defaults(), diagStart2, GoalSpec.near(goalPos, 2));
+            assertTrue("planner moves from (2,0,1) for near(2)", r2.isComplete() && !r2.edges().isEmpty());
+            assertFalse("coordinator agrees (2,0,1) not satisfied for near(2)",
+                    MidtownCoordinator.isGoalSatisfied(GoalSpec.near(goalPos, 2), 7.5, 1.0, 6.5));
+        } finally {
+            planner.shutdown();
+        }
+    }
+
+    private static void testStartGoalWithPathActionPreservation() {
+        System.out.println("Checking MidtownCoordinator.startGoalWithPath action preservation and LineOfSight tick behavior...");
+        // 1. startGoalWithPath preserves BREAK_THROUGH node even when startPos already satisfies Exact(startPos)
+        MidtownCoordinator coord = new MidtownCoordinator();
+        BlockPos start = new BlockPos(2, 64, 2);
+        BlockPos ore = new BlockPos(3, 64, 2);
+        AtomicBoolean oreSolid = new AtomicBoolean(true);
+        coord.setBlockSolidCheck(pos -> pos.equals(ore) && oreSolid.get());
+
+        PathNode breakNode = new PathNode(start, PathNode.ActionType.BREAK_THROUGH, List.of(ore), false, false, 160);
+        boolean started = coord.startGoalWithPath(GoalSpec.exact(start), start, List.of(breakNode));
+        assertTrue("startGoalWithPath with BREAK_THROUGH started", started);
+        same("status MOVING when path has BREAK_THROUGH", coord.status(), EngineStatus.MOVING);
+        same("path preserved length 1", coord.path().size(), 1);
+        same("path preserved BREAK_THROUGH action", coord.path().get(0).action(), PathNode.ActionType.BREAK_THROUGH);
+
+        TickAction t1 = coord.tick(2.5, 64.0, 2.5);
+        assertTrue("tick 1 emits MoveTo while block is solid", t1 instanceof TickAction.MoveTo);
+        same("status still MOVING while breaking", coord.status(), EngineStatus.MOVING);
+        same("noProgressTicks reset while breaking", coord.edgeTracker().noProgressTicks(), 0);
+
+        oreSolid.set(false);
+        TickAction t2 = coord.tick(2.5, 64.0, 2.5);
+        assertTrue("tick 2 emits Done once block is broken", t2 instanceof TickAction.Done);
+        same("status DONE after block broken", coord.status(), EngineStatus.DONE);
+
+        // 2. Multi-step path [WALK(end), BREAK_THROUGH(end, ore)] does not complete at WALK node before breaking ore
+        oreSolid.set(true);
+        BlockPos walkStart = new BlockPos(0, 64, 2);
+        List<PathNode> multi = List.of(
+                PathNode.walk(new BlockPos(1, 64, 2)),
+                PathNode.walk(start),
+                breakNode
+        );
+        coord.startGoalWithPath(GoalSpec.exact(start), walkStart, multi);
+        same("multi-step MOVING", coord.status(), EngineStatus.MOVING);
+        coord.tick(1.5, 64.0, 2.5); // reaches node 0, advances to node 1
+        coord.tick(2.5, 64.0, 2.5); // reaches node 1 (at start), must advance to node 2 (BREAK_THROUGH), NOT Done
+        same("still MOVING at BREAK_THROUGH node", coord.status(), EngineStatus.MOVING);
+        same("pathIndex at BREAK_THROUGH node", coord.pathIndex(), 2);
+        oreSolid.set(false);
+        TickAction doneMulti = coord.tick(2.5, 64.0, 2.5);
+        assertTrue("multi-step completes after block broken", doneMulti instanceof TickAction.Done);
+
+        // 3. LineOfSight goal does not short-circuit before reaching the end of the planned path
+        BlockPos losTarget = new BlockPos(4, 64, 2);
+        List<PathNode> losPath = List.of(
+                PathNode.walk(new BlockPos(2, 64, 2)),
+                PathNode.walk(new BlockPos(3, 64, 2))
+        );
+        coord.startGoalWithPath(GoalSpec.lineOfSight(losTarget, 4.5), new BlockPos(1, 64, 2), losPath);
+        TickAction losMid = coord.tick(2.5, 64.0, 2.5); // within 4.5 range, but pathIndex < path.size()
+        assertTrue("LineOfSight does not short-circuit mid-path", losMid instanceof TickAction.MoveTo);
+        same("LineOfSight still MOVING mid-path", coord.status(), EngineStatus.MOVING);
+        TickAction losEnd = coord.tick(3.5, 64.0, 2.5); // reaches final waypoint (pathIndex == path.size())
+        assertTrue("LineOfSight completes at end of path within range", losEnd instanceof TickAction.Done);
+        same("LineOfSight DONE at end of path", coord.status(), EngineStatus.DONE);
     }
 
     // ------------------------------------------------------------------ Assertion Helpers

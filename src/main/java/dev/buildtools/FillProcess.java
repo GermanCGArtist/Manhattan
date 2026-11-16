@@ -5,10 +5,12 @@ import dev.midtown.api.GoalSpec;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
@@ -16,6 +18,7 @@ import net.minecraft.world.phys.Vec3;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -23,11 +26,12 @@ import java.util.Set;
  * Layer by layer from the bottom: put a source on every second cell, wait for that to spread, then place the remaining gaps directly.
  */
 public final class FillProcess extends Feature {
-    private enum State { IDLE, FILLING }
+    private enum State { IDLE, SEALING, FILLING }
 
     private static final int MAX_CELLS = 30_000;
 
     private State state = State.IDLE;
+    private State suspendedIn = State.IDLE;
     private Boolean breakBefore;   // allowBreak while a fill runs (restored afterwards)
 
     private void setState(State next) {
@@ -41,6 +45,9 @@ public final class FillProcess extends Feature {
             placeHigh(false);
             stopWalking();
             EngineSelector.current().cancel();
+            badStands.clear();
+            lastStandGoal = null;
+            noStandDoneTicks = 0;
         }
         state = next;
     }
@@ -57,11 +64,50 @@ public final class FillProcess extends Feature {
     private int topY;              // the highest cell to fill
     private final Set<BlockPos> targets = new HashSet<>();     // cells that must become water sources
     private final Set<BlockPos> skipped = new HashSet<>();     // cells we could not reach
+    private final Set<BlockPos> seal = new HashSet<>();        // open side/bottom cells to seal before flooding
+    private final Set<BlockPos> sealSkipped = new HashSet<>();
+    private final Set<BlockPos> badStands = new HashSet<>();
+    private BlockPos lastStandGoal = null;
+    private int noStandDoneTicks = 0;
     private String failure;     // why the last fill stopped (null while it runs or after a success)
 
     private final Placer placer = new Placer();
     private BlockPos cur;
     private Placer.Mode curMode;
+
+    private void setCur(BlockPos next, Placer.Mode mode) {
+        if (!Objects.equals(cur, next)) {
+            badStands.clear();
+            lastStandGoal = null;
+            noStandDoneTicks = 0;
+        }
+        cur = next;
+        curMode = mode;
+    }
+
+    private void handleActionFailed(String reason) {
+        if (cur == null) return;
+        if (state == State.SEALING) {
+            sealSkipped.add(cur);
+            Util.warn("fill-seal", "Could not seal " + cur.toShortString() + ": " + reason);
+            setCur(null, null);
+            return;
+        }
+        if (stiltStage > 0) {
+            Util.warn("fill-stilt", "Stilt step failed: " + reason);
+            setCur(null, null);
+            stiltNext(false);
+            return;
+        }
+        if (curMode == Placer.Mode.PICKUP) {
+            badSources.add(cur);
+            Util.warn("fill-scoop", "Could not scoop at " + cur.toShortString() + ": " + reason + "; trying another source.");
+        } else {
+            skipped.add(cur);
+            Util.warn("fill-fail", "Skipping a cell: " + reason);
+        }
+        setCur(null, null);
+    }
     private int waitTicks, pass, layerY, noPlaceable, budget, placed, scooped, minX, minZ;
     private boolean refilling;   // empty-handed: scooping up buckets at a source before walking back to the cells
     private int flowWaits;       // ticks spent waiting for a new source to form between two placed sources
@@ -132,14 +178,48 @@ public final class FillProcess extends Feature {
             return;
         }
 
+        List<BlockPos> sealList = computeSeal(level);
+        if (!sealList.isEmpty()) {
+            int have = Util.countThrowaway(p);
+            if (sealList.size() > have) {
+                Util.msg("Sealing the open sides needs " + sealList.size() + " throwaway blocks, you have " + have + ".");
+                return;
+            }
+            seal.clear();
+            seal.addAll(sealList);
+            sealSkipped.clear();
+            setCur(null, null);
+            topY = Integer.MIN_VALUE;
+            for (BlockPos t : targets) topY = Math.max(topY, t.getY());
+            setState(State.SEALING);
+            Util.msg("Sealing " + seal.size() + " open side" + (seal.size() == 1 ? "" : "s") + " before filling " + targets.size() + " cells...");
+            return;
+        }
+
         Util.msg("Filling " + targets.size() + " cells with water...");
         beginFilling();
     }
 
+    private List<BlockPos> computeSeal(Level level) {
+        Set<BlockPos> seen = new HashSet<>();
+        List<BlockPos> out = new ArrayList<>();
+        Direction[] dirs = {Direction.DOWN, Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST};
+        for (BlockPos t : targets) {
+            for (Direction d : dirs) {
+                BlockPos n = t.relative(d);
+                if (targets.contains(n) || !seen.add(n)) continue;
+                if (!level.hasChunkAt(n)) continue;
+                if (Util.isOpen(level, n)) out.add(n);
+            }
+        }
+        return out;
+    }
+
     void cancel() {
         setState(State.IDLE);
-        cur = null;
+        setCur(null, null);
         suspended = false;
+        suspendedIn = State.IDLE;
     }
 
     private boolean suspended;      // paused by an "on" block: carry on, do not start over
@@ -148,6 +228,7 @@ public final class FillProcess extends Feature {
     void suspendRun() {
         if (state == State.IDLE) return;
         suspended = true;
+        suspendedIn = state;
         setState(State.IDLE);
     }
 
@@ -158,15 +239,20 @@ public final class FillProcess extends Feature {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.level == null) return "Not in a world.";
         failure = null;
-        setState(State.FILLING);
+        State resumeState = suspendedIn == State.SEALING ? State.SEALING : State.FILLING;
+        suspendedIn = State.IDLE;
+        setState(resumeState);
         waitTicks = 0;
         noPlaceable = 0;
         flowWaits = 0;
-        cur = null;
+        setCur(null, null);
+        if (resumeState == State.SEALING) {
+            Util.msg("Carrying on sealing " + seal.size() + " open side(s) before filling.");
+            return null;
+        }
         if (stiltStage > 0 && stilt != null) {   // a temporary block may be standing: take it away first
             stiltStage = 3;
-            cur = stilt;
-            curMode = Placer.Mode.BREAK;
+            setCur(stilt, Placer.Mode.BREAK);
             placer.start(stilt, Placer.Mode.BREAK);
         }
         int left = 0;
@@ -177,7 +263,7 @@ public final class FillProcess extends Feature {
 
     @Override
     void tick() {
-        if (state != State.FILLING) return;
+        if (state == State.IDLE) return;
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer p = mc.player;
         if (p == null || mc.level == null || mc.gameMode == null) { setState(State.IDLE); return; }
@@ -190,7 +276,7 @@ public final class FillProcess extends Feature {
         setState(State.FILLING);
         topY = Integer.MIN_VALUE;
         for (BlockPos t : targets) topY = Math.max(topY, t.getY());
-        cur = null;
+        setCur(null, null);
         waitTicks = 0;
         pass = 0;
         layerY = Integer.MIN_VALUE;
@@ -212,7 +298,7 @@ public final class FillProcess extends Feature {
     @Override
     boolean active() {
         if (state != State.IDLE && Minecraft.getInstance().player == null) setState(State.IDLE);
-        return state == State.FILLING;
+        return state != State.IDLE;
     }
 
     @Override
@@ -221,15 +307,20 @@ public final class FillProcess extends Feature {
     }
 
     private void stepInternal(Minecraft mc, LocalPlayer p) {
-        if (state != State.FILLING || p == null || mc.level == null || mc.gameMode == null) return;
+        if (state == State.IDLE || p == null || mc.level == null || mc.gameMode == null) return;
         Level level = mc.level;
+
+        if (state == State.SEALING) {
+            stepSealing(mc, p, level);
+            return;
+        }
 
         if (waitTicks > 0) {
             waitTicks--;
             return;
         }
 
-        placeHigh(p.getY() >= topY + 1);
+        placeHigh(p.getY() >= topY);
 
         // never drown: with the head under water and half the air gone, come up first
         if (p.isUnderWater() && p.getAirSupply() < p.getMaxAirSupply() / 2) {
@@ -240,7 +331,7 @@ public final class FillProcess extends Feature {
 
         // a source picked for a scoop that is gone meanwhile
         if (cur != null && curMode == Placer.Mode.PICKUP && stiltStage == 0 && !Util.isSourceWater(level.getBlockState(cur))) {
-            cur = null;
+            setCur(null, null);
             return;
         }
 
@@ -250,27 +341,14 @@ public final class FillProcess extends Feature {
                 case DONE -> {
                     if (curMode == Placer.Mode.WATER) placed++;
                     if (curMode == Placer.Mode.PICKUP) scooped++;
-                    cur = null;
+                    setCur(null, null);
                     if (stiltStage > 0) {
                         stiltNext(true);
                     }
                     return;
                 }
                 case FAILED -> {
-                    if (stiltStage > 0) {
-                        Util.warn("fill-stilt", "Stilt step failed: " + placer.failure());
-                        cur = null;
-                        stiltNext(false);
-                        return;
-                    }
-                    if (curMode == Placer.Mode.PICKUP) {
-                        badSources.add(cur);
-                        Util.warn("fill-scoop", "Could not scoop at " + cur.toShortString() + ": " + placer.failure() + "; trying another source.");
-                    } else {
-                        skipped.add(cur);
-                        Util.warn("fill-fail", "Skipping a cell: " + placer.failure());
-                    }
-                    cur = null;
+                    handleActionFailed(placer.failure());
                     return;
                 }
                 default -> {
@@ -317,8 +395,7 @@ public final class FillProcess extends Feature {
             if (d < plugD) { plugD = d; plug = c; }
         }
         if (plug != null) {
-            cur = plug;
-            curMode = Placer.Mode.BREAK;
+            setCur(plug, Placer.Mode.BREAK);
             placer.start(plug, Placer.Mode.BREAK);
             return;
         }
@@ -341,8 +418,7 @@ public final class FillProcess extends Feature {
                 stiltTop = top;
                 stilt = top.below();
                 stiltStage = 1;
-                cur = stilt;
-                curMode = Placer.Mode.BLOCK;
+                setCur(stilt, Placer.Mode.BLOCK);
                 placer.start(stilt, Placer.Mode.BLOCK);
                 return;
             }
@@ -398,9 +474,88 @@ public final class FillProcess extends Feature {
             double d = c.distSqr(p.blockPosition());
             if (d < best) { best = d; next = c; }
         }
-        cur = next;
-        curMode = Placer.Mode.WATER;
+        setCur(next, Placer.Mode.WATER);
         placer.start(next, Placer.Mode.WATER);
+    }
+
+    private void stepSealing(Minecraft mc, LocalPlayer p, Level level) {
+        if (cur != null) {
+            if (!Util.isOpen(level, cur)) {
+                setCur(null, null);
+                return;
+            }
+            if (p.getBoundingBox().intersects(new AABB(cur))) {
+                if (standNear(level, p, cur) == null && !EngineSelector.current().isBusy()) {
+                    sealSkipped.add(cur);
+                    setCur(null, null);
+                    return;
+                }
+                walkTo(cur);
+                return;
+            }
+            switch (placer.tick(mc, p)) {
+                case DONE -> {
+                    setCur(null, null);
+                    return;
+                }
+                case FAILED -> {
+                    handleActionFailed(placer.failure());
+                    return;
+                }
+                default -> {
+                    if (placer.canReach(mc, p)) {
+                        stopWalking();
+                        return;
+                    }
+                    walkTo(cur);
+                    return;
+                }
+            }
+        }
+
+        if (Util.countThrowaway(p) == 0) {
+            Util.warn("fill-seal-blocks", "Ran out of throwaway blocks while sealing open sides.");
+            beginFilling();
+            return;
+        }
+
+        seal.removeIf(s -> !level.hasChunkAt(s) || !Util.isOpen(level, s) || sealSkipped.contains(s));
+        if (seal.isEmpty()) {
+            Util.msg("Sealed open sides; filling " + targets.size() + " cells with water...");
+            beginFilling();
+            return;
+        }
+
+        BlockPos next = null;
+        int bestY = Integer.MAX_VALUE;
+        boolean bestClickable = false;
+        boolean bestClear = false;
+        double bestDist = Double.MAX_VALUE;
+        AABB pBox = p.getBoundingBox();
+        for (BlockPos s : seal) {
+            boolean clickable = Placer.hasClickable(level, s);
+            boolean clear = !pBox.intersects(new AABB(s));
+            int y = s.getY();
+            double d = s.distSqr(p.blockPosition());
+            if (next == null
+                    || (clickable && !bestClickable)
+                    || (clickable == bestClickable && (y < bestY
+                    || (y == bestY && ((clear && !bestClear)
+                    || (clear == bestClear && d < bestDist)))))) {
+                next = s;
+                bestY = y;
+                bestClickable = clickable;
+                bestClear = clear;
+                bestDist = d;
+            }
+        }
+        if (next == null || !bestClickable) {
+            Util.msg("Finished sealing reachable open sides; filling " + targets.size() + " cells with water...");
+            beginFilling();
+            return;
+        }
+        setCur(next, Placer.Mode.BLOCK);
+        placer.start(next, Placer.Mode.BLOCK);
     }
 
     /**
@@ -418,8 +573,7 @@ public final class FillProcess extends Feature {
             BlockPos source = findSource(level, p);
             if (source != null) {
                 flowWaits = 0;
-                cur = source;
-                curMode = Placer.Mode.PICKUP;
+                setCur(source, Placer.Mode.PICKUP);
                 placer.start(source, Placer.Mode.PICKUP, water);
                 return true;
             }
@@ -460,15 +614,13 @@ public final class FillProcess extends Feature {
             case 1 -> {
                 if (!ok) { skipped.add(stiltTop); stiltStage = 0; return; }
                 stiltStage = 2;
-                cur = stiltTop;
-                curMode = Placer.Mode.WATER;
+                setCur(stiltTop, Placer.Mode.WATER);
                 placer.start(stiltTop, Placer.Mode.WATER);
             }
             case 2 -> {
                 if (!ok) skipped.add(stiltTop);
                 stiltStage = 3;
-                cur = stilt;
-                curMode = Placer.Mode.BREAK;
+                setCur(stilt, Placer.Mode.BREAK);
                 placer.start(stilt, Placer.Mode.BREAK);
             }
             default -> {
@@ -517,6 +669,11 @@ public final class FillProcess extends Feature {
     private void walkTo(BlockPos pos) {
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer p = mc.player;
+        if (lastStandGoal != null && p != null && !EngineSelector.current().isBusy() && !placer.canReach(mc, p)) {
+            badStands.add(lastStandGoal);
+            badStands.add(p.blockPosition());
+            lastStandGoal = null;
+        }
         BlockPos stand = mc.level == null || p == null ? null : standNear(mc.level, p, pos);
         if (stand != null && p != null && manualTicks > 0 && Vec3.atBottomCenterOf(stand).distanceTo(p.position()) < 8) {
             manualTicks--;
@@ -535,12 +692,20 @@ public final class FillProcess extends Feature {
         }
         if (walkingByHand) stopWalking();
         if (stand != null) {
+            noStandDoneTicks = 0;
             if (!EngineSelector.current().isBusy()) {
+                lastStandGoal = stand;
                 EngineSelector.current().goTo(GoalSpec.exact(stand));
             }
         } else {
             if (!EngineSelector.current().isBusy()) {
-                EngineSelector.current().goTo(GoalSpec.near(pos, 3));
+                lastStandGoal = null;
+                if (noStandDoneTicks == 0) {
+                    EngineSelector.current().goTo(GoalSpec.lineOfSight(pos, Placer.REACH - 0.4));
+                }
+                if (++noStandDoneTicks > 60) {
+                    handleActionFailed("no reachable stand spot");
+                }
             }
         }
     }
@@ -562,10 +727,11 @@ public final class FillProcess extends Feature {
     private BlockPos standNear(Level level, LocalPlayer p, BlockPos cell) {
         BlockPos best = null;
         double bestD = Double.MAX_VALUE;
-        for (int dx = -4; dx <= 4; dx++) {
+        for (int dx = -5; dx <= 5; dx++) {
             for (int dy = -3; dy <= 3; dy++) {
-                for (int dz = -4; dz <= 4; dz++) {
+                for (int dz = -5; dz <= 5; dz++) {
                     BlockPos feet = cell.offset(dx, dy, dz);
+                    if (badStands.contains(feet)) continue;
                     if (Util.isSolid(level, feet) || Util.isSolid(level, feet.above())) continue;
                     if (!level.getFluidState(feet.above()).isEmpty()) continue;
                     boolean feetWet = !level.getFluidState(feet).isEmpty();
@@ -582,6 +748,11 @@ public final class FillProcess extends Feature {
                     if (!ok) continue;
                     double d = feet.distSqr(p.blockPosition());
                     if (feetWet) d += swim ? 20 : 6;
+                    if (state == State.SEALING) {
+                        if (targets.contains(feet) || targets.contains(feet.above()) || feet.getY() <= topY) d += 250.0;
+                    } else if (targets.contains(feet) && level.getFluidState(feet).isEmpty()) {
+                        d += 250.0;
+                    }
                     if (d < bestD) { bestD = d; best = feet; }
                 }
             }
@@ -617,7 +788,7 @@ public final class FillProcess extends Feature {
 
     private void finish() {
         setState(State.IDLE);
-        cur = null;
+        setCur(null, null);
         Level level = Minecraft.getInstance().level;
         int dry = 0;
         BlockPos firstDry = null;
@@ -632,7 +803,7 @@ public final class FillProcess extends Feature {
 
     private void abort(String why) {
         setState(State.IDLE);
-        cur = null;
+        setCur(null, null);
         failure = why;
         Util.msg("Fill stopped: " + why);
     }
@@ -645,7 +816,7 @@ public final class FillProcess extends Feature {
     public void onLostControl() {
         if (state != State.IDLE) {
             setState(State.IDLE);
-            cur = null;
+            setCur(null, null);
         }
     }
 

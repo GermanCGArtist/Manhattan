@@ -1,0 +1,163 @@
+{
+  "name": "midtown-pillars-floating",
+  "instances": [
+    {
+      "id": "nav_pillar_up",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        {
+          "modrinth": {
+            "project_id_or_slug": "fabric-api",
+            "version_id": null
+          }
+        },
+        {
+          "local_path": "build/libs/baritonequeue-2.12.1.jar"
+        },
+        {
+          "local_path": "build/libs/manhattan-testbridge-2.12.1.jar"
+        }
+      ],
+      "account": {
+        "offline": {
+          "username": "T_nav_pillar_up"
+        }
+      },
+      "ram_mb": 4096,
+      "cpu_cores": 2,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=nav_pillar_up"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=nav_pillar_up pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=nav_pillar_up pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "nav_pillar_bridge",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        {
+          "modrinth": {
+            "project_id_or_slug": "fabric-api",
+            "version_id": null
+          }
+        },
+        {
+          "local_path": "build/libs/baritonequeue-2.12.1.jar"
+        },
+        {
+          "local_path": "build/libs/manhattan-testbridge-2.12.1.jar"
+        }
+      ],
+      "account": {
+        "offline": {
+          "username": "T_nav_pillar_bri"
+        }
+      },
+      "ram_mb": 4096,
+      "cpu_cores": 2,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=nav_pillar_bridge"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=nav_pillar_bridge pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=nav_pillar_bridge pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "mine_pillars_floating",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        {
+          "modrinth": {
+            "project_id_or_slug": "fabric-api",
+            "version_id": null
+          }
+        },
+        {
+          "local_path": "build/libs/baritonequeue-2.12.1.jar"
+        },
+        {
+          "local_path": "build/libs/manhattan-testbridge-2.12.1.jar"
+        }
+      ],
+      "account": {
+        "offline": {
+          "username": "T_mine_pillars_f"
+        }
+      },
+      "ram_mb": 4096,
+      "cpu_cores": 2,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=mine_pillars_floating"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=mine_pillars_floating pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=mine_pillars_floating pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "clear_pillars_floating",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        {
+          "modrinth": {
+            "project_id_or_slug": "fabric-api",
+            "version_id": null
+          }
+        },
+        {
+          "local_path": "build/libs/baritonequeue-2.12.1.jar"
+        },
+        {
+          "local_path": "build/libs/manhattan-testbridge-2.12.1.jar"
+        }
+      ],
+      "account": {
+        "offline": {
+          "username": "T_clear_pillars_"
+        }
+      },
+      "ram_mb": 4096,
+      "cpu_cores": 2,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=clear_pillars_floating"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=clear_pillars_floating pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=clear_pillars_floating pass=false|FATAL"
+        }
+      }
+    }
+  ],
+  "server": null,
+  "timeout_secs": 720
+}

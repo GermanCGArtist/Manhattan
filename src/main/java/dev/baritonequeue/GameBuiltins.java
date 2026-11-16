@@ -506,27 +506,8 @@ final class GameBuiltins {
                     });
                 }, "drain", l));
         def(g, "flood", 0, 0, "flood()", "fill the selection WITH water, using buckets (seals the open sides first)", (in, a, l) ->
-                in.await(() -> {
-                    List<int[]> boxes = Areas.read();
-                    if (!ChunkGrid.shouldChunk(boxes, cfg.chunkSize, cfg.chunkEnabled)) {
-                        return floodFeature();
-                    }
-                    return new ChunkRunner(new ChunkRunner.ChunkWorkload() {
-                        @Override public String actionKind() { return "flood"; }
-                        @Override public List<int[]> fullBounds() { return boxes; }
-                        @Override public Actions.Action createChunkAction(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
-                            Minecraft mc = Minecraft.getInstance();
-                            if (mc != null && mc.level != null && FillProcess.countUnflooded(mc.level, clippedBoxes) == 0) {
-                                return new Actions.Now(() -> true);
-                            }
-                            return floodFeature();
-                        }
-                        @Override public int countRemaining(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
-                            Minecraft mc = Minecraft.getInstance();
-                            return mc == null || mc.level == null ? 0 : FillProcess.countUnflooded(mc.level, clippedBoxes);
-                        }
-                    });
-                }, "flood", l));
+                // never chunked: sealing the open sides per chunk would wall off the water at chunk boundaries
+                in.await(GameBuiltins::floodFeature, "flood", l));
         def(g, "collect_scaffold", 0, 0, "collect_scaffold()", "take down the blocks Baritone placed to reach things, and pick them up", (in, a, l) ->
                 in.await(() -> new Actions.Feature(dev.buildtools.Api::collectScaffoldNow, dev.buildtools.Api::collectingScaffold, dev.buildtools.Api::stopCollectingScaffold, () -> true), "collect_scaffold", l));
 

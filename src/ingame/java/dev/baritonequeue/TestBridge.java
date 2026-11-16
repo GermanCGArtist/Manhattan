@@ -729,6 +729,21 @@ public class TestBridge implements ClientModInitializer {
                 cmds.add("fill 145 -61 96 145 -61 104 water");
                 cmds.add("fill 160 -61 98 162 -61 102 lava");
             }
+            case "mine_pillars_floating", "clear_pillars_floating" -> {
+                cmds.add("fill 90 -55 80 160 -50 130 air");
+                cmds.add("fill 106 -60 98 106 -54 98 stone");
+                cmds.add("fill 110 -60 103 110 -57 103 stone");
+                cmds.add("setblock 108 -55 101 stone");
+                cmds.add("setblock 112 -53 97 stone");
+                cmds.add("setblock 104 -57 104 stone");
+                cmds.add("fill 113 -56 101 113 -55 101 stone");
+                cmds.add("give @s diamond_pickaxe 1");
+                cmds.add("give @s cobblestone 64");
+            }
+            case "nav_pillar_up" -> {
+                cmds.add("fill 90 -55 80 160 -50 130 air");
+                cmds.add("give @s cobblestone 64");
+            }
             case "nav_pillar_bridge" -> {
                 cmds.add("fill 105 -63 96 124 -61 104 air");
                 cmds.add("fill 128 -60 100 128 -55 100 stone");
@@ -899,6 +914,11 @@ public class TestBridge implements ClientModInitializer {
                     mc.level.getBlockState(new BlockPos(98, -60, 100)).is(net.minecraft.world.level.block.Blocks.CHEST);
             case "nav_flat_obstacle" ->
                     mc.level.getBlockState(new BlockPos(115, -60, 100)).is(net.minecraft.world.level.block.Blocks.STONE);
+            case "nav_pillar_up" ->
+                    mc.player != null && mc.player.blockPosition().equals(new BlockPos(100, -60, 100))
+                            && mc.level.getBlockState(new BlockPos(100, -61, 100)).is(net.minecraft.world.level.block.Blocks.GRASS_BLOCK);
+            case "mine_pillars_floating", "clear_pillars_floating" ->
+                    mc.level.getBlockState(new BlockPos(112, -53, 97)).is(net.minecraft.world.level.block.Blocks.STONE);
             case "nav_pillar_bridge" ->
                     mc.level.getBlockState(new BlockPos(128, -55, 100)).is(net.minecraft.world.level.block.Blocks.STONE);
             case "interrupt_mid_action" ->
@@ -941,6 +961,33 @@ public class TestBridge implements ClientModInitializer {
                     "timeout(180)",
                     "disable()",
                     "goto(pos(180, -60, 100))"
+            );
+            case "nav_pillar_up" -> List.of(
+                    "timeout(120)",
+                    "disable()",
+                    "goto(pos(108, -54, 100))"
+            );
+            case "mine_pillars_floating" -> List.of(
+                    "timeout(240)",
+                    "disable()",
+                    "select(pos(103, -60, 96), pos(114, -52, 105))",
+                    "mine(\"stone\")",
+                    "left = count_blocks(\"stone\")",
+                    "log(\"PILLAR_TEST stone_left=\", left)",
+                    "if left > 0",
+                    "  error(\"stone left: \" + str(left))",
+                    "end"
+            );
+            case "clear_pillars_floating" -> List.of(
+                    "timeout(240)",
+                    "disable()",
+                    "select(pos(103, -60, 96), pos(114, -52, 105))",
+                    "clear_area()",
+                    "left = count_blocks(\"stone\")",
+                    "log(\"PILLAR_TEST stone_left=\", left)",
+                    "if left > 0",
+                    "  error(\"stone left: \" + str(left))",
+                    "end"
             );
             case "nav_pillar_bridge" -> List.of(
                     "timeout(180)",

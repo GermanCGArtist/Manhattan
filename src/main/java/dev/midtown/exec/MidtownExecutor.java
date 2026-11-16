@@ -1,22 +1,18 @@
 package dev.midtown.exec;
 
+import dev.midtown.plan.CalculationContext;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.Options;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
-import net.minecraft.tags.BlockTags;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.inventory.ContainerInput;
-import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.level.EmptyBlockGetter;
-import net.minecraft.world.level.block.Block;
-import net.minecraft.world.level.block.EntityBlock;
-import net.minecraft.world.level.block.FallingBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
@@ -69,7 +65,7 @@ public final class MidtownExecutor {
                     BlockState state = mc.level.getBlockState(tb);
                     if (!state.isAir() && state.getFluidState().isEmpty()) {
                         aimBlock = tb;
-                        selectBestTool(player, state, itemSaverThreshold);
+                        selectBestTool(mc, player, state, itemSaverThreshold);
                         attack = true;
                         blockBreakingWait = true;
                         break;
@@ -272,27 +268,72 @@ public final class MidtownExecutor {
         this.itemSaverThreshold = itemSaverThreshold;
     }
 
-    /** Selects the fastest tool in hotbar {@code 0..8} for breaking {@code state}, skipping low-durability tools when {@code itemSaverThreshold > 0}. */
-    private static void selectBestTool(LocalPlayer player, BlockState state, int itemSaverThreshold) {
+    /**
+     * Selects the fastest tool in inventory {@code 0..35} for breaking {@code state}, skipping
+     * low-durability tools when {@code itemSaverThreshold > 0} and swapping from main inventory
+     * into the hotbar if needed.
+     */
+    private static void selectBestTool(Minecraft mc, LocalPlayer player, BlockState state, int itemSaverThreshold) {
         Inventory inv = player.getInventory();
         int cur = inv.getSelectedSlot();
         int safeCur = (cur >= 0 && cur < 9) ? cur : 0;
         int bestSlot = -1;
-        float bestSpeed = -1.0f;
-        for (int i = 0; i < 9; i++) {
+        float bestSpeed = 1.0f;
+        for (int i = 0; i < 36; i++) {
             ItemStack stack = inv.getItem(i);
-            if (isLowDurabilityTool(stack, itemSaverThreshold)) {
+            if (stack.isEmpty() || isLowDurabilityTool(stack, itemSaverThreshold)) {
                 continue;
             }
             float speed = stack.getDestroySpeed(state);
-            if (speed > bestSpeed || (speed == bestSpeed && i == safeCur)) {
+            if (speed > bestSpeed + 0.01f
+                    || (i < 9 && bestSlot >= 9 && speed >= bestSpeed - 0.01f && speed > 1.0f)
+                    || (i == safeCur && speed >= bestSpeed - 0.01f && speed > 1.0f)) {
                 bestSpeed = speed;
                 bestSlot = i;
             }
         }
-        if (bestSlot != -1 && bestSlot != cur) {
-            inv.setSelectedSlot(bestSlot);
+        if (bestSlot < 0 || bestSpeed <= 1.0f) {
+            ItemStack curStack = inv.getItem(safeCur);
+            if (isLowDurabilityTool(curStack, itemSaverThreshold)) {
+                for (int i = 0; i < 9; i++) {
+                    ItemStack stack = inv.getItem(i);
+                    if (stack.isEmpty() || !stack.isDamageableItem()) {
+                        inv.setSelectedSlot(i);
+                        return;
+                    }
+                }
+            }
+            return;
         }
+        if (bestSlot < 9) {
+            if (bestSlot != cur) {
+                inv.setSelectedSlot(bestSlot);
+            }
+            return;
+        }
+        if (mc.gameMode == null || player.containerMenu != player.inventoryMenu) {
+            return;
+        }
+        int targetHotbar = pickHotbarSwapSlot(inv, safeCur);
+        mc.gameMode.handleContainerInput(
+                player.inventoryMenu.containerId, bestSlot, targetHotbar, ContainerInput.SWAP, player);
+        inv.setSelectedSlot(targetHotbar);
+    }
+
+    private static int pickHotbarSwapSlot(Inventory inv, int selected) {
+        for (int i = 0; i < 9; i++) {
+            if (inv.getItem(i).isEmpty()) {
+                return i;
+            }
+        }
+        for (int i = 0; i < 9; i++) {
+            if (i == selected) continue;
+            ItemStack stack = inv.getItem(i);
+            if (!stack.has(DataComponents.FOOD) && !stack.isDamageableItem()) {
+                return i;
+            }
+        }
+        return (selected + 1) % 9;
     }
 
     private static boolean isLowDurabilityTool(ItemStack stack, int threshold) {
@@ -338,17 +379,7 @@ public final class MidtownExecutor {
     }
 
     private static boolean isExpendableBlock(ItemStack stack) {
-        if (stack.isEmpty() || !(stack.getItem() instanceof BlockItem bi)) return false;
-        Block b = bi.getBlock();
-        if (b instanceof FallingBlock || b instanceof EntityBlock) return false;
-        BlockState state = b.defaultBlockState();
-        if (state.is(BlockTags.FENCES) || state.is(BlockTags.WALLS)
-                || state.is(BlockTags.DOORS) || state.is(BlockTags.TRAPDOORS)
-                || state.is(BlockTags.SLABS) || state.is(BlockTags.STAIRS)
-                || state.is(BlockTags.CAMPFIRES) || state.is(BlockTags.FIRE)) {
-            return false;
-        }
-        return state.isCollisionShapeFullBlock(EmptyBlockGetter.INSTANCE, BlockPos.ZERO);
+        return CalculationContext.isExpendableBlockItem(stack);
     }
 
     private static float computeDesiredPitch(LocalPlayer player, PathNode target, BlockPos aimBlock, double horizDist) {

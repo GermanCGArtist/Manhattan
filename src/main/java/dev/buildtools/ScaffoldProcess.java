@@ -1,23 +1,31 @@
 package dev.buildtools;
 
+import dev.baritonequeue.ClearProcess;
 import dev.midtown.api.EngineSelector;
+import dev.midtown.api.EngineStatus;
 import dev.midtown.api.GoalSpec;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.Item;
-import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import static dev.buildtools.Config.cfg;
@@ -32,12 +40,20 @@ final class ScaffoldProcess extends Feature {
     private static final int GATHER_TIMEOUT = 20 * 6;
 
     private boolean working;
+    private boolean gathering;
+    private boolean sweepingCluster;
+    private boolean waitingForPath;
+    private boolean breakStarted;
+    private boolean walkingToItem;
     private BlockPos target;
     private ItemEntity item;
-    private int targetTicks, itemTicks, cooldown, check, broken, skipped;
+    private BlockPos itemGoalPos;
+    private int targetTicks, pathAttempts, itemTicks, itemAttempt, cooldown, check, broken, skipped;
     private final Set<Item> dropTypes = new HashSet<>();
     private final Set<Integer> ignoredItems = new HashSet<>();
     private final Set<BlockPos> announced = new HashSet<>();
+    private final Set<BlockPos> sweepSkipped = new HashSet<>();
+    private final List<BlockPos> brokenPositions = new ArrayList<>();
 
     ScaffoldProcess() {
         super("BuildTools scaffolding", 13);
@@ -83,12 +99,33 @@ final class ScaffoldProcess extends Feature {
             return;
         }
         setWorking(true);
-        target = null;
+        resetTargetState();
+        gathering = false;
+        sweepingCluster = false;
         item = null;
+        itemGoalPos = null;
+        itemTicks = 0;
+        itemAttempt = 0;
         broken = skipped = 0;
         dropTypes.clear();
         ignoredItems.clear();
+        sweepSkipped.clear();
+        brokenPositions.clear();
         Util.msg((auto ? "Enough scaffolding piled up (" : "Collecting scaffolding (") + n + " blocks)" + (auto ? ": taking it down now." : "..."));
+    }
+
+    private void resetTargetState() {
+        target = null;
+        targetTicks = 0;
+        pathAttempts = 0;
+        waitingForPath = false;
+        breakStarted = false;
+    }
+
+    private void releaseWalkKey(Minecraft mc) {
+        if (!walkingToItem) return;
+        if (mc != null && mc.options != null) mc.options.keyUp.setDown(false);
+        walkingToItem = false;
     }
 
     private Boolean breakBefore;
@@ -98,18 +135,27 @@ final class ScaffoldProcess extends Feature {
         working = on;
         if (on) {
             breakBefore = RegionRules.setOwnBreak(false);
-        } else if (breakBefore != null) {
-            RegionRules.setOwnBreak(breakBefore);
-            breakBefore = null;
-            EngineSelector.current().cancel();
+        } else {
+            releaseWalkKey(Minecraft.getInstance());
+            if (breakBefore != null) {
+                RegionRules.setOwnBreak(breakBefore);
+                breakBefore = null;
+                EngineSelector.current().cancel();
+            }
         }
     }
 
     void cancel() {
         setWorking(false);
-        target = null;
+        resetTargetState();
+        gathering = false;
+        sweepingCluster = false;
         item = null;
+        itemGoalPos = null;
+        sweepSkipped.clear();
+        brokenPositions.clear();
         Minecraft mc = Minecraft.getInstance();
+        releaseWalkKey(mc);
         if (mc.gameMode != null) mc.gameMode.stopDestroyBlock();
         EngineSelector.current().cancel();
     }
@@ -128,130 +174,365 @@ final class ScaffoldProcess extends Feature {
 
         if (target != null && !Scaffold.valid(level, target)) {
             broken++;
-            target = null;
+            brokenPositions.add(target.immutable());
+            resetTargetState();
         }
-        if (target != null && !level.getBlockState(target).isAir() && !announced.contains(target)) {
+        if (gathering || sweepingCluster) {
+            stepGather(mc, p, level);
+            return;
+        }
+        if (target == null) {
+            BlockPos next = pickTarget(p, level);
+            if (next == null) {
+                gathering = true;
+                item = null;
+                itemTicks = 0;
+                itemAttempt = 0;
+                itemGoalPos = null;
+                stepGather(mc, p, level);
+                return;
+            }
+            if (!brokenPositions.isEmpty() && next.distSqr(p.blockPosition()) > 64) {
+                ItemEntity drop = findItem(p, level);
+                if (drop != null) {
+                    sweepingCluster = true;
+                    item = drop;
+                    itemTicks = 0;
+                    itemAttempt = 0;
+                    itemGoalPos = null;
+                    stepGather(mc, p, level);
+                    return;
+                }
+            }
+            target = next;
+            targetTicks = 0;
+            pathAttempts = 0;
+            waitingForPath = false;
+            breakStarted = false;
+        }
+        if (!level.getBlockState(target).isAir() && !announced.contains(target)) {
             announced.add(target.immutable());
             Util.msg("Taking down scaffolding at " + target.toShortString() + " (" + level.getBlockState(target).getBlock().getName().getString() + ")");
         }
-        if (target == null) {
-            target = pickTarget(p, level);
-            targetTicks = 0;
-        }
-        if (target != null) {
-            work(mc, p, level);
-            return;
-        }
+        work(mc, p, level);
+    }
 
-        // nothing left to break: gather the drops
+    private void stepGather(Minecraft mc, LocalPlayer p, Level level) {
         if (item == null || !item.isAlive()) {
             item = findItem(p, level);
             itemTicks = 0;
+            itemAttempt = 0;
+            itemGoalPos = null;
         }
         if (item == null) {
+            releaseWalkKey(mc);
+            if (sweepingCluster) {
+                sweepingCluster = false;
+                return;
+            }
             finish(mc);
             return;
         }
         if (++itemTicks > GATHER_TIMEOUT) {
             ignoredItems.add(item.getId());
             item = null;
+            releaseWalkKey(mc);
+            EngineSelector.current().cancel();
             return;
         }
+        double dx = item.getX() - p.getX();
+        double dz = item.getZ() - p.getZ();
+        double horizDist = Math.hypot(dx, dz);
+        double dy = Math.abs(item.getY() - p.getY());
+        if (horizDist <= 2.2 && dy <= 1.2) {
+            if (EngineSelector.current().isBusy()) EngineSelector.current().cancel();
+            float yaw = (float) (Math.toDegrees(Math.atan2(dz, dx)) - 90.0);
+            float err = Mth.wrapDegrees(yaw - p.getYRot());
+            p.setYRot(p.getYRot() + Mth.clamp(err, -45f, 45f));
+            boolean aligned = Math.abs(err) < 35.0 || horizDist >= 1.5;
+            mc.options.keyUp.setDown(aligned);
+            walkingToItem = true;
+            return;
+        }
+        releaseWalkKey(mc);
         if (!EngineSelector.current().isBusy()) {
-            EngineSelector.current().goTo(GoalSpec.near(item.blockPosition(), 1));
+            EngineStatus st = EngineSelector.current().status();
+            if (itemAttempt == 0) {
+                itemAttempt = 1;
+                itemGoalPos = item.blockPosition();
+                EngineSelector.current().goTo(GoalSpec.exact(itemGoalPos));
+            } else if (itemAttempt == 1 && (st == EngineStatus.FAILED || st == EngineStatus.DONE)) {
+                itemAttempt = 2;
+                itemGoalPos = item.blockPosition();
+                EngineSelector.current().goTo(GoalSpec.near(itemGoalPos, 1));
+            } else if (itemAttempt >= 2 && st == EngineStatus.FAILED) {
+                ignoredItems.add(item.getId());
+                item = null;
+            } else if (itemAttempt >= 2 && st == EngineStatus.DONE) {
+                if (itemGoalPos == null || item.blockPosition().distSqr(itemGoalPos) > 4) {
+                    itemAttempt = 1;
+                    itemGoalPos = item.blockPosition();
+                    EngineSelector.current().goTo(GoalSpec.exact(itemGoalPos));
+                } else {
+                    ignoredItems.add(item.getId());
+                    item = null;
+                }
+            }
         }
     }
 
     private void work(Minecraft mc, LocalPlayer p, Level level) {
         if (++targetTicks > TARGET_TIMEOUT) {
-            Scaffold.forget(target);
+            sweepSkipped.add(target.immutable());
             skipped++;
-            target = null;
+            resetTargetState();
             mc.gameMode.stopDestroyBlock();
+            EngineSelector.current().cancel();
             return;
         }
-        Direction face = reachFace(p, level, target);
-        if (face == null) {
-            if (!EngineSelector.current().isBusy()) {
-                EngineSelector.current().goTo(GoalSpec.near(target, 2));
+        BlockHitResult hit = reachHit(p, level, target);
+        if (hit == null) {
+            if (waitingForPath) {
+                if (EngineSelector.current().isBusy()) return;
+                waitingForPath = false;
             }
+            pathAttempts++;
+            if (pathAttempts == 1) {
+                BlockPos stand = findBestStand(level, p, target);
+                GoalSpec goal = stand != null ? GoalSpec.exact(stand) : GoalSpec.lineOfSight(target, REACH - 0.3);
+                EngineSelector.current().goTo(goal);
+                waitingForPath = true;
+                return;
+            }
+            if (pathAttempts == 2) {
+                EngineSelector.current().goTo(GoalSpec.near(target, 1));
+                waitingForPath = true;
+                return;
+            }
+            sweepSkipped.add(target.immutable());
+            skipped++;
+            resetTargetState();
+            mc.gameMode.stopDestroyBlock();
             return;
         }
 
         if (EngineSelector.current().isBusy()) {
             EngineSelector.current().cancel();
         }
+        waitingForPath = false;
+        pathAttempts = 0;
 
         BlockState state = level.getBlockState(target);
-        selectBestTool(p, state);
-        Vec3 aim = Vec3.atCenterOf(target);
-        if (Util.aimAt(p, aim)) {
+        ClearProcess.equipFor(mc, p, state);
+        if (Util.aimAt(p, hit.getLocation())) {
             dropTypes.add(state.getBlock().asItem());
-            mc.gameMode.continueDestroyBlock(target, face);
-            p.swing(InteractionHand.MAIN_HAND);
+            if (state.getDestroyProgress(p, level, target) >= 1.0f) {
+                mc.gameMode.startDestroyBlock(target, hit.getDirection());
+                p.swing(InteractionHand.MAIN_HAND);
+                breakStarted = false;
+            } else {
+                if (!breakStarted) {
+                    mc.gameMode.startDestroyBlock(target, hit.getDirection());
+                    breakStarted = true;
+                } else {
+                    mc.gameMode.continueDestroyBlock(target, hit.getDirection());
+                }
+                p.swing(InteractionHand.MAIN_HAND);
+            }
         }
     }
 
-    private static Direction reachFace(LocalPlayer p, Level level, BlockPos pos) {
-        Vec3 eye = p.getEyePosition();
-        Vec3 aim = Vec3.atCenterOf(pos);
-        if (eye.distanceTo(aim) > REACH) return null;
-        BlockHitResult hit = level.clip(new ClipContext(eye, aim, ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, p));
-        if (hit.getType() != HitResult.Type.BLOCK || !hit.getBlockPos().equals(pos)) return null;
-        return hit.getDirection();
+    private static List<Vec3> aimPoints(BlockPos pos) {
+        Vec3 center = Vec3.atCenterOf(pos);
+        List<Vec3> pts = new ArrayList<>(7);
+        pts.add(center);
+        for (Direction d : Direction.values()) {
+            pts.add(center.add(d.getStepX() * 0.45, d.getStepY() * 0.45, d.getStepZ() * 0.45));
+        }
+        return pts;
+    }
+
+    private static BlockHitResult firstHit(Level level, LocalPlayer p, Vec3 eye, BlockPos pos, List<Vec3> pts, double maxReach) {
+        double maxSq = maxReach * maxReach;
+        List<Vec3> validPts = new ArrayList<>(pts.size());
+        for (Vec3 pt : pts) {
+            if (eye.distanceToSqr(pt) <= maxSq) validPts.add(pt);
+        }
+        validPts.sort(Comparator.comparingDouble(eye::distanceToSqr));
+        for (Vec3 pt : validPts) {
+            BlockHitResult hit = level.clip(new ClipContext(eye, pt, ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, p));
+            if (hit.getType() == HitResult.Type.BLOCK && hit.getBlockPos().equals(pos)) return hit;
+        }
+        return null;
+    }
+
+    static BlockHitResult reachHit(LocalPlayer p, Level level, BlockPos pos) {
+        return firstHit(level, p, p.getEyePosition(), pos, aimPoints(pos), REACH);
+    }
+
+    private static boolean passable(Level level, BlockPos pos) {
+        BlockState s = level.getBlockState(pos);
+        return s.getCollisionShape(level, pos).isEmpty() && s.getFluidState().isEmpty();
+    }
+
+    private BlockPos findBestStand(Level level, LocalPlayer p, BlockPos target) {
+        BlockPos best = null;
+        double bestScore = Double.MAX_VALUE;
+        List<Vec3> targetPts = aimPoints(target);
+        for (int dy = -4; dy <= 4; dy++) {
+            for (int dx = -4; dx <= 4; dx++) {
+                for (int dz = -4; dz <= 4; dz++) {
+                    BlockPos stand = target.offset(dx, dy, dz);
+                    if (stand.equals(target) || stand.below().equals(target)) continue;
+                    if (!level.hasChunkAt(stand)) continue;
+                    if (!passable(level, stand) || !passable(level, stand.above())) continue;
+                    if (!Util.isSolid(level, stand.below())) continue;
+                    Vec3 eye = new Vec3(stand.getX() + 0.5, stand.getY() + 1.62, stand.getZ() + 0.5);
+                    if (firstHit(level, p, eye, target, targetPts, REACH - 0.2) == null) continue;
+                    double score = stand.distSqr(p.blockPosition()) + (Scaffold.isRecorded(stand.below()) ? 25.0 : 0.0);
+                    if (score < bestScore) {
+                        bestScore = score;
+                        best = stand;
+                    }
+                }
+            }
+        }
+        return best;
     }
 
     private BlockPos pickTarget(LocalPlayer p, Level level) {
-        BlockPos best = null;
-        boolean bestReach = false;
-        double bestScore = Double.MAX_VALUE;
-        var it = Scaffold.spots().keySet().iterator();
-        while (it.hasNext()) {
-            BlockPos pos = it.next();
-            if (!Scaffold.valid(level, pos)) { it = Scaffold.spots().keySet().iterator(); continue; }
+        List<BlockPos> snapshot = new ArrayList<>(Scaffold.spots().keySet());
+        Map<BlockPos, Boolean> reachableMap = new HashMap<>();
+        List<BlockPos> unreachableAll = new ArrayList<>();
+        List<BlockPos> eligible = new ArrayList<>();
+        for (BlockPos pos : snapshot) {
+            if (!Scaffold.valid(level, pos)) continue;
+            if (sweepSkipped.contains(pos)) continue;
             if (cfg.protect) {
                 Config.Zone z = Guard.zoneAt(pos);
                 if (z != null && !z.allowBreak) continue;
             }
             double d = pos.distSqr(p.blockPosition());
             if (d > 128.0 * 128.0) continue;
-            boolean reach = d <= 25 && reachFace(p, level, pos) != null;
-            double score = reach ? -pos.getY() : d;
-            if ((reach && !bestReach) || (reach == bestReach && score < bestScore)) {
-                best = pos;
-                bestReach = reach;
-                bestScore = score;
+            boolean reach = d <= 36.0 && reachHit(p, level, pos) != null;
+            reachableMap.put(pos, reach);
+            if (!reach) unreachableAll.add(pos);
+            eligible.add(pos);
+        }
+
+        BlockPos below = p.blockPosition().below();
+        BlockPos bestReach = null;
+        double bestReachScore = Double.MAX_VALUE;
+        List<BlockPos> eligibleUnreachable = new ArrayList<>();
+
+        for (BlockPos pos : eligible) {
+            // Top-down column rule: never break a block underneath another valid scaffold block
+            if (Scaffold.valid(level, pos.above())) continue;
+            boolean reach = Boolean.TRUE.equals(reachableMap.get(pos));
+            if (reach) {
+                // Avoid cutting out a lower stair/pillar block while a higher block in the 3x3 column is still unreachable
+                boolean higherUnreachableIn3x3 = false;
+                for (BlockPos other : unreachableAll) {
+                    if (other.getY() > pos.getY()
+                            && Math.abs(other.getX() - pos.getX()) <= 1
+                            && Math.abs(other.getZ() - pos.getZ()) <= 1) {
+                        higherUnreachableIn3x3 = true;
+                        break;
+                    }
+                }
+                if (higherUnreachableIn3x3) continue;
+                double dx = pos.getX() + 0.5 - p.getX();
+                double dz = pos.getZ() + 0.5 - p.getZ();
+                double horizDistSq = dx * dx + dz * dz;
+                double score = -pos.getY() * 1000.0 - horizDistSq * 10.0 + (pos.equals(below) ? 5000.0 : 0.0);
+                if (score < bestReachScore) {
+                    bestReachScore = score;
+                    bestReach = pos;
+                }
+            } else {
+                eligibleUnreachable.add(pos);
             }
         }
-        return best;
-    }
+        if (bestReach != null) return bestReach;
+        if (eligibleUnreachable.isEmpty()) return null;
 
-    private static void selectBestTool(LocalPlayer p, BlockState state) {
-        int bestSlot = p.getInventory().getSelectedSlot();
-        float bestSpeed = p.getInventory().getItem(bestSlot).getDestroySpeed(state);
-        for (int i = 0; i < 9; i++) {
-            ItemStack st = p.getInventory().getItem(i);
-            float s = st.getDestroySpeed(state);
-            if (s > bestSpeed + 0.01f) { bestSpeed = s; bestSlot = i; }
+        // Nearest horizontal cluster among unreachable candidates
+        BlockPos anchor = null;
+        double anchorDistSq = Double.MAX_VALUE;
+        for (BlockPos pos : eligibleUnreachable) {
+            double dx = pos.getX() + 0.5 - p.getX();
+            double dz = pos.getZ() + 0.5 - p.getZ();
+            double hSq = dx * dx + dz * dz;
+            if (hSq < anchorDistSq) {
+                anchorDistSq = hSq;
+                anchor = pos;
+            }
         }
-        p.getInventory().setSelectedSlot(bestSlot);
+
+        BlockPos bestUnreach = null;
+        double bestUnreachScore = Double.MAX_VALUE;
+        for (BlockPos pos : eligibleUnreachable) {
+            double cdx = pos.getX() - anchor.getX();
+            double cdz = pos.getZ() - anchor.getZ();
+            if (cdx * cdx + cdz * cdz > 16.0) continue;
+            double dx = pos.getX() + 0.5 - p.getX();
+            double dz = pos.getZ() + 0.5 - p.getZ();
+            double horizDist = Math.hypot(dx, dz);
+            double score = -pos.getY() * 100.0 + horizDist * 10.0;
+            if (score < bestUnreachScore) {
+                bestUnreachScore = score;
+                bestUnreach = pos;
+            }
+        }
+        return bestUnreach;
     }
 
     private ItemEntity findItem(LocalPlayer p, Level level) {
         ItemEntity best = null;
         double bestDist = Double.MAX_VALUE;
-        for (ItemEntity e : level.getEntitiesOfClass(ItemEntity.class, p.getBoundingBox().inflate(14, 6, 14))) {
-            if (!e.isAlive() || ignoredItems.contains(e.getId()) || !dropTypes.contains(e.getItem().getItem())) continue;
-            double d = e.distanceToSqr(p);
-            if (d < bestDist) { bestDist = d; best = e; }
+        Set<Integer> seenIds = new HashSet<>();
+        List<AABB> boxes = new ArrayList<>();
+        boxes.add(p.getBoundingBox().inflate(14, 6, 14));
+
+        List<BlockPos> clusterCenters = new ArrayList<>();
+        for (BlockPos bp : brokenPositions) {
+            if (bp.distSqr(p.blockPosition()) <= 36) continue;
+            boolean covered = false;
+            for (BlockPos c : clusterCenters) {
+                if (bp.distSqr(c) <= 36) {
+                    covered = true;
+                    break;
+                }
+            }
+            if (!covered && level.hasChunkAt(bp)) {
+                clusterCenters.add(bp);
+                boxes.add(new AABB(bp).inflate(8, 5, 8));
+            }
+        }
+
+        for (AABB box : boxes) {
+            for (ItemEntity e : level.getEntitiesOfClass(ItemEntity.class, box)) {
+                if (!seenIds.add(e.getId())) continue;
+                if (!e.isAlive() || ignoredItems.contains(e.getId()) || !dropTypes.contains(e.getItem().getItem())) continue;
+                double d = e.distanceToSqr(p);
+                if (d < bestDist) {
+                    bestDist = d;
+                    best = e;
+                }
+            }
         }
         return best;
     }
 
     private void finish(Minecraft mc) {
         setWorking(false);
-        target = null;
+        resetTargetState();
+        gathering = false;
+        sweepingCluster = false;
         item = null;
+        itemGoalPos = null;
+        sweepSkipped.clear();
+        brokenPositions.clear();
         if (mc.gameMode != null) mc.gameMode.stopDestroyBlock();
         cooldown = 20 * 20;
         Util.msg("Scaffolding collected: " + broken + " block" + (broken == 1 ? "" : "s") + " removed"

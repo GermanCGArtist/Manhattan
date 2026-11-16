@@ -3,21 +3,19 @@ package dev.midtown.plan;
 import dev.midtown.api.Area;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
-import net.minecraft.tags.BlockTags;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffectUtil;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.player.Inventory;
-import net.minecraft.world.item.BlockItem;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.item.enchantment.EnchantmentHelper;
 import net.minecraft.world.item.enchantment.Enchantments;
 import net.minecraft.world.item.enchantment.ItemEnchantments;
 import net.minecraft.world.level.EmptyBlockGetter;
 import net.minecraft.world.level.block.Block;
-import net.minecraft.world.level.block.EntityBlock;
-import net.minecraft.world.level.block.FallingBlock;
 import net.minecraft.world.level.block.state.BlockState;
 
 import java.util.ArrayList;
@@ -446,20 +444,16 @@ public final class CalculationContext {
         return 0;
     }
 
-    private static boolean isExpendableBlockItem(ItemStack stack) {
-        if (!(stack.getItem() instanceof BlockItem bi)) return false;
-        Block b = bi.getBlock();
-        if (b instanceof FallingBlock || b instanceof EntityBlock) return false;
-        BlockState state = b.defaultBlockState();
-        if (state.is(BlockTags.FENCES) || state.is(BlockTags.WALLS)
-                || state.is(BlockTags.DOORS) || state.is(BlockTags.TRAPDOORS)
-                || state.is(BlockTags.SLABS) || state.is(BlockTags.STAIRS)
-                || state.is(BlockTags.CAMPFIRES) || state.is(BlockTags.FIRE)) {
-            return false;
-        }
-        BlockKind kind = WorldSnapshot.classify(state);
-        if (kind != BlockKind.SOLID) return false;
-        return state.isCollisionShapeFullBlock(EmptyBlockGetter.INSTANCE, BlockPos.ZERO);
+    /** Returns true if {@code stack} is one of the 6 standard terrain throwaway building blocks. */
+    public static boolean isExpendableBlockItem(ItemStack stack) {
+        if (stack == null || stack.isEmpty()) return false;
+        Item item = stack.getItem();
+        return item == Items.DIRT
+                || item == Items.COBBLESTONE
+                || item == Items.NETHERRACK
+                || item == Items.STONE
+                || item == Items.COBBLED_DEEPSLATE
+                || item == Items.SANDSTONE;
     }
 
     /** Fluent builder for {@link CalculationContext}. */

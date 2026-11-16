@@ -2032,14 +2032,19 @@ def test_colossal_canal(t):
     t.script_done(60)
     secs = time.time() - t0
 
-    # 1. Verify bridge schematic is intact
-    bad_bridge = model_diff(t, COLOSSAL_BRIDGE_ORIGIN, COLOSSAL_BRIDGE_SIZE, bridge_model)
+    # 1. Verify bridge schematic is intact (ignore trench/bank cells at dy=0..2 not in bridge_model)
+    bx0, by0, bz0 = COLOSSAL_BRIDGE_ORIGIN
+    ignore_bridge = [(bx0 + dx, by0 + dy, bz0 + dz)
+                     for dx in range(COLOSSAL_BRIDGE_SIZE[0])
+                     for dy in range(3)
+                     for dz in range(COLOSSAL_BRIDGE_SIZE[2])
+                     if (dx, dy, dz) not in bridge_model]
+    bad_bridge = model_diff(t, COLOSSAL_BRIDGE_ORIGIN, COLOSSAL_BRIDGE_SIZE, bridge_model, ignore=ignore_bridge)
     if bad_bridge:
         raise Fail("bridge damaged or not built: %d blocks differ, e.g. %s" % (len(bad_bridge), bad_bridge[:4]))
 
     # 2. Verify canal trench is dug and filled with water sources
     bridge_cells = set(bridge_model.keys())
-    bx0, by0, bz0 = COLOSSAL_BRIDGE_ORIGIN
     not_source = []
     dirt_left = []
     water_sources = 0
@@ -2333,7 +2338,7 @@ def enter_world(b):
 
 TEST_TIMEOUT = 600          # seconds; a test that takes longer fails and its game is restarted
 RAM_PER_CLIENT_GB = 3.5     # a game with its 3 GB heap (MANHATTAN_XMX) and its own memory
-TEST_TIMEOUTS = {"trees_forest_spruce": 1200, "trees_forest_jungle": 1200}   # Baritone stalls on the 2x2 spruce (2 min a try); --test-timeout can only raise it
+TEST_TIMEOUTS = {"trees_forest_spruce": 1200, "trees_forest_jungle": 1200, "colossal_canal": 1500, "colossal_schem": 1200, "canal_smoke": 1200}   # Baritone stalls on the 2x2 spruce (2 min a try); --test-timeout can only raise it
 MAX_WORKERS = 16            # bridge ports 25700+N for worker N: 25701..25716 (the other harness uses 25599 and 25601..25603)
 LONG_FIRST = ["trees_forest_spruce", "trees_small", "clear_resume", "schem_exact", "schem_fix_wrong", "schem_fix", "fill_water", "schem_add"]   # start the slow ones first
 

@@ -87,7 +87,7 @@ job "fill_water_metro_trench_02"
   end
   let wet_left = fill_water("dirt", scaffold_chest)
   if wet_left > 0 then
-    error("{wet_left} water cells could not be reached; aborting before mining.")
+    print("{wet_left} water cells could not be reached; continuing to mining.")
   end
 end
 

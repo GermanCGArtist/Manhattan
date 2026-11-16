@@ -11,6 +11,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -147,11 +148,26 @@ public final class MidtownPlanner {
             BlockFilter filter,
             Area box,
             long timeBudgetMs) {
+        return planMineAsync(world, ctx, start, filter, box, timeBudgetMs, Set.of());
+    }
+
+    /** Asynchronously plans a path into mining reach of any block matching {@code filter}, skipping {@code excludedTargets}. */
+    public CompletableFuture<PlanResult> planMineAsync(
+            BlockView world,
+            CalculationContext ctx,
+            BlockPos start,
+            BlockFilter filter,
+            Area box,
+            long timeBudgetMs,
+            Set<BlockPos> excludedTargets) {
         Objects.requireNonNull(world, "world");
         Objects.requireNonNull(ctx, "ctx");
         Objects.requireNonNull(start, "start");
         Objects.requireNonNull(filter, "filter");
 
+        Set<BlockPos> excludedSnapshot = (excludedTargets == null || excludedTargets.isEmpty())
+                ? Set.of()
+                : Set.copyOf(excludedTargets);
         AtomicBoolean cancelled = new AtomicBoolean(false);
         CancellableFuture future = new CancellableFuture(cancelled);
         executor.execute(() -> {
@@ -160,7 +176,7 @@ public final class MidtownPlanner {
                 return;
             }
             try {
-                PlanResult result = planMineSync(world, ctx, start, filter, box, timeBudgetMs, cancelled);
+                PlanResult result = planMineSync(world, ctx, start, filter, box, timeBudgetMs, excludedSnapshot, cancelled);
                 future.complete(result);
             } catch (Throwable t) {
                 future.completeExceptionally(t);
@@ -177,7 +193,22 @@ public final class MidtownPlanner {
             BlockFilter filter,
             Area box,
             long timeBudgetMs) {
-        return planMineSync(world, ctx, start, filter, box, timeBudgetMs, null);
+        return planMineSync(world, ctx, start, filter, box, timeBudgetMs, Set.of(), null);
+    }
+
+    /** Synchronously plans a path into mining reach of any block matching {@code filter}, skipping {@code excludedTargets}. */
+    public PlanResult planMineSync(
+            BlockView world,
+            CalculationContext ctx,
+            BlockPos start,
+            BlockFilter filter,
+            Area box,
+            long timeBudgetMs,
+            Set<BlockPos> excludedTargets) {
+        Set<BlockPos> excludedSnapshot = (excludedTargets == null || excludedTargets.isEmpty())
+                ? Set.of()
+                : Set.copyOf(excludedTargets);
+        return planMineSync(world, ctx, start, filter, box, timeBudgetMs, excludedSnapshot, null);
     }
 
     private PlanResult planMineSync(
@@ -187,9 +218,10 @@ public final class MidtownPlanner {
             BlockFilter filter,
             Area box,
             long timeBudgetMs,
+            Set<BlockPos> excludedTargets,
             AtomicBoolean cancelled) {
         long startNanos = System.nanoTime();
-        List<BlockPos> targets = findMineTargets(world, ctx, start, filter, box, 48, 32);
+        List<BlockPos> targets = findMineTargets(world, ctx, start, filter, box, 48, 32, excludedTargets);
         if (targets.isEmpty()) {
             long elapsed = (System.nanoTime() - startNanos) / 1_000_000L;
             return new PlanResult(PlanResult.Status.NO_PATH, start, List.of(), List.of(start), 0.0, 0, elapsed);
@@ -950,7 +982,8 @@ public final class MidtownPlanner {
             BlockFilter filter,
             Area box,
             int defaultRadius,
-            int maxCandidates) {
+            int maxCandidates,
+            Set<BlockPos> excludedTargets) {
 
         int minX = box != null ? box.minX() : start.getX() - defaultRadius;
         int maxX = box != null ? box.maxX() : start.getX() + defaultRadius;
@@ -968,6 +1001,7 @@ public final class MidtownPlanner {
             maxZ = Math.min(maxZ, start.getZ() + defaultRadius);
         }
 
+        boolean hasExclusions = excludedTargets != null && !excludedTargets.isEmpty();
         List<BlockPos> found = new ArrayList<>();
         for (int y = minY; y <= maxY; y++) {
             for (int z = minZ; z <= maxZ; z++) {
@@ -976,7 +1010,9 @@ public final class MidtownPlanner {
                     if (!world.matchesFilter(x, y, z, filter)) continue;
                     if (ctx.isBreakProtected(x, y, z, x, y, z, world)) continue;
                     if (world.breakTicks(x, y, z, ctx) < 0) continue;
-                    found.add(new BlockPos(x, y, z));
+                    BlockPos candidate = new BlockPos(x, y, z);
+                    if (hasExclusions && excludedTargets.contains(candidate)) continue;
+                    found.add(candidate);
                 }
             }
         }
@@ -1126,7 +1162,7 @@ public final class MidtownPlanner {
     }
 
     /** 3D voxel raycast from player eye at {@code (x, y, z)} to {@code target} block center. */
-    static boolean hasLineOfSight(BlockView world, int x, int y, int z, BlockPos target) {
+    public static boolean hasLineOfSight(BlockView world, int x, int y, int z, BlockPos target) {
         double sx = x + 0.5;
         double sy = y + 1.62;
         double sz = z + 0.5;

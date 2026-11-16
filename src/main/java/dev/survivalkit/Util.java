@@ -48,6 +48,8 @@ final class Util {
         String f = feature.toLowerCase();
         // After a death the script is paused: eating and fighting must still happen to get safe again.
         if (Recovery.waiting && (f.contains("defence") || f.contains("eat"))) return false;
+        if (f.contains("defence") && DefenceProcess.forced) return false;
+        if (f.contains("eat") && EatProcess.forced) return false;
         String v = System.getProperty("baritonequeue.addons.off");
         if (v == null) return false;
         for (String k : v.split(",")) {

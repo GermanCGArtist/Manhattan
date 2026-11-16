@@ -67,9 +67,16 @@ final class Scaffold {
     /** Recorded blocks still standing within r blocks of the player. */
     static int near(LocalPlayer p, int r) {
         Level level = p.level();
+        var outside = Api.scaffoldOutsideSchematic;
         int n = 0;
         for (var e : spots.entrySet()) {
-            if (e.getKey().distSqr(p.blockPosition()) <= (double) r * r && level.getBlockState(e.getKey()).getBlock() == e.getValue()) n++;
+            BlockPos pos = e.getKey();
+            if (pos.distSqr(p.blockPosition()) <= (double) r * r
+                    && level.hasChunkAt(pos)
+                    && (outside == null || outside.test(pos, e.getValue()))
+                    && level.getBlockState(pos).getBlock() == e.getValue()) {
+                n++;
+            }
         }
         return n;
     }
@@ -83,9 +90,14 @@ final class Scaffold {
             spots.remove(pos);
             return false;
         }
+        if (!level.hasChunkAt(pos)) return false;
         if (level.getBlockState(pos).getBlock() == b) return true;
         spots.remove(pos);
         return false;
+    }
+
+    static boolean isRecorded(BlockPos pos) {
+        return spots.containsKey(pos);
     }
 
     static void forget(BlockPos pos) {

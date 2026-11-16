@@ -5,6 +5,9 @@ import dev.midtown.api.GoalSpec;
 import dev.midtown.exec.EdgeTracker.EdgeCheckResult;
 import dev.midtown.exec.PathNode.EdgeKey;
 import net.minecraft.core.BlockPos;
+import net.minecraft.util.Mth;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -25,6 +28,8 @@ import java.util.function.Predicate;
  * Has zero {@code Minecraft} client dependencies so it can be unit-tested headlessly.
  */
 public final class MidtownCoordinator {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(MidtownCoordinator.class);
 
     public static final double DEFAULT_NODE_REACH_HORIZ = 0.40;
     public static final double DEFAULT_NODE_REACH_VERT = 0.65;
@@ -64,6 +69,7 @@ public final class MidtownCoordinator {
     private final EdgeTracker edgeTracker;
     private Planner planner;
     private Predicate<BlockPos> isBlockSolid;
+    private Predicate<BlockPos> isBlockPresent;
     private final Deque<InterruptFrame> interruptStack = new ArrayDeque<>();
 
     private EngineStatus status = EngineStatus.IDLE;
@@ -94,6 +100,11 @@ public final class MidtownCoordinator {
     /** Optional world solid-block check wired by {@code MidtownEngine} for {@code PILLAR} and {@code BREAK_THROUGH}. */
     public void setBlockSolidCheck(Predicate<BlockPos> isBlockSolid) {
         this.isBlockSolid = isBlockSolid;
+    }
+
+    /** Optional world non-air block check wired by {@code MidtownEngine} for {@code BREAK_THROUGH} (including replaceable blocks). */
+    public void setBlockPresentCheck(Predicate<BlockPos> isBlockPresent) {
+        this.isBlockPresent = isBlockPresent;
     }
 
     public Planner planner() {
@@ -134,7 +145,8 @@ public final class MidtownCoordinator {
         this.replanCount = 0;
         this.lastFailureReason = null;
 
-        if (isGoalSatisfied(goal, startPos.getX() + 0.5, startPos.getY(), startPos.getZ() + 0.5)) {
+        if ((plannedPath == null || plannedPath.isEmpty())
+                && isGoalSatisfied(goal, startPos.getX() + 0.5, startPos.getY(), startPos.getZ() + 0.5)) {
             this.path = List.of();
             this.pathIndex = 0;
             this.status = EngineStatus.DONE;
@@ -248,7 +260,8 @@ public final class MidtownCoordinator {
             return new TickAction.Idle();
         }
 
-        if (isGoalSatisfied(activeGoal, playerX, playerY, playerZ)) {
+        if (canShortCircuitGoal(activeGoal, pathIndex)
+                && isGoalSatisfied(activeGoal, playerX, playerY, playerZ)) {
             completeGoal();
             return new TickAction.Done();
         }
@@ -274,11 +287,18 @@ public final class MidtownCoordinator {
             edgeTracker.beginEdge(edgeFrom, target.pos(), playerX, playerY, playerZ, tickCounter, target.timeoutTicks());
         }
 
-        if (isBreakingTargetBlock(target)) {
+        boolean breaking = isBreakingTargetBlock(target);
+        if (breaking) {
             edgeTracker.resetNoProgress();
         }
 
         EdgeCheckResult check = edgeTracker.update(playerX, playerY, playerZ, tickCounter);
+        if (breaking) {
+            edgeTracker.resetNoProgress();
+            if (check == EdgeCheckResult.STUCK) {
+                check = EdgeCheckResult.OK;
+            }
+        }
         if (check == EdgeCheckResult.STUCK || check == EdgeCheckResult.TIMED_OUT) {
             BlockPos from = edgeFrom != null ? edgeFrom : BlockPos.containing(playerX, playerY, playerZ);
             edgeTracker.blacklist(new EdgeKey(from, target.pos()), tickCounter);
@@ -300,6 +320,8 @@ public final class MidtownCoordinator {
 
     private TickAction triggerReplan(double playerX, double playerY, double playerZ, String reason) {
         replanCount++;
+        LOGGER.info("[MidtownCoordinator] replan #{}: {} (player {} {} {})", replanCount, reason,
+                String.format("%.2f", playerX), String.format("%.2f", playerY), String.format("%.2f", playerZ));
         if (replanCount > maxReplans) {
             status = EngineStatus.FAILED;
             lastFailureReason = "Exceeded max replans (" + maxReplans + "): " + reason;
@@ -398,12 +420,48 @@ public final class MidtownCoordinator {
         return true;
     }
 
+    private boolean canShortCircuitGoal(GoalSpec goal, int idx) {
+        if (goal instanceof GoalSpec.LineOfSight && idx < path.size()) {
+            return false;
+        }
+        return !hasActiveBlockAction(idx);
+    }
+
+    private boolean hasActiveBlockAction(int fromIndex) {
+        for (int i = fromIndex; i < path.size(); i++) {
+            PathNode node = path.get(i);
+            if (isBreakingTargetBlock(node)) {
+                return true;
+            }
+            if (isBlockPresent == null
+                    && isBlockSolid == null
+                    && node.action() == PathNode.ActionType.BREAK_THROUGH
+                    && !node.targetBlocks().isEmpty()) {
+                return true;
+            }
+        }
+        if (fromIndex >= 0 && fromIndex < path.size()) {
+            PathNode cur = path.get(fromIndex);
+            if (cur.action() == PathNode.ActionType.PILLAR
+                    && isBlockSolid != null
+                    && cur.targetBlock() != null
+                    && !isBlockSolid.test(cur.targetBlock())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private boolean isBreakingTargetBlock(PathNode target) {
-        if (target.action() != PathNode.ActionType.BREAK_THROUGH || isBlockSolid == null) {
+        if (target.action() != PathNode.ActionType.BREAK_THROUGH) {
+            return false;
+        }
+        Predicate<BlockPos> check = isBlockPresent != null ? isBlockPresent : isBlockSolid;
+        if (check == null) {
             return false;
         }
         for (BlockPos tb : target.targetBlocks()) {
-            if (isBlockSolid.test(tb)) {
+            if (check.test(tb)) {
                 return true;
             }
         }
@@ -427,6 +485,17 @@ public final class MidtownCoordinator {
                 yield (dx * dx + dz * dz) <= 0.25 && dy <= 0.65;
             }
             case GoalSpec.Near n -> {
+                int bx = Mth.floor(px);
+                int by = (int) Math.round(py);
+                int bz = Mth.floor(pz);
+                long bdx = (long) bx - n.pos().getX();
+                long bdy = (long) by - n.pos().getY();
+                long bdz = (long) bz - n.pos().getZ();
+                long blockDistSq = bdx * bdx + bdy * bdy + bdz * bdz;
+                long rangeSq = (long) n.range() * n.range();
+                if (blockDistSq > rangeSq) {
+                    yield false;
+                }
                 double dx = px - (n.pos().getX() + 0.5);
                 double dy = py - n.pos().getY();
                 double dz = pz - (n.pos().getZ() + 0.5);

@@ -154,7 +154,7 @@ final class Schem {
                 mp.set(min.getX() + x, min.getY() + y, min.getZ() + z);
                 if (!level.hasChunkAt(mp)) continue;
                 BlockState cur = level.getBlockState(mp);
-                if (cur.isAir() || replaceable(cur) || cur.getBlock() instanceof LiquidBlock) open.set(i);
+                if (cur.isAir() || replaceable(cur) || cur.getBlock() instanceof LiquidBlock || dev.buildtools.Api.isScaffold(level, mp)) open.set(i);
             }
         }
 
@@ -467,9 +467,10 @@ final class Schem {
                 continue;
             }
             if (cur.equals(d)) { c.correct++; continue; }
+            boolean isScaff = dev.buildtools.Api.isScaffold(level, mp);
             Phase ph = phaseAt(plan, plan.idx(x, y, z), d, cur);
-            boolean needs = todo(plan, plan.idx(x, y, z), mode, d, cur);
-            if (cur.isAir() || replaceable(cur)) c.missing++; else if (needs) { c.wrong++; if (cur.getBlock() == d.getBlock()) c.wrongState++; if (mode != Mode.ADD) c.todoByPhase.merge(Phase.CLEAR, 1, Integer::sum); } else continue;   // add mode leaves foreign blocks alone
+            boolean needs = todo(plan, plan.idx(x, y, z), mode, d, cur) || (mode == Mode.ADD && isScaff && !cur.equals(d));
+            if (cur.isAir() || replaceable(cur) || (mode == Mode.ADD && isScaff && !cur.equals(d))) c.missing++; else if (needs) { c.wrong++; if (cur.getBlock() == d.getBlock()) c.wrongState++; if (mode != Mode.ADD) c.todoByPhase.merge(Phase.CLEAR, 1, Integer::sum); } else continue;   // add mode leaves foreign blocks alone
             if (!needs) continue;
             c.todoByPhase.merge(ph, 1, Integer::sum);
             example(c, mp, BuiltInRegistries.BLOCK.getKey(d.getBlock()).getPath(), cur);

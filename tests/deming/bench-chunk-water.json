@@ -8,8 +8,8 @@
       "loader_version": "0.20.1",
       "mods": [
         { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
-        { "local_path": "build/libs/baritonequeue-2.11.3.jar" },
-        { "local_path": "build/libs/manhattan-testbridge-2.11.3.jar" }
+        { "local_path": "build/libs/baritonequeue-2.12.1.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.1.jar" }
       ],
       "account": { "offline": { "username": "BenchWater01" } },
       "ram_mb": 3072,
@@ -35,8 +35,8 @@
       "loader_version": "0.20.1",
       "mods": [
         { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
-        { "local_path": "build/libs/baritonequeue-2.11.3.jar" },
-        { "local_path": "build/libs/manhattan-testbridge-2.11.3.jar" }
+        { "local_path": "build/libs/baritonequeue-2.12.1.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.1.jar" }
       ],
       "account": { "offline": { "username": "BenchWater02" } },
       "ram_mb": 3072,
@@ -62,8 +62,8 @@
       "loader_version": "0.20.1",
       "mods": [
         { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
-        { "local_path": "build/libs/baritonequeue-2.11.3.jar" },
-        { "local_path": "build/libs/manhattan-testbridge-2.11.3.jar" }
+        { "local_path": "build/libs/baritonequeue-2.12.1.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.1.jar" }
       ],
       "account": { "offline": { "username": "BenchWater03" } },
       "ram_mb": 3072,
@@ -89,8 +89,8 @@
       "loader_version": "0.20.1",
       "mods": [
         { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
-        { "local_path": "build/libs/baritonequeue-2.11.3.jar" },
-        { "local_path": "build/libs/manhattan-testbridge-2.11.3.jar" }
+        { "local_path": "build/libs/baritonequeue-2.12.1.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.1.jar" }
       ],
       "account": { "offline": { "username": "BenchWater04" } },
       "ram_mb": 3072,
@@ -116,8 +116,8 @@
       "loader_version": "0.20.1",
       "mods": [
         { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
-        { "local_path": "build/libs/baritonequeue-2.11.3.jar" },
-        { "local_path": "build/libs/manhattan-testbridge-2.11.3.jar" }
+        { "local_path": "build/libs/baritonequeue-2.12.1.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.1.jar" }
       ],
       "account": { "offline": { "username": "BenchWater05" } },
       "ram_mb": 3072,

@@ -104,8 +104,9 @@ public final class Api {
     public static String defendNow() {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null) return "Not in a world.";
-        if (DefenceProcess.threats(mc, mc.player, 7) == 0) return "";
-        DefenceProcess.forced = true;
+        double checkRange = Math.max(12.0, DefenceProcess.getEffectiveRange());
+        if (DefenceProcess.threats(mc, mc.player, checkRange) == 0) return "";
+        SurvivalKitMod.defence.force(checkRange);
         return null;
     }
 

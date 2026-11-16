@@ -27,6 +27,7 @@ import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -231,8 +232,9 @@ public final class SchemProcess {
     private BlockState mtWant;
     private Item mtItem;
     private boolean mtMoving, mtBreaking;
-    private int mtMoveTicks, mtNoProgress, mtBreakTicks, mtPlaced, mtStallPass;
+    private int mtMoveTicks, mtNoProgress, mtBreakTicks, mtPlaced, mtStallPass, mtSpotRetries;
     private double mtBestDist;
+    private Map<Item, Integer> mtNeededCounts = Map.of();
 
     private void startPhase() {
         Phase ph = phases.get(pi);
@@ -251,6 +253,7 @@ public final class SchemProcess {
         }
         neededItems.clear();
         neededItems.addAll(c.items.keySet());
+        mtNeededCounts = new HashMap<>(c.items);
         refreshMissing();
         restarts = 0;
         EngineSelector.current().cancel();
@@ -527,6 +530,7 @@ public final class SchemProcess {
         mtBreaking = false;
         mtPlaced = 0;
         mtStallPass = 0;
+        mtSpotRetries = 0;
         Level level = Minecraft.getInstance().level;
         if (level == null) return;
         int x0 = activeChunkBounds == null ? 0 : Math.max(0, activeChunkBounds.minX() - plan.min.getX());
@@ -568,6 +572,7 @@ public final class SchemProcess {
         mtBreakPos = null;
         mtCur = null;
         mtStand = null;
+        mtSpotRetries = 0;
     }
 
     private void mtTickPhase(Minecraft mc, Phase ph, boolean itemsChanged) {
@@ -601,10 +606,14 @@ public final class SchemProcess {
             BlockState now = Schem.norm(level.getBlockState(mtCur));
             if (!Schem.todo(plan, idx, mode, mtWant, now)) {
                 mtPlaced++;
+                if (mtItem != null) {
+                    mtNeededCounts.merge(mtItem, -1, (a, b) -> Math.max(0, a + b));
+                }
                 mtRetriedLayers.remove(mtCur.getY());
                 noProgress = 0;
                 mtCur = null;
                 mtStand = null;
+                mtSpotRetries = 0;
                 if (mtMoving) {
                     EngineSelector.current().cancel();
                     mtMoving = false;
@@ -612,6 +621,7 @@ public final class SchemProcess {
             } else if (skipMissing && mtItem != null && Schem.have(mtItem) == 0) {
                 mtCur = null;
                 mtStand = null;
+                mtSpotRetries = 0;
                 if (mtMoving) {
                     EngineSelector.current().cancel();
                     mtMoving = false;
@@ -623,7 +633,6 @@ public final class SchemProcess {
             if (!mtPickNext(level, p, ph)) {
                 if (!mtDeferred.isEmpty() && mtStallPass == 0 && mtPlaced > 0) {
                     mtDeferred.clear();
-                    mtBadSpots.clear();
                     mtStallPass++;
                     if (!mtPickNext(level, p, ph)) {
                         mtStop();
@@ -641,8 +650,10 @@ public final class SchemProcess {
         if (mtCur == null) return;
         BlockState now = level.getBlockState(mtCur);
 
-        // Wrong block in the way (REPLACE / EXACT mode): break it first
-        if (mode != Mode.ADD && !now.isAir() && !Schem.replaceable(now) && !Schem.norm(now).equals(mtWant)) {
+        // Wrong block in the way (REPLACE / EXACT mode, or scaffold/open cell in ADD mode): break it first
+        int curIdx = plan.idx(mtCur.getX() - plan.min.getX(), mtCur.getY() - plan.min.getY(), mtCur.getZ() - plan.min.getZ());
+        if ((mode != Mode.ADD || plan.wasOpen(curIdx) || dev.buildtools.Api.isScaffold(level, mtCur))
+                && !now.isAir() && !Schem.replaceable(now) && !Schem.norm(now).equals(mtWant)) {
             if (p.getEyePosition().distanceTo(Vec3.atCenterOf(mtCur)) <= MT_REACH) {
                 if (mtMoving) {
                     EngineSelector.current().cancel();
@@ -674,20 +685,68 @@ public final class SchemProcess {
                     mtCur = null;
                 }
             } else {
-                mtPollMove(level, p);
+                mtPollMove(level, p, mtCur);
+            }
+            return;
+        }
+
+        BlockPos workPos = mtHasSupportNeighbor(level, mtCur) ? mtCur : mtFindScaffoldStep(level, mtCur);
+        if (workPos == null) {
+            mtDeferred.add(mtCur);
+            mtCur = null;
+            mtStand = null;
+            return;
+        }
+        if (!workPos.equals(mtCur)) {
+            if (p.getBoundingBox().intersects(new AABB(workPos))) {
+                if (!mtMoving) {
+                    mtStand = mtFindStandSpot(level, p, workPos);
+                    if (mtStand != null) {
+                        EngineSelector.current().goTo(GoalSpec.exact(mtStand));
+                        mtMoving = true;
+                        mtMoveTicks = 0;
+                        mtNoProgress = 0;
+                        mtBestDist = p.getEyePosition().distanceTo(Vec3.atCenterOf(workPos));
+                    } else {
+                        mtDeferred.add(mtCur);
+                        mtCur = null;
+                    }
+                } else {
+                    mtPollMove(level, p, workPos);
+                }
+                return;
+            }
+            BlockHitResult scaffoldHit = mtFindSupportHit(level, p, workPos);
+            if (scaffoldHit != null && p.getEyePosition().distanceTo(scaffoldHit.getLocation()) <= MT_REACH) {
+                if (mtPlaceScaffold(mc, p, level, workPos)) {
+                    mtNoProgress = 0;
+                    noProgress = 0;
+                    return;
+                }
+                // In reach of scaffold step, but cannot place (no surplus scaffold item or protected): defer target
+                mtDeferred.add(mtCur);
+                mtCur = null;
+                mtStand = null;
+                return;
+            }
+            if (!mtMoving) {
+                mtStand = mtFindStandSpot(level, p, workPos);
+                BlockPos supportTarget = mtFindSupportNeighbor(level, workPos);
+                GoalSpec goal = mtStand != null
+                        ? GoalSpec.exact(mtStand)
+                        : GoalSpec.lineOfSight(supportTarget != null ? supportTarget : workPos, MT_REACH - 0.3);
+                EngineSelector.current().goTo(goal);
+                mtMoving = true;
+                mtMoveTicks = 0;
+                mtNoProgress = 0;
+                mtBestDist = p.getEyePosition().distanceTo(Vec3.atCenterOf(workPos));
+            } else {
+                mtPollMove(level, p, workPos);
             }
             return;
         }
 
         BlockHitResult hit = mtFindSupportHit(level, p, mtCur);
-        if (hit == null && !mtHasSupportNeighbor(level, mtCur)) {
-            BlockPos below = mtCur.below();
-            BlockState belowState = level.getBlockState(below);
-            if ((belowState.isAir() || Schem.replaceable(belowState)) && !p.getBoundingBox().intersects(new AABB(below))) {
-                if (mtPlaceScaffold(mc, p, level, below)) return;
-            }
-        }
-
         if (hit != null && p.getEyePosition().distanceTo(hit.getLocation()) <= MT_REACH) {
             if (mtMoving) {
                 EngineSelector.current().cancel();
@@ -717,12 +776,12 @@ public final class SchemProcess {
             mtNoProgress = 0;
             mtBestDist = p.getEyePosition().distanceTo(Vec3.atCenterOf(mtCur));
         } else {
-            mtPollMove(level, p);
+            mtPollMove(level, p, mtCur);
         }
     }
 
-    private void mtPollMove(Level level, LocalPlayer p) {
-        double dist = p.getEyePosition().distanceTo(Vec3.atCenterOf(mtCur));
+    private void mtPollMove(Level level, LocalPlayer p, BlockPos targetPos) {
+        double dist = p.getEyePosition().distanceTo(Vec3.atCenterOf(targetPos));
         if (dist < mtBestDist - 0.5) {
             mtBestDist = dist;
             mtNoProgress = 0;
@@ -733,21 +792,53 @@ public final class SchemProcess {
         if (++mtMoveTicks > MT_MOVE_TIMEOUT || mtNoProgress > MT_NO_PROGRESS || st == EngineStatus.FAILED) {
             EngineSelector.current().cancel();
             mtMoving = false;
+            if (mtFindSupportHit(level, p, targetPos) == null) {
+                mtBadSpots.add(p.blockPosition());
+                if (mtStand != null) mtBadSpots.add(mtStand);
+                mtStand = null;
+                if (++mtSpotRetries < 4 && mtFindStandSpot(level, p, targetPos) != null) {
+                    return;
+                }
+            }
             if (mtStand != null) mtBadSpots.add(mtStand);
             if (mtCur != null) mtDeferred.add(mtCur);
             mtCur = null;
             mtStand = null;
+            mtSpotRetries = 0;
         } else if (st == EngineStatus.DONE) {
             EngineSelector.current().cancel();
             mtMoving = false;
-            if (mtCur != null && mtFindSupportHit(level, p, mtCur) == null) {
+            if (mtCur != null && (mtFindSupportHit(level, p, targetPos) == null || p.getBoundingBox().intersects(new AABB(targetPos)))) {
                 mtBadSpots.add(p.blockPosition());
                 if (mtStand != null) mtBadSpots.add(mtStand);
+                mtStand = null;
+                if (mtFindSupportHit(level, p, targetPos) == null && ++mtSpotRetries < 4 && mtFindStandSpot(level, p, targetPos) != null) {
+                    return;
+                }
                 mtDeferred.add(mtCur);
                 mtCur = null;
-                mtStand = null;
+                mtSpotRetries = 0;
             }
         }
+    }
+
+    private static BlockPos mtFindScaffoldStep(Level level, BlockPos target) {
+        BlockPos lowestAir = null;
+        int minY = Math.max(level.getMinY(), target.getY() - 16);
+        for (int y = target.getY() - 1; y >= minY; y--) {
+            BlockPos pos = new BlockPos(target.getX(), y, target.getZ());
+            if (!level.hasChunkAt(pos)) return null;
+            BlockState bs = level.getBlockState(pos);
+            if (bs.isAir() || Schem.replaceable(bs)) {
+                lowestAir = pos;
+            } else {
+                break;
+            }
+        }
+        if (lowestAir != null && mtHasSupportNeighbor(level, lowestAir)) {
+            return lowestAir;
+        }
+        return null;
     }
 
     private static BlockPos mtFindSupportNeighbor(Level level, BlockPos target) {
@@ -849,6 +940,7 @@ public final class SchemProcess {
         mtCur = best;
         mtWant = bestWant;
         mtItem = bestItem;
+        mtSpotRetries = 0;
         return true;
     }
 
@@ -884,9 +976,9 @@ public final class SchemProcess {
     private BlockPos mtFindStandSpot(Level level, LocalPlayer p, BlockPos target) {
         BlockPos best = null;
         double bestDist = Double.MAX_VALUE;
-        for (int dy = -2; dy <= 2; dy++) {
-            for (int dx = -3; dx <= 3; dx++) {
-                for (int dz = -3; dz <= 3; dz++) {
+        for (int dy = -4; dy <= 2; dy++) {
+            for (int dx = -4; dx <= 4; dx++) {
+                for (int dz = -4; dz <= 4; dz++) {
                     BlockPos s = target.offset(dx, dy, dz);
                     if (s.equals(target) || s.equals(target.below()) || mtBadSpots.contains(s)) continue;
                     if (!level.hasChunkAt(s)) continue;
@@ -896,7 +988,7 @@ public final class SchemProcess {
                     double eyeDist = Vec3.atCenterOf(target).distanceTo(eye);
                     if (eyeDist > MT_REACH - 0.2 || eyeDist < 1.2) continue;
                     if (mtFindSupportHitFrom(level, p, eye, target) == null) continue;
-                    double d = p.blockPosition().distSqr(s);
+                    double d = p.blockPosition().distSqr(s) + Math.abs(dy) * 4.0;
                     if (d < bestDist) {
                         bestDist = d;
                         best = s;
@@ -907,21 +999,40 @@ public final class SchemProcess {
         return best;
     }
 
+    private static boolean isScaffoldBlockItem(BlockItem bi) {
+        Block b = bi.getBlock();
+        if (b instanceof net.minecraft.world.level.block.FallingBlock
+                || b instanceof net.minecraft.world.level.block.EntityBlock) return false;
+        BlockState s = b.defaultBlockState();
+        return s.blocksMotion() && !s.hasBlockEntity() && s.canOcclude();
+    }
+
     private boolean mtPlaceScaffold(Minecraft mc, LocalPlayer p, Level level, BlockPos pos) {
+        if (dev.buildtools.Api.protectedAt(pos)) return false;
         BlockHitResult hit = mtFindSupportHit(level, p, pos);
         if (hit == null || p.getEyePosition().distanceTo(hit.getLocation()) > MT_REACH) return false;
-        int slot = -1;
         Item scaffoldItem = null;
-        for (int i = 0; i < 9; i++) {
-            ItemStack st = p.getInventory().getItem(i);
-            if (!st.isEmpty() && st.getItem() instanceof BlockItem bi && !neededItems.contains(bi)) {
-                slot = i;
-                scaffoldItem = bi;
-                break;
+        // Prefer non-schematic solid block items (hotbar first), then fallback to surplus schematic items
+        for (int pass = 0; pass < 2 && scaffoldItem == null; pass++) {
+            for (int i = 0; i < 36; i++) {
+                ItemStack st = p.getInventory().getItem(i);
+                if (st.isEmpty() || !(st.getItem() instanceof BlockItem bi) || !isScaffoldBlockItem(bi)) continue;
+                if (pass == 0) {
+                    if (!neededItems.contains(bi)) {
+                        scaffoldItem = bi;
+                        break;
+                    }
+                } else if (Schem.have(bi) > mtNeededCounts.getOrDefault(bi, 0)) {
+                    scaffoldItem = bi;
+                    break;
+                }
             }
         }
-        if (slot < 0) return false;
-        p.getInventory().setSelectedSlot(slot);
+        if (scaffoldItem == null || !mtEquip(mc, p, scaffoldItem)) return false;
+        if (mtMoving) {
+            EngineSelector.current().cancel();
+            mtMoving = false;
+        }
         if (mtAim(p, hit.getLocation())) {
             mc.gameMode.useItemOn(p, InteractionHand.MAIN_HAND, hit);
             p.swing(InteractionHand.MAIN_HAND);
@@ -929,9 +1040,8 @@ public final class SchemProcess {
             if (dev.buildtools.Api.scaffoldOutsideSchematic == null || dev.buildtools.Api.scaffoldOutsideSchematic.test(pos, b)) {
                 dev.buildtools.Api.addScaffold(pos, b);
             }
-            return true;
         }
-        return false;
+        return true;
     }
 
     private static boolean mtEquip(Minecraft mc, LocalPlayer p, Item item) {
@@ -946,7 +1056,14 @@ public final class SchemProcess {
         for (int i = 9; i < 36; i++) {
             if (inv.getItem(i).is(item)) {
                 int hotbar = inv.getSelectedSlot();
+                for (int h = 0; h < 9; h++) {
+                    if (inv.getItem(h).isEmpty()) {
+                        hotbar = h;
+                        break;
+                    }
+                }
                 mc.gameMode.handleContainerInput(p.inventoryMenu.containerId, i, hotbar, ContainerInput.SWAP, p);
+                inv.setSelectedSlot(hotbar);
                 return true;
             }
         }

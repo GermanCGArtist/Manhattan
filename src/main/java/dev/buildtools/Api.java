@@ -109,6 +109,20 @@ public final class Api {
         Scaffold.spots().clear();
     }
 
+    public static void forgetScaffold(net.minecraft.core.BlockPos pos) {
+        if (pos != null) Scaffold.forget(pos);
+    }
+
+    /** True when {@code pos} currently holds a recorded temporary scaffold block. */
+    public static boolean isScaffold(net.minecraft.world.level.Level level, net.minecraft.core.BlockPos pos) {
+        return level != null && pos != null && Scaffold.valid(level, pos);
+    }
+
+    /** Snapshot of all currently recorded scaffold positions. */
+    public static java.util.List<net.minecraft.core.BlockPos> scaffoldSpots() {
+        return java.util.List.copyOf(Scaffold.spots().keySet());
+    }
+
     /** A safe area from two corners; returns an error text or null. */
     public static String protect(String name, int x1, int y1, int z1, int x2, int y2, int z2) {
         return Zones.addBox(x1, y1, z1, x2, y2, z2, name, false) == 1 ? null : "Could not save the safe area (see the message above).";

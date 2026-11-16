@@ -29,6 +29,10 @@ final class Recovery {
     /** True from the death until the task is resumed or given up: eating and fighting may act without a task. */
     static volatile boolean waiting;
 
+    boolean isWaiting() {
+        return waiting;
+    }
+
     private String lastTask;
     private long busyAt, waitStart;
     private int check;
