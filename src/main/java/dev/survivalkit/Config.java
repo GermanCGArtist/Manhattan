@@ -19,6 +19,9 @@ final class Config {
 
     /** After dying with a task running: get healthy, then run the same Baritone command again. */
     boolean resume = true;
+
+    /** Deaths within 10 minutes that are still resumed; one more stops the task. 0 = never stop (keep-inventory servers). */
+    int maxDeaths = 2;
     boolean sleep = true;
 
     /** Leave for the bed early enough to be there before mobs spawn, computed from the distance (instead of at dark). */

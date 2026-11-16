@@ -815,6 +815,29 @@ def test_death_recover(t):
     return "zombie fought after the respawn, enderman ignored, queue carried on"
 
 
+def test_death_unlimited(t):
+    """/survival maxdeaths 0 (keep-inventory servers): four deaths in a row never stop the script."""
+    reset_area(t)
+    t.cmd("/survival maxdeaths 0", "/survival respawn on", "/survival resume on", "/spawnpoint @s %d %d %d" % HOME)
+    t.run("death-recover.txt")
+    t.wait_chat("TEST recover armed", 10)
+    t.start_log()
+    try:
+        for i in range(4):
+            mark = len([l for l in t.lines() if "the queue carries on" in l])
+            t.cmd("/kill @s")
+            t.b.wait(lambda: len([l for l in t.lines() if "the queue carries on" in l]) > mark, 30,
+                     what="the queue to carry on after death %d" % (i + 1))
+        loop = next((l for l in t.lines() if "times within 10 minutes" in l), None)
+        running = t.b("script")["running"]
+    finally:
+        t.b("stopscript")
+        t.cmd("/survival maxdeaths 2")
+    if loop or not running:
+        raise Fail("the script stopped after repeated deaths: %s" % loop)
+    return "4 deaths, resumed after each one"
+
+
 def test_midtown_smoke(t):
     """The script language runs on Midtown engine."""
     t.run("midtown-smoke.txt")
@@ -2274,7 +2297,7 @@ def _forest(group):
 TREE_TESTS = [("trees_small", test_trees_small)] + [("trees_forest_" + g, _forest(g)) for g in FOREST_GROUPS]
 
 
-TESTS = [("smoke", test_smoke), ("workspace", test_workspace), ("viewport", test_viewport), ("monitor", test_monitor), ("panels", test_panels), ("ui_screens", test_ui_screens), ("fill_water", test_fill_water), ("fill_water_deep", test_fill_water_deep), ("fill_water_shaft", test_fill_water_shaft), ("fill_water_submerged_shaft", test_fill_water_submerged_shaft), ("fill_water_submerged_pocket", test_fill_water_submerged_pocket), ("eat", test_eat), ("defend", test_defend), ("death_recover", test_death_recover), ("clear_resume", test_clear_resume), ("clear_overnight_stress", test_clear_overnight_stress), ("dump", test_dump), ("chest_index", test_chest_index), ("hotbar_tools", test_hotbar_tools), ("air", test_air), ("clear_wet", test_clear_wet),
+TESTS = [("smoke", test_smoke), ("workspace", test_workspace), ("viewport", test_viewport), ("monitor", test_monitor), ("panels", test_panels), ("ui_screens", test_ui_screens), ("fill_water", test_fill_water), ("fill_water_deep", test_fill_water_deep), ("fill_water_shaft", test_fill_water_shaft), ("fill_water_submerged_shaft", test_fill_water_submerged_shaft), ("fill_water_submerged_pocket", test_fill_water_submerged_pocket), ("eat", test_eat), ("defend", test_defend), ("death_recover", test_death_recover), ("death_unlimited", test_death_unlimited),("clear_resume", test_clear_resume), ("clear_overnight_stress", test_clear_overnight_stress), ("dump", test_dump), ("chest_index", test_chest_index), ("hotbar_tools", test_hotbar_tools), ("air", test_air), ("clear_wet", test_clear_wet),
          ("schem_list", test_schem_list), ("schem_add", test_schem_add), ("schem_fix", test_schem_fix), ("schem_fix_wrong", test_schem_fix_wrong), ("schem_exact", test_schem_exact),
          ("colossal_schem", test_colossal_schem)]
 

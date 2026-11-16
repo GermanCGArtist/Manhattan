@@ -135,6 +135,15 @@ public class SurvivalKitMod implements ClientModInitializer {
                                     Util.msg("Eating when the food bar is at " + cfg.eatBelow + "/20 or lower.");
                                     return 1;
                                 })))
+                        .then(ClientCommands.literal("maxdeaths")
+                                .then(ClientCommands.argument("deaths", IntegerArgumentType.integer(0, 1000)).executes(ctx -> {
+                                    cfg.maxDeaths = IntegerArgumentType.getInteger(ctx, "deaths");
+                                    Config.save();
+                                    Util.msg(cfg.maxDeaths == 0
+                                            ? "Deaths never stop the task (it is resumed after every one)."
+                                            : "The task is resumed after up to " + cfg.maxDeaths + " deaths within 10 minutes; one more stops it.");
+                                    return 1;
+                                })))
 
                         .then(placeCmd("bed", "bed", b -> b instanceof BedBlock, v -> cfg.bed = v))
                         .then(placeCmd("supply", "supply chest", b -> b instanceof ChestBlock || b instanceof BarrelBlock, v -> cfg.supply = v)

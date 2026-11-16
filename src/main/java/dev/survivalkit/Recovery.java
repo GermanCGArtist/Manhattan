@@ -22,7 +22,6 @@ final class Recovery {
     private static final long BUSY_WINDOW = 8_000;            // a task counts as "was running" this long after its last tick
     private static final long GIVE_UP_AFTER = 10L * 60_000;   // waiting for a safe moment
     private static final long DEATH_WINDOW = 10L * 60_000;
-    private static final int MAX_DEATHS = 2;                  // the third death in the window ends it
     private static final double SAFE_RADIUS = 16;
     private static final float SAFE_HEALTH = 0.8f;
     private static final long IGNORE_THREATS_AFTER = 60_000;  // healthy but mobs stay near that nobody can reach: go on
@@ -102,7 +101,7 @@ final class Recovery {
         }
         deaths.removeIf(t -> now - t > DEATH_WINDOW);
         deaths.add(now);
-        if (deaths.size() > MAX_DEATHS) {
+        if (cfg.maxDeaths > 0 && deaths.size() > cfg.maxDeaths) {   // cfg.maxDeaths 0: never stop
             if (queueMode) System.setProperty("survivalkit.gaveup", "you died " + deaths.size() + " times within 10 minutes - have a look at what is killing you.");
             Util.warn("deathloop", "You died " + deaths.size() + " times within 10 minutes, so I will not resume the task by itself. "
                     + "Have a look at what is killing you first.");
