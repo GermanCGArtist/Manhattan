@@ -1,0 +1,8 @@
+// death-recover: the script does its own fighting (SurvivalKit's eat/defence are off). After a death the script is
+// paused, so SurvivalKit must fight on its own, ignore a calm enderman, and then hand back to the queue.
+on mobs > 0
+  defend()
+end
+print("TEST recover armed")
+wait 150
+print("TEST recover done")

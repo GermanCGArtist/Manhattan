@@ -25,6 +25,7 @@ final class Recovery {
     private static final int MAX_DEATHS = 2;                  // the third death in the window ends it
     private static final double SAFE_RADIUS = 16;
     private static final float SAFE_HEALTH = 0.8f;
+    private static final long IGNORE_THREATS_AFTER = 60_000;  // healthy but mobs stay near that nobody can reach: go on
 
     /** True from the death until the task is resumed or given up: eating and fighting may act without a task. */
     static volatile boolean waiting;
@@ -102,6 +103,7 @@ final class Recovery {
         deaths.removeIf(t -> now - t > DEATH_WINDOW);
         deaths.add(now);
         if (deaths.size() > MAX_DEATHS) {
+            if (queueMode) System.setProperty("survivalkit.gaveup", "you died " + deaths.size() + " times within 10 minutes - have a look at what is killing you.");
             Util.warn("deathloop", "You died " + deaths.size() + " times within 10 minutes, so I will not resume the task by itself. "
                     + "Have a look at what is killing you first.");
             return;
@@ -124,13 +126,16 @@ final class Recovery {
         if (!waiting || ++check % 20 != 0) return;
         if (now - waitStart > GIVE_UP_AFTER) {
             cancel();
+            if (queueMode) System.setProperty("survivalkit.gaveup", "could not get healthy again within 10 minutes after the respawn.");
             Util.warn("resumefail", "Could not get safe within 10 minutes, so the task is not resumed.");
             return;
         }
         if (PauseWatch.paused || p.isSleeping() || Util.guiOpen(p)) return;
         if (p.getHealth() < p.getMaxHealth() * SAFE_HEALTH) return;
-        if (!mc.level.getEntitiesOfClass(Monster.class, p.getBoundingBox().inflate(SAFE_RADIUS), Monster::isAlive).isEmpty()) return;
         if (SurvivalKitMod.eat.busy() || SurvivalKitMod.defence.busy() || SurvivalKitMod.restock.busy() || SurvivalKitMod.sleep.busy()) return;
+        // Only mobs the defence would fight count (not calm endermen, not mobs in a cave far below). If some
+        // stay near that the defence cannot get to, carry on after a while anyway: the task has its own defence.
+        if (DefenceProcess.threats(mc, p, SAFE_RADIUS) > 0 && now - waitStart < IGNORE_THREATS_AFTER) return;
 
         waiting = false;
         System.clearProperty("survivalkit.recovering");

@@ -47,7 +47,7 @@ final class EatProcess extends Feature {
     boolean active() {
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer p = mc.player;
-        if ((!Util.scriptOn("eat", cfg.eat) && !forced) || p == null || mc.level == null || mc.gameMode == null) {
+        if ((!Util.scriptOn("eat", cfg.eat) && !forced && !Recovery.waiting) || p == null || mc.level == null || mc.gameMode == null) {
             if (eating) abort();
             return false;
         }
@@ -61,11 +61,14 @@ final class EatProcess extends Feature {
         boolean hungry = p.getFoodData().getFoodLevel() <= cfg.eatBelow || forced;
         if (forced && !p.getFoodData().needsFood()) forced = false;
         int slot = -1;
-        if (p.getFoodData().needsFood() && (hungry || hurt)) {
-            slot = pickFood(p);
-        } else if (hurt && cfg.golden && goldenCooldown == 0 && p.getHealth() <= GOLDEN_AT) {
+        // In danger (4 hearts or less, or burning while hurt) a golden apple comes first: plain food heals far too slowly.
+        boolean danger = hurt && (p.getHealth() <= GOLDEN_AT || (p.isOnFire() && p.getHealth() <= p.getMaxHealth() * 0.6f));
+        if (danger && cfg.golden && goldenCooldown == 0) {
             slot = pickGolden(p);
             if (slot >= 0) goldenCooldown = 20 * 30;
+        }
+        if (slot < 0 && p.getFoodData().needsFood() && (hungry || hurt)) {
+            slot = pickFood(p);
         }
         if (slot < 0) {
             forced = false;

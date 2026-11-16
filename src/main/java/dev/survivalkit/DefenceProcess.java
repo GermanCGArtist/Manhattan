@@ -101,7 +101,7 @@ final class DefenceProcess extends Feature {
     boolean active() {
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer p = mc.player;
-        if ((!Util.scriptOn("defence", cfg.defence) && !forced) || p == null || mc.level == null || mc.gameMode == null) {
+        if ((!Util.scriptOn("defence", cfg.defence) && !forced && !Recovery.waiting) || p == null || mc.level == null || mc.gameMode == null) {
             if (target != null) { target = null; stopMidtownCombat(); }
             return false;
         }

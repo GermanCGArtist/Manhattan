@@ -45,9 +45,11 @@ final class Util {
     }
 
     static boolean addonOff(String feature) {
+        String f = feature.toLowerCase();
+        // After a death the script is paused: eating and fighting must still happen to get safe again.
+        if (Recovery.waiting && (f.contains("defence") || f.contains("eat"))) return false;
         String v = System.getProperty("baritonequeue.addons.off");
         if (v == null) return false;
-        String f = feature.toLowerCase();
         for (String k : v.split(",")) {
             k = k.trim();
             if (k.equals("all") || (!k.isEmpty() && f.contains(k))) return true;

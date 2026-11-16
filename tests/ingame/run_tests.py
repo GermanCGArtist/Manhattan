@@ -785,6 +785,36 @@ def test_defend(t):
     return "zombie killed (%s)" % line.split("TEST ", 1)[1]
 
 
+def test_death_recover(t):
+    """With SurvivalKit's own eat/defence off (the script fights through 'on mobs > 0'), a death pauses the script:
+    after the respawn SurvivalKit fights the zombie itself, does not wait for a calm enderman, and the queue carries on."""
+    reset_area(t)
+    t.cmd("/survival defence off", "/survival eat off", "/survival respawn on", "/survival resume on",
+          "/spawnpoint @s %d %d %d" % HOME, "/time set midnight")
+    t.run("death-recover.txt")
+    t.wait_chat("TEST recover armed", 10)
+    t.start_log()
+    # the mobs appear while the player is dead (the respawn comes 2 s later), so they are there when recovery checks
+    t.cmd("/kill @s",
+          "/summon minecraft:zombie %d %d %d {PersistenceRequired:1b}" % (HOME[0] + 4, HOME[1], HOME[2]),
+          "/summon minecraft:enderman %d %d %d {PersistenceRequired:1b,NoAI:1b}" % (HOME[0] + 9, HOME[1], HOME[2] + 3))
+    t.wait_chat("Once you are healthy", 20)
+    t.b.wait(lambda: t.state().get("health", 0) > 0, 30, what="the respawn")
+    t.cmd("/give @s diamond_sword 1", "/effect give @s minecraft:resistance 120 4 true")
+    line = t.wait_chat("the queue carries on", 90)
+    zombies = t.b("entities zombie 20")["count"]
+    stopped = next((l for l in t.lines() if "script stopped" in l.lower()), None)
+    running = t.b("script")["running"]
+    t.b("stopscript")
+    t.cmd("/kill @e[type=enderman]", "/kill @e[type=zombie]", "/time set noon",
+          "/survival defence on", "/survival eat on")
+    if stopped or not running:
+        raise Fail("the script stopped instead of carrying on: %s" % stopped)
+    if zombies:
+        raise Fail("resumed while the zombie was still alive (%s)" % line)
+    return "zombie fought after the respawn, enderman ignored, queue carried on"
+
+
 def test_midtown_smoke(t):
     """The script language runs on Midtown engine."""
     t.run("midtown-smoke.txt")
@@ -2244,7 +2274,7 @@ def _forest(group):
 TREE_TESTS = [("trees_small", test_trees_small)] + [("trees_forest_" + g, _forest(g)) for g in FOREST_GROUPS]
 
 
-TESTS = [("smoke", test_smoke), ("workspace", test_workspace), ("viewport", test_viewport), ("monitor", test_monitor), ("panels", test_panels), ("ui_screens", test_ui_screens), ("fill_water", test_fill_water), ("fill_water_deep", test_fill_water_deep), ("fill_water_shaft", test_fill_water_shaft), ("fill_water_submerged_shaft", test_fill_water_submerged_shaft), ("fill_water_submerged_pocket", test_fill_water_submerged_pocket), ("eat", test_eat), ("defend", test_defend), ("clear_resume", test_clear_resume), ("clear_overnight_stress", test_clear_overnight_stress), ("dump", test_dump), ("chest_index", test_chest_index), ("hotbar_tools", test_hotbar_tools), ("air", test_air), ("clear_wet", test_clear_wet),
+TESTS = [("smoke", test_smoke), ("workspace", test_workspace), ("viewport", test_viewport), ("monitor", test_monitor), ("panels", test_panels), ("ui_screens", test_ui_screens), ("fill_water", test_fill_water), ("fill_water_deep", test_fill_water_deep), ("fill_water_shaft", test_fill_water_shaft), ("fill_water_submerged_shaft", test_fill_water_submerged_shaft), ("fill_water_submerged_pocket", test_fill_water_submerged_pocket), ("eat", test_eat), ("defend", test_defend), ("death_recover", test_death_recover), ("clear_resume", test_clear_resume), ("clear_overnight_stress", test_clear_overnight_stress), ("dump", test_dump), ("chest_index", test_chest_index), ("hotbar_tools", test_hotbar_tools), ("air", test_air), ("clear_wet", test_clear_wet),
          ("schem_list", test_schem_list), ("schem_add", test_schem_add), ("schem_fix", test_schem_fix), ("schem_fix_wrong", test_schem_fix_wrong), ("schem_exact", test_schem_exact),
          ("colossal_schem", test_colossal_schem)]
 

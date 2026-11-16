@@ -199,6 +199,7 @@ public final class Runner {
     String start(List<String> script, String scriptName) {
         if (running) return "Already running (" + current() + ").";
         dev.survivalkit.Api.resetIndexRefresh();   // index_refresh() lasts for one run
+        System.clearProperty("survivalkit.gaveup");
         String text = String.join("\n", script);
         List<Ast.Stmt> program;
         try {
@@ -624,7 +625,10 @@ public final class Runner {
             recoveryWait = 0;
         } else if (++recoveryWait > 100) {   // nobody is bringing us back
             awaitRecovery = false;
-            halt("The script stopped (you died or the connection dropped, and auto-respawn/resume is off).");
+            String why = System.getProperty("survivalkit.gaveup");   // SurvivalKit tried to bring us back and gave up
+            System.clearProperty("survivalkit.gaveup");
+            halt(why != null ? "The script stopped after dying: " + why
+                    : "The script stopped (you died or the connection dropped, and auto-respawn/resume is off).");
         }
         return true;
     }
