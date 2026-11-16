@@ -1,0 +1,85 @@
+{
+  "name": "eat-offhand",
+  "instances": [
+    {
+      "id": "eat_offhand",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        {
+          "modrinth": {
+            "project_id_or_slug": "fabric-api",
+            "version_id": null
+          }
+        },
+        {
+          "local_path": "build/libs/baritonequeue-2.12.3.jar"
+        },
+        {
+          "local_path": "build/libs/manhattan-testbridge-2.12.3.jar"
+        }
+      ],
+      "account": {
+        "offline": {
+          "username": "EatTest0"
+        }
+      },
+      "ram_mb": 4096,
+      "cpu_cores": 2,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=eat_offhand"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=eat_offhand pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=eat_offhand pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "eat_offhand_full_hotbar",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        {
+          "modrinth": {
+            "project_id_or_slug": "fabric-api",
+            "version_id": null
+          }
+        },
+        {
+          "local_path": "build/libs/baritonequeue-2.12.3.jar"
+        },
+        {
+          "local_path": "build/libs/manhattan-testbridge-2.12.3.jar"
+        }
+      ],
+      "account": {
+        "offline": {
+          "username": "EatTest2"
+        }
+      },
+      "ram_mb": 4096,
+      "cpu_cores": 2,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=eat_offhand_full_hotbar"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=eat_offhand_full_hotbar pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=eat_offhand_full_hotbar pass=false|FATAL"
+        }
+      }
+    }
+  ],
+  "server": null,
+  "timeout_secs": 600
+}

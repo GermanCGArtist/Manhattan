@@ -740,6 +740,17 @@ public class TestBridge implements ClientModInitializer {
                 cmds.add("give @s diamond_pickaxe 1");
                 cmds.add("give @s cobblestone 64");
             }
+            case "eat_offhand", "eat_offhand_full_hotbar" -> {
+                cmds.add("difficulty easy");   // peaceful never lets the food bar drop
+                cmds.add("item replace entity @s weapon.offhand with golden_carrot 20");
+                if (scenario.equals("eat_offhand_full_hotbar")) {
+                    for (int i = 0; i < 9; i++) cmds.add("item replace entity @s hotbar." + i + " with dirt 64");
+                } else {
+                    cmds.add("item replace entity @s hotbar.0 with dirt 64");
+                    cmds.add("item replace entity @s hotbar.1 with diamond_pickaxe");
+                }
+                cmds.add("effect give @s minecraft:hunger 8 250 true");
+            }
             case "nav_bridge_off_pillar" -> {
                 cmds.add("fill 90 -55 80 160 -50 130 air");
                 cmds.add("fill 106 -60 98 106 -58 98 stone");
@@ -920,6 +931,8 @@ public class TestBridge implements ClientModInitializer {
                     mc.level.getBlockState(new BlockPos(98, -60, 100)).is(net.minecraft.world.level.block.Blocks.CHEST);
             case "nav_flat_obstacle" ->
                     mc.level.getBlockState(new BlockPos(115, -60, 100)).is(net.minecraft.world.level.block.Blocks.STONE);
+            case "eat_offhand", "eat_offhand_full_hotbar" ->
+                    mc.player != null && mc.player.getOffhandItem().is(net.minecraft.world.item.Items.GOLDEN_CARROT);
             case "nav_bridge_off_pillar" ->
                     mc.player != null && mc.player.blockPosition().equals(new BlockPos(106, -57, 98)) && mc.player.onGround();
             case "nav_pillar_up" ->
@@ -969,6 +982,25 @@ public class TestBridge implements ClientModInitializer {
                     "timeout(180)",
                     "disable()",
                     "goto(pos(180, -60, 100))"
+            );
+            case "eat_offhand", "eat_offhand_full_hotbar" -> List.of(
+                    "timeout(90)",
+                    "disable()",
+                    "wait(9)",
+                    "let before = food",
+                    "let dirt = count(\"dirt\")",
+                    "log(\"EAT_TEST before=\", before, \" dirt=\", dirt)",
+                    "if before >= 20",
+                    "  error(\"not hungry: food \" + str(before))",
+                    "end",
+                    "eat()",
+                    "log(\"EAT_TEST after=\", food, \" dirt=\", count(\"dirt\"))",
+                    "if food <= before",
+                    "  error(\"did not eat: food \" + str(food))",
+                    "end",
+                    "if count(\"dirt\") != dirt",
+                    "  error(\"dirt count changed (placed a block?)\")",
+                    "end"
             );
             case "nav_bridge_off_pillar" -> List.of(
                     "timeout(120)",

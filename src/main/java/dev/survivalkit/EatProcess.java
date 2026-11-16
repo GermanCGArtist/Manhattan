@@ -13,6 +13,8 @@ final class EatProcess extends Feature {
     private static final int EAT_TIMEOUT = 120;     // ticks; eating takes ~32
     private static final int FAIL_COOLDOWN = 200;
     private static final float GOLDEN_AT = 8f;      // 4 hearts
+    /** pickFood/pickGolden result for food held in the off hand (the off hand's inventory index). */
+    private static final int OFFHAND = 40;
 
     private boolean eating, started;
     private int timer, cooldown, goldenCooldown;
@@ -23,6 +25,7 @@ final class EatProcess extends Feature {
     private boolean offhandMode, preferMain;
     private InteractionHand hand = InteractionHand.MAIN_HAND;
     private int offFrom = -1;        // inventory index the food was swapped into the off hand from, -1 = none
+    private boolean offhandInHeld;   // the off-hand food was swapped into the held slot: swap back when done
     private String foodName = "";
     /** Set by the script's eat(): eat now if the food bar is not full, even above the eatBelow level. */
     static volatile boolean forced;
@@ -90,7 +93,7 @@ final class EatProcess extends Feature {
             ItemStack st = p.getInventory().getItem(i);
             if (!st.isEmpty() && Util.pathOf(st).equals("golden_apple")) return i;
         }
-        return -1;
+        return Util.pathOf(p.getOffhandItem()).equals("golden_apple") ? OFFHAND : -1;
     }
 
     /** Best food: the biggest one that does not overshoot the missing hunger, else the smallest one. */
@@ -104,6 +107,13 @@ final class EatProcess extends Feature {
             int score = n <= missing ? 100 + n : 100 - n;
             if (score > bestScore) { bestScore = score; best = i; }
         }
+        // the off hand counts too (often where the food is kept); on a tie it wins: nothing to swap
+        ItemStack off = p.getOffhandItem();
+        if (Util.isGoodFood(off)) {
+            int n = Util.nutrition(off);
+            int score = n <= missing ? 100 + n : 100 - n;
+            if (score >= bestScore) best = OFFHAND;
+        }
         return best;
     }
 
@@ -112,10 +122,29 @@ final class EatProcess extends Feature {
         started = false;
         timer = 0;
         reselects = 0;
-        ItemStack food = p.getInventory().getItem(slot);
+        ItemStack food = slot == OFFHAND ? p.getOffhandItem() : p.getInventory().getItem(slot);
         foodItem = food.getItem();
         foodName = food.getHoverName().getString();
         prevSlot = p.getInventory().getSelectedSlot();
+        if (slot == OFFHAND) {
+            // already in the off hand: eat it there. Holding the use key uses the main hand first, so it must not
+            // hold a block (it would be placed) or other food
+            offhandMode = true;
+            hand = InteractionHand.OFF_HAND;
+            offFrom = -1;
+            swappedFrom = -1;
+            int free = harmlessHotbarSlot(p);
+            if (free >= 0) {
+                p.getInventory().setSelectedSlot(free);
+            } else {
+                // every hotbar slot does something on right click: swap the off-hand food into the held slot instead
+                offhandMode = false;
+                hand = InteractionHand.MAIN_HAND;
+                swapOffhandWithHeld(mc, p, prevSlot);
+                offhandInHeld = true;
+            }
+            return;
+        }
         offhandMode = !preferMain && !Util.pathOf(p.getOffhandItem()).contains("totem")
                 && !(p.getMainHandItem().getItem() instanceof net.minecraft.world.item.BlockItem);
         hand = offhandMode ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND;
@@ -131,6 +160,34 @@ final class EatProcess extends Feature {
             swappedFrom = -1;
             p.getInventory().setSelectedSlot(slot);
         }
+    }
+
+    /** Swaps the off hand (inventory menu slot 45) with hotbar slot {@code hotbar}; doing it again swaps back. */
+    private static void swapOffhandWithHeld(Minecraft mc, LocalPlayer p, int hotbar) {
+        mc.gameMode.handleContainerInput(p.inventoryMenu.containerId, 45, hotbar,
+                net.minecraft.world.inventory.ContainerInput.SWAP, p);
+    }
+
+    /** A hotbar slot whose item does nothing on right click (empty, a tool, ...): the selected one if it is fine. */
+    private static int harmlessHotbarSlot(LocalPlayer p) {
+        int cur = p.getInventory().getSelectedSlot();
+        if (cur >= 0 && cur < 9 && harmless(p.getInventory().getItem(cur))) return cur;
+        for (int i = 0; i < 9; i++) {
+            if (harmless(p.getInventory().getItem(i))) return i;
+        }
+        return -1;
+    }
+
+    private static boolean harmless(ItemStack st) {
+        if (st.isEmpty()) return true;
+        if (st.getItem() instanceof net.minecraft.world.item.BlockItem) return false;
+        if (st.has(net.minecraft.core.component.DataComponents.FOOD)) return false;
+        String path = Util.pathOf(st);
+        // hoes till, shovels make paths, axes strip logs
+        if (path.endsWith("_hoe") || path.endsWith("_shovel") || path.endsWith("_axe")) return false;
+        return !(path.contains("bucket") || path.contains("bow") || path.contains("trident") || path.contains("shield")
+                || path.contains("pearl") || path.contains("potion") || path.contains("flint_and_steel")
+                || path.contains("fire_charge") || path.contains("spawn_egg"));
     }
 
     private void stepInternal() {
@@ -195,6 +252,10 @@ final class EatProcess extends Feature {
         if (offFrom >= 0) {
             Util.swapWithOffhand(mc, p, offFrom);
             offFrom = -1;
+        }
+        if (offhandInHeld) {
+            swapOffhandWithHeld(mc, p, prevSlot);
+            offhandInHeld = false;
         }
         if (swappedFrom >= 0) {
             Util.swapIntoHotbar(mc, p, swappedFrom, swappedTo);
