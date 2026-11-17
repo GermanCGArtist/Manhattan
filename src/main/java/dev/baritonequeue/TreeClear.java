@@ -35,8 +35,8 @@ import static dev.baritonequeue.Values.error;
  * them a little and sweeps the area for saplings, sticks and apples. With a chest, a nearly full inventory and the end
  * go into it. Returns what was gained (item -> count, what went into the chest included).
  *
- * A big selection is cut into chunks (the same 32 x 32 columns and bands in Y as clear_area, regions apart from each
- * other on their own) and worked one chunk at a time: each chunk is scanned just before it is cut, so work starts
+ * A big selection is cut into full-height chunks (the same 32 x 32 columns as clear_area, but no bands in Y; regions
+ * apart from each other on their own) and worked one chunk at a time: each chunk is scanned just before it is cut, so work starts
  * at once, and finished chunks are written to the job ledger and skipped after a restart. A tree belongs to the
  * chunk that finds its first block (the whole tree is collected, also the part over a chunk border). Sections of
  * the world that hold only air are skipped by every scan.
@@ -348,10 +348,12 @@ final class TreeClear {
 
         boolean chunked = Config.cfg.chunkEnabled;
         int size = chunked ? Config.cfg.chunkSize : 1 << 20;
+        // Full-height columns, no bands in Y: trees stand on the ground, and with bands the bot walked the whole footprint
+        // once per band (a 250 high selection = dozens of passes over mostly empty sky). Air-only sections are skipped by the scan.
         List<ChunkGrid.ColumnBox> chunks = ChunkGrid.orderSerpentine(
-                ChunkGrid.split(boxes, size, chunked ? Config.cfg.chunkSizeY : 0, chunked ? Config.cfg.chunkGap : -1), p.blockPosition());
+                ChunkGrid.split(boxes, size, 0, chunked ? Config.cfg.chunkGap : -1), p.blockPosition());
         // finished chunks of an earlier run (same selection, same sizes) are skipped; one chunk is not worth a ledger entry
-        String signature = "clear_trees:" + size + "y" + (chunked ? Config.cfg.chunkSizeY : 0) + "g" + (chunked ? Config.cfg.chunkGap : -1);
+        String signature = "clear_trees:" + size + "y0g" + (chunked ? Config.cfg.chunkGap : -1);
         for (int[] b : boxes) signature += ":" + b[0] + "," + b[1] + "," + b[2] + "-" + b[3] + "," + b[4] + "," + b[5];
         Jobs.Node actionNode = chunks.size() > 1 ? Jobs.action("clear_trees", line, "", QueueMod.runner != null && QueueMod.runner.running()) : null;
         Ledger ledger = Jobs.ledger();
