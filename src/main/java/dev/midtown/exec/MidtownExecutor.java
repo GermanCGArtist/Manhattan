@@ -55,7 +55,9 @@ public final class MidtownExecutor {
 
         boolean attack = false;
         boolean blockBreakingWait = false;
-        BlockPos aimBlock = target.targetBlock();
+        boolean landingMissing = false;
+        boolean placingLanding = false;
+        BlockPos aimBlock = target.action() == PathNode.ActionType.PARKOUR ? null : target.targetBlock();
 
         if (placeCooldown > 0) placeCooldown--;
 
@@ -71,9 +73,25 @@ public final class MidtownExecutor {
                         break;
                     }
                 }
+            } else if (target.action() == PathNode.ActionType.PARKOUR) {
+                // Parkour onto a landing that needs a block: place it from the takeoff block, never mid-air,
+                // and hold still until it is there (the jump waits for it, see shouldJump).
+                BlockPos tb = target.targetBlock();
+                if (tb != null && mc.level.getBlockState(tb).canBeReplaced()) {
+                    landingMissing = true;
+                    if (player.onGround()) {
+                        placingLanding = true;
+                        aimBlock = tb;
+                        if (placeCooldown == 0 && selectExpendableBlock(mc, player)
+                                && tryPlaceBlock(mc, player, tb, true)) {
+                            placeCooldown = 4;
+                        }
+                    }
+                }
             } else if (target.action() == PathNode.ActionType.BRIDGE) {
                 BlockPos tb = target.targetBlock();
-                if (tb != null && placeCooldown == 0 && mc.level.getBlockState(tb).canBeReplaced() && selectExpendableBlock(mc, player)) {
+                if (tb != null && placeCooldown == 0 && player.onGround()
+                        && mc.level.getBlockState(tb).canBeReplaced() && selectExpendableBlock(mc, player)) {
                     if (tryPlaceBlock(mc, player, tb, true)) {
                         placeCooldown = 4;
                     }
@@ -137,13 +155,13 @@ public final class MidtownExecutor {
 
         boolean isPillar = target.action() == PathNode.ActionType.PILLAR;
         double moveThresh = isPillar ? 0.25 : 0.12;
-        boolean moveAllowed = !blockBreakingWait;
+        boolean moveAllowed = !blockBreakingWait && !placingLanding;
         boolean forward = moveAllowed && horizDist > moveThresh && Math.abs(relAngle) <= 65.0f;
         boolean back = moveAllowed && horizDist > moveThresh && Math.abs(relAngle) >= 135.0f;
         boolean left = moveAllowed && horizDist > moveThresh && relAngle < -25.0f && relAngle > -155.0f;
         boolean right = moveAllowed && horizDist > moveThresh && relAngle > 25.0f && relAngle < 155.0f;
 
-        boolean jump = shouldJump(player, target);
+        boolean jump = shouldJump(player, target, horizDist, relAngle, landingMissing);
         boolean sneak = target.sneak();
         boolean sprint = target.sprint() && forward && !sneak && !player.isInWater();
 
@@ -402,9 +420,20 @@ public final class MidtownExecutor {
         return horizDist > 0.5 ? 0.0f : player.getXRot();
     }
 
-    private static boolean shouldJump(LocalPlayer player, PathNode target) {
+    private static boolean shouldJump(LocalPlayer player, PathNode target, double horizDist, float relAngle,
+                                      boolean landingMissing) {
+        if (target.action() == PathNode.ActionType.PARKOUR) {
+            if (player.isInWater()) return true;
+            if (!player.onGround() || landingMissing) return false;
+            // Jump at the takeoff edge, facing the landing: from the takeoff centre the landing is
+            // gap + 1 away, the edge gap + 0.5. Jumping from the centre loses half a block of reach,
+            // jumping sideways (still turning) misses the landing.
+            int dist = Math.max(Math.abs(target.pos().getX() - player.getBlockX()),
+                    Math.abs(target.pos().getZ() - player.getBlockZ()));
+            boolean atEdge = horizDist <= dist - 0.35 || !groundAhead(player, target);
+            return atEdge && Math.abs(relAngle) <= 20.0f;
+        }
         if (target.action() == PathNode.ActionType.ASCEND
-                || target.action() == PathNode.ActionType.PARKOUR
                 || target.action() == PathNode.ActionType.PILLAR) {
             return player.onGround() || player.isInWater();
         }
@@ -412,6 +441,17 @@ public final class MidtownExecutor {
             return true;
         }
         return player.horizontalCollision && player.onGround() && target.pos().getY() >= player.getBlockY();
+    }
+
+    /** True if there is still ground under the player's feet 0.35 blocks further toward {@code target}. */
+    private static boolean groundAhead(LocalPlayer player, PathNode target) {
+        double dx = target.pos().getX() + 0.5 - player.getX();
+        double dz = target.pos().getZ() + 0.5 - player.getZ();
+        double len = Math.hypot(dx, dz);
+        if (len < 1e-4) return true;
+        BlockPos ahead = BlockPos.containing(player.getX() + dx / len * 0.35, player.getY() - 0.5,
+                player.getZ() + dz / len * 0.35);
+        return !player.level().getBlockState(ahead).getCollisionShape(player.level(), ahead).isEmpty();
     }
 
     private static void setKey(KeyMapping key, boolean down) {

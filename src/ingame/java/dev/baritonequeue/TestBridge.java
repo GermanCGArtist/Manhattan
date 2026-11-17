@@ -760,6 +760,26 @@ public class TestBridge implements ClientModInitializer {
                 cmds.add("fill 90 -55 80 160 -50 130 air");
                 cmds.add("give @s cobblestone 64");
             }
+            case "nav_parkour_wall", "mine_parkour_wall" -> {
+                // A 1-wide stone walkway along a wall over a 3-deep pit, with 1, 2 and 3 wide gaps
+                // and a 1-gap step up. The bot must jump them, not place blocks (it has cobblestone).
+                cmds.add("fill 101 -63 96 130 -61 104 air");
+                cmds.add("fill 101 -61 100 129 -61 100 stone");
+                cmds.add("fill 101 -60 101 129 -58 101 stone");
+                cmds.add("setblock 106 -61 100 air");
+                cmds.add("fill 110 -61 100 111 -61 100 air");
+                cmds.add("fill 115 -61 100 117 -61 100 air");
+                cmds.add("setblock 120 -61 100 air");
+                cmds.add("fill 121 -60 100 129 -60 100 stone");
+                cmds.add("give @s cobblestone 64");
+                if (scenario.equals("mine_parkour_wall")) {
+                    // A stream in the pit: walking down there is slow, so the jumps are the way across.
+                    cmds.add("fill 101 -63 96 130 -63 104 water");
+                    cmds.add("give @s diamond_pickaxe 1");
+                    cmds.add("setblock 128 -59 100 iron_ore");
+                    cmds.add("setblock 129 -59 100 iron_ore");
+                }
+            }
             case "nav_pillar_bridge" -> {
                 cmds.add("fill 105 -63 96 124 -61 104 air");
                 cmds.add("fill 128 -60 100 128 -55 100 stone");
@@ -940,6 +960,9 @@ public class TestBridge implements ClientModInitializer {
                             && mc.level.getBlockState(new BlockPos(100, -61, 100)).is(net.minecraft.world.level.block.Blocks.GRASS_BLOCK);
             case "mine_pillars_floating", "clear_pillars_floating" ->
                     mc.level.getBlockState(new BlockPos(112, -53, 97)).is(net.minecraft.world.level.block.Blocks.STONE);
+            case "nav_parkour_wall", "mine_parkour_wall" ->
+                    mc.level.getBlockState(new BlockPos(125, -60, 100)).is(net.minecraft.world.level.block.Blocks.STONE)
+                            && mc.player != null && mc.player.blockPosition().equals(new BlockPos(100, -60, 100));
             case "nav_pillar_bridge" ->
                     mc.level.getBlockState(new BlockPos(128, -55, 100)).is(net.minecraft.world.level.block.Blocks.STONE);
             case "interrupt_mid_action" ->
@@ -1032,6 +1055,29 @@ public class TestBridge implements ClientModInitializer {
                     "log(\"PILLAR_TEST stone_left=\", left)",
                     "if left > 0",
                     "  error(\"stone left: \" + str(left))",
+                    "end"
+            );
+            case "nav_parkour_wall" -> List.of(
+                    "timeout(120)",
+                    "disable()",
+                    "goto(pos(127, -59, 100))",
+                    "log(\"PARKOUR_TEST cobble=\", count(\"cobblestone\"))",
+                    "if count(\"cobblestone\") < 64",
+                    "  error(\"placed blocks instead of jumping: cobblestone \" + str(count(\"cobblestone\")))",
+                    "end"
+            );
+            case "mine_parkour_wall" -> List.of(
+                    "timeout(150)",
+                    "disable()",
+                    "select(pos(127, -59, 99), pos(129, -58, 101))",
+                    "mine(\"iron_ore\")",
+                    "left = count_blocks(\"iron_ore\")",
+                    "log(\"PARKOUR_TEST ore_left=\", left, \" cobble=\", count(\"cobblestone\"))",
+                    "if left > 0",
+                    "  error(\"iron ore left: \" + str(left))",
+                    "end",
+                    "if count(\"cobblestone\") < 64",
+                    "  error(\"placed blocks instead of jumping: cobblestone \" + str(count(\"cobblestone\")))",
                     "end"
             );
             case "nav_pillar_bridge" -> List.of(

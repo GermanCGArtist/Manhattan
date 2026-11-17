@@ -593,6 +593,30 @@ public class MidtownTest {
             assertTrue("no long parkour over a deep drop",
                     highJump.edges().stream().noneMatch(e -> e instanceof MoveEdge.ParkourEdge));
 
+            // 7c. A 1-wide walkway along a wall over a 3-deep pit with 1, 2, 3 gaps and a 1-gap step up:
+            // jump the gaps, don't drop into the pit and pillar back out (blocks on hand).
+            GridWorldSnapshot wallWalk = GridWorldSnapshot.builder(-1, 0, -3, 29, 9, 3)
+                    .fillFloor(0, BlockKind.SOLID)
+                    .fillBox(0, 3, 0, 28, 3, 0, BlockKind.SOLID)
+                    .fillBox(0, 4, 1, 28, 6, 1, BlockKind.SOLID)
+                    .fillBox(20, 4, 0, 28, 4, 0, BlockKind.SOLID)
+                    .set(5, 3, 0, BlockKind.AIR)
+                    .fillBox(9, 3, 0, 10, 3, 0, BlockKind.AIR)
+                    .fillBox(14, 3, 0, 16, 3, 0, BlockKind.AIR)
+                    .set(19, 3, 0, BlockKind.AIR)
+                    .build();
+            CalculationContext wallWalkCtx = CalculationContext.builder()
+                    .allowPlace(true).allowBreak(true).allowParkour(true).expendableBlockCount(64).build();
+            PlanResult wallWalkResult = planner.planSync(wallWalk, wallWalkCtx, new BlockPos(0, 4, 0), GoalSpec.exact(new BlockPos(26, 5, 0)));
+            System.out.println("wall walk: " + wallWalkResult.status() + " expanded=" + wallWalkResult.nodesExpanded() + " ms=" + wallWalkResult.elapsedMillis() + " " + wallWalkResult.edges().stream()
+                    .map(e -> e.getClass().getSimpleName().replace("Edge", "") + "@" + e.to().toShortString().replace(" ", ""))
+                    .toList());
+            assertTrue("wall walk complete", wallWalkResult.isComplete());
+            assertTrue("wall walk jumps the gaps",
+                    wallWalkResult.edges().stream().filter(e -> e instanceof MoveEdge.ParkourEdge).count() >= 4);
+            assertTrue("wall walk places nothing",
+                    wallWalkResult.edges().stream().noneMatch(e -> e instanceof MoveEdge.PillarEdge || e instanceof MoveEdge.BridgeEdge));
+
             // 8. Hazard Avoidance (routing around lava)
             GridWorldSnapshot hazardWorld = GridWorldSnapshot.builder(0, 0, -2, 5, 5, 5)
                     .fillFloor(0, BlockKind.SOLID)

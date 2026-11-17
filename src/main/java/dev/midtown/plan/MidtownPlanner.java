@@ -109,6 +109,9 @@ public final class MidtownPlanner {
             }
             try {
                 PlanResult result = runAStar(world, ctx, start, GoalAdapter.forGoal(world, goal), timeBudgetMs, cancelled);
+                if (isColdPartial(result) && !cancelled.get()) {
+                    result = better(result, runAStar(world, ctx, start, GoalAdapter.forGoal(world, goal), timeBudgetMs, cancelled));
+                }
                 future.complete(result);
             } catch (Throwable t) {
                 future.completeExceptionally(t);
@@ -177,6 +180,9 @@ public final class MidtownPlanner {
             }
             try {
                 PlanResult result = planMineSync(world, ctx, start, filter, box, timeBudgetMs, excludedSnapshot, cancelled);
+                if (isColdPartial(result) && !cancelled.get()) {
+                    result = better(result, planMineSync(world, ctx, start, filter, box, timeBudgetMs, excludedSnapshot, cancelled));
+                }
                 future.complete(result);
             } catch (Throwable t) {
                 future.completeExceptionally(t);
@@ -242,6 +248,11 @@ public final class MidtownPlanner {
         long startNanos = System.nanoTime();
         long budgetNanos = Math.max(1L, timeBudgetMs) * 1_000_000L;
         long deadlineNanos = startNanos + budgetNanos;
+        // A cold JVM (fresh join, code not yet JIT-compiled) expands only a few hundred nodes in the
+        // budget, and the partial path it returns can commit to a bad route (dropping into a pit
+        // next to a parkour line). The budget only counts once MIN_EXPANDED nodes are searched,
+        // up to a hard limit.
+        long hardDeadlineNanos = startNanos + Math.max(budgetNanos * 8, 250_000_000L);
 
         int sx = start.getX();
         int sy = start.getY();
@@ -271,7 +282,8 @@ public final class MidtownPlanner {
             if (cancelled != null && cancelled.get()) {
                 return cancelledResult(start);
             }
-            if (expanded >= 128 && (expanded & 63) == 0 && System.nanoTime() >= deadlineNanos) {
+            if (expanded >= 128 && (expanded & 63) == 0
+                    && (expanded >= MIN_EXPANDED ? System.nanoTime() >= deadlineNanos : System.nanoTime() >= hardDeadlineNanos)) {
                 timedOut = true;
                 break;
             }
@@ -838,6 +850,24 @@ public final class MidtownPlanner {
     }
 
     /** True if under any gap column the first standable block is more than {@code maxFall} below {@code y}. */
+    /**
+     * A partial result from a search that stopped after only a few hundred nodes: the first plan
+     * after joining runs on cold (not yet JIT-compiled) code and its partial path can commit to a
+     * bad route. The async planners search once more; the second run is warm.
+     */
+    private static boolean isColdPartial(PlanResult r) {
+        return r != null && r.status() == PlanResult.Status.PARTIAL && r.nodesExpanded() < MIN_EXPANDED;
+    }
+
+    private static PlanResult better(PlanResult first, PlanResult second) {
+        if (second == null || !second.hasPath()) return first;
+        if (second.status() == PlanResult.Status.COMPLETE || second.nodesExpanded() > first.nodesExpanded()) return second;
+        return first;
+    }
+
+    /** Nodes searched before the time budget can end a search (see runAStar). */
+    static final int MIN_EXPANDED = 4096;
+
     private static boolean gapDeeperThan(BlockView world, int x, int y, int z, int dx, int dz, int gap, int maxFall) {
         for (int k = 1; k <= gap; k++) {
             int gx = x + dx * k;

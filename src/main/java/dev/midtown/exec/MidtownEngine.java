@@ -68,7 +68,9 @@ public final class MidtownEngine implements PathEngine {
 
     private volatile boolean allowBreak = true;
     private volatile boolean allowPlace = true;
-    private volatile boolean allowParkourPlace = true;
+    // Off by default: a landing block 2-4 blocks away is placed from the takeoff, which needs a free
+    // face in reach; bridging the gap is slower but never jumps onto air. setting allowParkourPlace.
+    private volatile boolean allowParkourPlace = false;
     private volatile boolean itemSaver = false;
     private volatile int itemSaverThreshold = 0;
     private volatile EngineStatus lastLoggedStatus = EngineStatus.IDLE;
@@ -500,8 +502,9 @@ public final class MidtownEngine implements PathEngine {
                 nodes = pathWithBreak;
             }
         }
-        LOGGER.info("[MidtownEngine] handleAsyncPlanResult: path found status={} nodes={} edges={} start={} path={}",
-                result.status(), nodes.size(), result.edges().size(), start.toShortString(), describePath(nodes));
+        LOGGER.info("[MidtownEngine] handleAsyncPlanResult: path found status={} nodes={} edges={} expanded={} ms={} start={} path={}",
+                result.status(), nodes.size(), result.edges().size(), result.nodesExpanded(), result.elapsedMillis(),
+                start.toShortString(), describePath(nodes));
         coordinator.startGoalWithPath(goal, start, nodes);
         checkStatusTransition();
     }

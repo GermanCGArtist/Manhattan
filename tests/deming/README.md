@@ -21,6 +21,7 @@ deming run submit tests/deming/bench-nav-pillar-bridge.json
 deming run submit tests/deming/bench-water-fill-tight.json
 deming run submit tests/deming/bench-schem-unsupported-reach.json
 deming run submit tests/deming/bench-survival-marathon.json
+deming run submit tests/deming/bench-parkour-wall.json   # parkour along a wall: jump the gaps, place nothing
 ```
 
 See [docs/DEMING_BENCHMARKS.md](../../docs/DEMING_BENCHMARKS.md) for the `BENCHMARK_RESULT` log format and scoring rubric.
