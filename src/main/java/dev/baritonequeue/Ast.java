@@ -334,7 +334,7 @@ final class Ast {
         void exec(Interp in, Env env) {
             String t = Values.str(text.eval(in, env)).trim();
             if (chat) in.await(() -> new Actions.ChatCommand(t), "/" + t, line);
-            else in.await(() -> new Actions.BaritoneCommand(t), t, line);
+            else in.await(() -> Actions.BaritoneCommand.legacy(t), t, line);
         }
     }
 

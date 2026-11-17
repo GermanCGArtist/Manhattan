@@ -2,6 +2,15 @@
 
 Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
 
+## Unreleased
+- Fixed: `goto()`, `mine()`, `clear_trees()` and the other native functions logged "PROBLEM: Legacy '#sel' command is
+  deprecated" on every call. Only a literal `#command` line in a script warns now.
+- `/queue jobs` shows the job ledger (which jobs and chunks earlier runs finished), `/queue reset [job]` forgets a
+  job's (or the whole script's) progress, `/queue retry <job>` opens its failed and deferred parts again. They use the
+  running script, or else the editor's open tab; reset and retry refuse while a script runs.
+- Documentation rewritten: getting started, language, every function, guides, workspace, chat commands, options,
+  troubleshooting (`docs/`).
+
 ## 2.12.1 – workspace polish, chunks on the map (2026-11-15)
 - Inventory and Tools show the real item pictures from the game's textures (letters only when there is none).
 - Nothing overlaps or is cut off any more: names, steps, alerts and handlers are shortened to the space they have

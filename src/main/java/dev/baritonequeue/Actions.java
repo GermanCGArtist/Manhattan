@@ -119,8 +119,22 @@ final class Actions {
         private double ax, ay, az;
         private boolean anchored;
 
+        /** Whether this came from a literal "#cmd" line in a script (the only case that is deprecated). */
+        private final boolean legacy;
+
+        /** Used by the native script functions (goto(), mine(), clear_trees() ...): no deprecation warning. */
         BaritoneCommand(String command) {
+            this(command, false);
+        }
+
+        /** A literal "#cmd" line typed in a script: runs the same, but warns that it is deprecated. */
+        static BaritoneCommand legacy(String command) {
+            return new BaritoneCommand(command, true);
+        }
+
+        private BaritoneCommand(String command, boolean legacy) {
             this.command = command;
+            this.legacy = legacy;
             this.estimate = Estimate.of(command);
         }
 
@@ -131,10 +145,10 @@ final class Actions {
             still = 0;
             builderPaused = 0;
             anchored = false;
-            if (!execute(command)) fail("Baritone did not accept '#" + command + "' (check the spelling).");
+            if (!execute(command, legacy)) fail("Baritone did not accept '#" + command + "' (check the spelling).");
         }
 
-        static boolean execute(String command) {
+        static boolean execute(String command, boolean warnLegacy) {
             try {
                 String norm = Util.normalize(command);
                 String trimmed = norm.trim();
@@ -142,7 +156,7 @@ final class Actions {
                 String[] parts = trimmed.split("\\s+");
                 String cmd = parts[0].toLowerCase();
                 var engine = dev.midtown.api.EngineSelector.current();
-                Util.warn("shim-" + cmd, "Legacy '#" + cmd + "' command is deprecated; use native script functions (goto(), mine(), ...).");
+                if (warnLegacy) Util.warn("shim-" + cmd,"Legacy '#" + cmd + "' command is deprecated; use native script functions (goto(), mine(), ...).");
                 switch (cmd) {
                     case "goto" -> {
                         if (parts.length >= 4) {
@@ -295,7 +309,7 @@ final class Actions {
                 Util.msg("The task has stood still for " + KICK_TICKS / 1200 + " min without getting anywhere. Starting '#"
                         + command + "' again (" + kicks + "/" + MAX_KICKS + ").");
                 dev.midtown.api.EngineSelector.current().cancel();
-                if (!execute(command)) fail("Engine did not accept '#" + command + "' when restarting it.");
+                if (!execute(command, false)) fail("Engine did not accept '#" + command + "' when restarting it.");
                 return false;
             }
             int limit = Runner.stallLimit();
