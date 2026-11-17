@@ -62,6 +62,8 @@ final class Modules {
         out.put("ui.layout", Config.cfg.uiLastMode);
         out.put("chunk.enabled", String.valueOf(Config.cfg.chunkEnabled));
         out.put("chunk.size", String.valueOf(Config.cfg.chunkSize));
+        out.put("chunk.sizeY", String.valueOf(Config.cfg.chunkSizeY));
+        out.put("chunk.gap", String.valueOf(Config.cfg.chunkGap));
         out.put("chunk.order", Config.cfg.chunkOrder);
         out.put("engine", dev.midtown.api.EngineSelector.selectedName());
         return out;
@@ -78,10 +80,13 @@ final class Modules {
                 throw new RuntimeException(e);
             }
         }
-        if (k.equalsIgnoreCase("chunk.enabled") || k.equalsIgnoreCase("chunk.size") || k.equalsIgnoreCase("chunk.order")) {
+        if (k.equalsIgnoreCase("chunk.enabled") || k.equalsIgnoreCase("chunk.size") || k.equalsIgnoreCase("chunk.order")
+                || k.equalsIgnoreCase("chunk.sizeY") || k.equalsIgnoreCase("chunk.gap")) {
             String fieldName = switch (k.toLowerCase(java.util.Locale.ROOT)) {
                 case "chunk.enabled" -> "chunkEnabled";
                 case "chunk.size" -> "chunkSize";
+                case "chunk.sizey" -> "chunkSizeY";
+                case "chunk.gap" -> "chunkGap";
                 default -> "chunkOrder";
             };
             try {
@@ -157,6 +162,8 @@ final class Modules {
             } else if (t == int.class) {
                 int v = Values.toInt(value, key, line);
                 if (f.getName().equals("chunkSize")) v = Math.max(8, Math.min(128, v));
+                if (f.getName().equals("chunkSizeY")) v = v <= 0 ? 0 : Math.max(4, Math.min(320, v));
+                if (f.getName().equals("chunkGap")) v = v < 0 ? -1 : Math.min(256, v);
                 f.setInt(r[0], v);
             } else if (t == double.class) {
                 f.setDouble(r[0], Values.toNum(value, key, line));

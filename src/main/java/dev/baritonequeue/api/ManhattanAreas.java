@@ -18,13 +18,13 @@ import java.util.function.BiConsumer;
  */
 public final class ManhattanAreas {
 
-    public static final int API_VERSION = 1;
+    public static final int API_VERSION = 2;   // 2: Role.STAIRS
     public static final int MAX_BOXES = 4096;
 
     private ManhattanAreas() {}
 
     public enum Role {
-        DIG, CLEAR, FLOOD, FILL, PROTECT, CUSTOM;
+        DIG, CLEAR, FLOOD, FILL, PROTECT, STAIRS, CUSTOM;
 
         static Role parse(String s) {
             if (s == null || s.isBlank()) return CUSTOM;
@@ -101,6 +101,10 @@ public final class ManhattanAreas {
             normalized.add(new int[]{minX, minY, minZ, maxX, maxY, maxZ});
         }
 
+        if (role == Role.STAIRS) {   // the stair shaft is its first box: a spiral needs at least 2 x 2 blocks
+            int[] f = normalized.get(0);
+            if (f[3] - f[0] < 1 || f[5] - f[2] < 1) return Result.INVALID;
+        }
         if (Areas.inUse(n)) {
             return Result.IN_USE;
         }

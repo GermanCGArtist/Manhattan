@@ -1,0 +1,13 @@
+// clear_shaft: a dirt tower is dug out from the top with a stair shaft in one corner (run_tests.py builds the tower).
+// An interruption must leave the hole by the stairs, and the shaft must be left standing.
+area_box("pit", pos(104, -60, 92), pos(111, -52, 99))
+stairs("pit_stairs", pos(104, -60, 92), pos(106, -52, 94))
+area("pit")
+on food < 14
+  let up = pos()
+  eat()
+  print("TEST shaft ate at={up}")
+end
+print("TEST shaft armed")
+let left = clear_area()
+print("TEST shaft cleared left={left}")

@@ -202,6 +202,18 @@ In-game (`TestBridge` / `tests/ingame`):
 * a 3-box `PROTECT` area: all three boxes are avoided (section 5, problem 2);
 * a few-hundred-box selection: every box gets a wireframe and the frame rate holds.
 
+## 9. The stair shaft (API version 2)
+
+`Role.STAIRS`: a saved area whose first box (at least 2 x 2) is the footprint of a spiral staircase for a dig.
+There is no link to store: `clear_area()` looks for a `stairs` area lying (in x and z) inside one of the boxes it
+digs, so Heavymatica only has to send the shaft as a region next to the DIG region of the same Heavymatic.
+
+* `API_VERSION` is 2. Heavymatica must not send `STAIRS` to version 1 (`ManhattanApi.put` answers `INVALID` itself).
+* `put(name, boxes, STAIRS, ...)` is `INVALID` when the first box is narrower than 2 blocks in x or z.
+* In a script, Heavymatica's export writes `stairs("name", pos(..), pos(..))` instead of `area_box` lines and puts it
+  before the dig.
+* Behaviour (what is carved, how the bot climbs out): `GUIDES.md`, "A stair shaft for getting out of the hole".
+
 ## Suggested order
 
 1. ~~Section 5, problem 1 (the restart bug)~~: done, together with problem 3.

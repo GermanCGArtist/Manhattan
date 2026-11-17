@@ -42,6 +42,10 @@ final class DefenceProcess extends Feature {
 
     private static double lastQueryRange = 8.0;
     private static final Set<Integer> ignored = new HashSet<>();
+    /** Mobs left alone for a while (not for good): entity id -> game time until which they do not count. */
+    private static final Map<Integer, Long> ignoredUntil = new HashMap<>();
+    private static final double LEASH = 5.0;          // blocks it may walk away from where a fight began, for a mob that is not after it
+    private static final int LEASH_IGNORE = 20 * 60;  // ticks a mob that was not worth following is left alone
 
     private LivingEntity target;
     private int fightTimer;
@@ -53,6 +57,7 @@ final class DefenceProcess extends Feature {
     private int noProgressTicks;
     private double bestDist = Double.MAX_VALUE;
     private BlockPos lastPursuitGoalPos;
+    private BlockPos fightOrigin;
     private int strafeTicks;
     private int strafeDir = 1;
 
@@ -66,7 +71,7 @@ final class DefenceProcess extends Feature {
 
     /** Unified threat predicate used by both threat counting and target selection. */
     public static boolean isThreat(LocalPlayer p, LivingEntity e, double maxRange, boolean includeCalmCreeper) {
-        if (p == null || e == null || e == p || !e.isAlive() || ignored.contains(e.getId())) return false;
+        if (p == null || e == null || e == p || !e.isAlive() || ignored.contains(e.getId()) || ignoredFor(p, e)) return false;
         if (e.distanceTo(p) > maxRange || Math.abs(e.getY() - p.getY()) > Math.max(4.0, maxRange * 0.6)) return false;
         if (e instanceof Warden || e instanceof WitherBoss) return false;
         if (e instanceof EnderMan em && !em.isCreepy()) return false;
@@ -78,7 +83,43 @@ final class DefenceProcess extends Feature {
             if (!angry) return false;
             return nm.getTarget() == null || nm.getTarget() == p;
         }
-        return e instanceof Monster || e instanceof Slime || e instanceof Phantom || e instanceof Hoglin;
+        return (e instanceof Monster || e instanceof Slime || e instanceof Phantom || e instanceof Hoglin) && relevant(p, e);
+    }
+
+    private static boolean targetsUs(LocalPlayer p, LivingEntity e) {
+        return e instanceof Mob mob && mob.getTarget() == p;
+    }
+
+    /**
+     * Is this mob worth leaving the work for? One that is after us, right next to us, or in plain sight and close.
+     * A mob behind a wall or down a cave that has not noticed us is not: walking to it is how the bot ended up
+     * wandering into caves for nothing. A script's defend() fights everything near, as before.
+     */
+    private static boolean relevant(LocalPlayer p, LivingEntity e) {
+        if (forced || targetsUs(p, e)) return true;
+        double d = e.distanceTo(p);
+        if (d <= 3.5) return true;
+        return d <= 6.0 && p.hasLineOfSight(e);
+    }
+
+    private static boolean ignoredFor(LocalPlayer p, LivingEntity e) {
+        Long until = ignoredUntil.get(e.getId());
+        if (until == null) return false;
+        if (p.level().getGameTime() >= until) {
+            ignoredUntil.remove(e.getId());
+            return false;
+        }
+        return true;
+    }
+
+    /** Stops going after the target and leaves it alone for a minute (it may still come to us and then counts again). */
+    private void dropTarget(LocalPlayer p) {
+        if (target != null) {
+            if (ignoredUntil.size() > 500) ignoredUntil.clear();
+            ignoredUntil.put(target.getId(), p.level().getGameTime() + LEASH_IGNORE);
+        }
+        target = null;
+        stopMidtownCombat();
     }
 
     /** Hostile mobs worth fighting within this range (the same choice as the fight itself makes). */
@@ -160,6 +201,7 @@ final class DefenceProcess extends Feature {
         }
         if (target == null) {
             target = pickTarget(mc, p);
+            fightOrigin = p.blockPosition();
             fightTimer = 0;
             blockedTicks = 0;
             noProgressTicks = 0;
@@ -208,6 +250,13 @@ final class DefenceProcess extends Feature {
             forced = false;
             forcedRange = RANGE;
             stopMidtownCombat();
+            return;
+        }
+
+        // a mob that is not after us is not followed far from where the fight began (no wandering off into caves)
+        if (!forced && !targetsUs(p, target) && fightOrigin != null
+                && p.blockPosition().distSqr(fightOrigin) > LEASH * LEASH) {
+            dropTarget(p);
             return;
         }
 
@@ -317,6 +366,10 @@ final class DefenceProcess extends Feature {
             else blockedTicks = 0;
 
             if (blockedTicks > 8 || noProgressTicks > 12) {
+                if (!forced && !targetsUs(p, target)) {   // cannot just walk to it and it is not after us: let it be
+                    dropTarget(p);
+                    return;
+                }
                 releaseKeys(mc);
                 midtownPursuing = true;
                 lastPursuitGoalPos = target.blockPosition();

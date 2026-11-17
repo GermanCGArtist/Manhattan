@@ -13,8 +13,12 @@ import java.util.Map;
 import java.util.TreeMap;
 
 /**
- * Pure spatial chunking geometry: splits multi-box selections into full-height {@link ColumnBox}
- * columns and orders them using serpentine (boustrophedon) or nearest-first strategies.
+ * Pure spatial chunking geometry: splits multi-box selections into {@link ColumnBox}es and orders them using
+ * serpentine (boustrophedon) or nearest-first strategies.
+ *
+ * Boxes that lie more than a gap apart (in any direction) are separate regions, each chunked on its own, so the
+ * bot never crosses the empty space between them just to come back. A region can also be cut into bands in Y
+ * (top band first), so a deep hole is dug out band by band instead of in one go.
  */
 public final class ChunkGrid {
     private ChunkGrid() {}
@@ -31,8 +35,20 @@ public final class ChunkGrid {
         }
     }
 
-    /** Full-height column slice of a selection, with sequential index and grid coordinates. */
-    public record ColumnBox(int index, int gridX, int gridZ, BlockPos min, BlockPos max) {
+    /**
+     * A slice of a selection, with sequential index and grid coordinates. gridY counts bands from the bottom,
+     * ySlices is the number of bands of its region (1 = full height), cluster numbers the separate regions.
+     */
+    public record ColumnBox(int index, int gridX, int gridZ, BlockPos min, BlockPos max, int gridY, int ySlices, int cluster) {
+        /** A full-height column of the only region. */
+        public ColumnBox(int index, int gridX, int gridZ, BlockPos min, BlockPos max) {
+            this(index, gridX, gridZ, min, max, 0, 1, 0);
+        }
+
+        ColumnBox withIndex(int i) {
+            return new ColumnBox(i, gridX, gridZ, min, max, gridY, ySlices, cluster);
+        }
+
         public int minX() { return min.getX(); }
         public int minY() { return min.getY(); }
         public int minZ() { return min.getZ(); }
@@ -95,7 +111,7 @@ public final class ChunkGrid {
         }
 
         String key() {
-            return minX() + "," + minZ();
+            return minX() + "," + minZ() + (ySlices > 1 ? "," + minY() : "");
         }
 
         String label() {
@@ -126,45 +142,117 @@ public final class ChunkGrid {
      * and the union width or depth exceeds {@code chunkSize}.
      */
     public static boolean shouldChunk(List<int[]> boxes, int chunkSize, boolean enabled) {
+        return shouldChunk(boxes, chunkSize, 0, -1, enabled);
+    }
+
+    /** As above, and also true when the selection is taller than {@code chunkSizeY} (> 0) or falls apart into regions. */
+    public static boolean shouldChunk(List<int[]> boxes, int chunkSize, int chunkSizeY, int gap, boolean enabled) {
         if (!enabled || chunkSize <= 0 || boxes == null || boxes.isEmpty()) return false;
         int[] u = unionBounds(boxes);
         if (u == null) return false;
         long spanX = (long) u[3] - u[0] + 1L;
         long spanZ = (long) u[5] - u[2] + 1L;
-        return spanX > chunkSize || spanZ > chunkSize;
+        long spanY = (long) u[4] - u[1] + 1L;
+        return spanX > chunkSize || spanZ > chunkSize || (chunkSizeY > 0 && spanY > chunkSizeY)
+                || (gap >= 0 && clusters(boxes, gap).size() > 1);
+    }
+
+    private static int[] norm(int[] b) {
+        return new int[]{Math.min(b[0], b[3]), Math.min(b[1], b[4]), Math.min(b[2], b[5]),
+                Math.max(b[0], b[3]), Math.max(b[1], b[4]), Math.max(b[2], b[5])};
+    }
+
+    /** The empty blocks between two boxes along one axis (0 = they touch or overlap). */
+    private static int axisGap(int aMin, int aMax, int bMin, int bMax) {
+        return Math.max(0, Math.max(bMin - aMax, aMin - bMax) - 1);
     }
 
     /**
-     * Computes union [minX..maxX, minY..maxY, minZ..maxZ], slices X and Z by {@code chunkSize}
-     * (preserving full [minY..maxY]), keeps only columns where {@code !col.clip(boxes).isEmpty()},
-     * and assigns sequential {@code index} (0..N-1) and {@code (gridX, gridZ)}.
+     * Groups the boxes into regions: two boxes belong together when the empty space between them is at most {@code gap}
+     * blocks in every direction (chains count). A negative gap keeps everything in one region. The regions are
+     * ordered by their minimum corner, so the result does not depend on the order of the boxes.
      */
+    public static List<List<int[]>> clusters(List<int[]> boxes, int gap) {
+        List<int[]> bs = new ArrayList<>();
+        for (int[] b : boxes) if (b != null && b.length >= 6) bs.add(norm(b));
+        if (bs.isEmpty()) return List.of();
+        if (gap < 0 || bs.size() == 1) return List.of(bs);
+        int n = bs.size();
+        int[] parent = new int[n];
+        for (int i = 0; i < n; i++) parent[i] = i;
+        for (int i = 0; i < n; i++) {
+            int[] a = bs.get(i);
+            for (int j = i + 1; j < n; j++) {
+                int[] b = bs.get(j);
+                if (axisGap(a[0], a[3], b[0], b[3]) <= gap && axisGap(a[1], a[4], b[1], b[4]) <= gap
+                        && axisGap(a[2], a[5], b[2], b[5]) <= gap) {
+                    int ra = find(parent, i), rb = find(parent, j);
+                    if (ra != rb) parent[Math.max(ra, rb)] = Math.min(ra, rb);
+                }
+            }
+        }
+        Map<Integer, List<int[]>> groups = new LinkedHashMap<>();
+        for (int i = 0; i < n; i++) groups.computeIfAbsent(find(parent, i), k -> new ArrayList<>()).add(bs.get(i));
+        List<List<int[]>> out = new ArrayList<>(groups.values());
+        out.sort(Comparator.<List<int[]>>comparingInt(g -> unionBounds(g)[0])
+                .thenComparingInt(g -> unionBounds(g)[2]).thenComparingInt(g -> unionBounds(g)[1]));
+        return out;
+    }
+
+    private static int find(int[] parent, int i) {
+        while (parent[i] != i) {
+            parent[i] = parent[parent[i]];
+            i = parent[i];
+        }
+        return i;
+    }
+
+    /** Full-height columns of the whole selection (one region, no bands in Y). */
     public static List<ColumnBox> split(List<int[]> boxes, int chunkSize) {
+        return split(boxes, chunkSize, 0, -1);
+    }
+
+    /**
+     * Cuts every region (see {@link #clusters}) into slices of {@code chunkSize} in X and Z and, when
+     * {@code chunkSizeY > 0}, of that height in Y; keeps only slices that hold part of the region and numbers them
+     * 0..N-1 with their grid position. {@code gap < 0} keeps the whole selection as one region.
+     */
+    public static List<ColumnBox> split(List<int[]> boxes, int chunkSize, int chunkSizeY, int gap) {
         if (boxes == null || boxes.isEmpty()) return List.of();
         if (chunkSize <= 0) throw new IllegalArgumentException("chunkSize must be > 0: " + chunkSize);
-        int[] u = unionBounds(boxes);
-        if (u == null) return List.of();
-        int minX = u[0], minY = u[1], minZ = u[2];
-        int maxX = u[3], maxY = u[4], maxZ = u[5];
-
+        List<List<int[]>> regions = clusters(boxes, gap);
         List<ColumnBox> out = new ArrayList<>();
         int idx = 0;
-        for (int gx = 0, x = minX; x <= maxX; gx++) {
-            long nextX = (long) x + chunkSize - 1L;
-            int x1 = (int) Math.min(maxX, nextX);
-            for (int gz = 0, z = minZ; z <= maxZ; gz++) {
-                long nextZ = (long) z + chunkSize - 1L;
-                int z1 = (int) Math.min(maxZ, nextZ);
-                ColumnBox candidate = new ColumnBox(idx, gx, gz, new BlockPos(x, minY, z), new BlockPos(x1, maxY, z1));
-                if (!candidate.clip(boxes).isEmpty()) {
-                    out.add(candidate);
-                    idx++;
+        for (int ci = 0; ci < regions.size(); ci++) {
+            List<int[]> region = regions.get(ci);
+            int[] u = unionBounds(region);
+            if (u == null) continue;
+            int minX = u[0], minY = u[1], minZ = u[2];
+            int maxX = u[3], maxY = u[4], maxZ = u[5];
+            long spanY = (long) maxY - minY + 1L;
+            int ySlices = chunkSizeY > 0 ? (int) ((spanY + chunkSizeY - 1) / chunkSizeY) : 1;
+            for (int gy = 0; gy < ySlices; gy++) {
+                int y0 = chunkSizeY > 0 ? (int) Math.min(maxY, (long) minY + (long) gy * chunkSizeY) : minY;
+                int y1 = chunkSizeY > 0 ? (int) Math.min(maxY, (long) y0 + chunkSizeY - 1L) : maxY;
+                for (int gx = 0, x = minX; x <= maxX; gx++) {
+                    long nextX = (long) x + chunkSize - 1L;
+                    int x1 = (int) Math.min(maxX, nextX);
+                    for (int gz = 0, z = minZ; z <= maxZ; gz++) {
+                        long nextZ = (long) z + chunkSize - 1L;
+                        int z1 = (int) Math.min(maxZ, nextZ);
+                        ColumnBox candidate = new ColumnBox(idx, gx, gz, new BlockPos(x, y0, z), new BlockPos(x1, y1, z1),
+                                gy, ySlices, ci);
+                        if (!candidate.clip(region).isEmpty()) {
+                            out.add(candidate);
+                            idx++;
+                        }
+                        if (z1 == maxZ) break;
+                        z = z1 + 1;
+                    }
+                    if (x1 == maxX) break;
+                    x = x1 + 1;
                 }
-                if (z1 == maxZ) break;
-                z = z1 + 1;
             }
-            if (x1 == maxX) break;
-            x = x1 + 1;
         }
         return out;
     }
@@ -176,6 +264,40 @@ public final class ChunkGrid {
     public static List<ColumnBox> orderSerpentine(List<ColumnBox> chunks, BlockPos startPos) {
         if (chunks == null || chunks.isEmpty()) return List.of();
 
+        // regions one after the other (the nearest first, then the nearest to where the last one ended), inside a
+        // region the bands from the top down, inside a band the rows back and forth
+        Map<Integer, List<ColumnBox>> byRegion = new TreeMap<>();
+        for (ColumnBox c : chunks) byRegion.computeIfAbsent(c.cluster(), k -> new ArrayList<>()).add(c);
+        List<List<ColumnBox>> left = new ArrayList<>(byRegion.values());
+
+        List<ColumnBox> out = new ArrayList<>(chunks.size());
+        BlockPos from = startPos;
+        while (!left.isEmpty()) {
+            List<ColumnBox> next = left.get(0);
+            if (from != null && left.size() > 1) {
+                double best = Double.MAX_VALUE;
+                for (List<ColumnBox> region : left) {
+                    double d = Double.MAX_VALUE;
+                    for (ColumnBox c : region) d = Math.min(d, c.distanceSqXZ(from));
+                    if (d < best) { best = d; next = region; }
+                }
+            }
+            left.remove(next);
+            Map<Integer, List<ColumnBox>> bands = new TreeMap<>(Comparator.reverseOrder());
+            for (ColumnBox c : next) bands.computeIfAbsent(c.gridY(), k -> new ArrayList<>()).add(c);
+            for (List<ColumnBox> band : bands.values()) {
+                List<ColumnBox> ordered = orderBand(band, from);
+                out.addAll(ordered);
+                if (!ordered.isEmpty()) from = ordered.get(ordered.size() - 1).centerXZ(0);
+            }
+        }
+        List<ColumnBox> numbered = new ArrayList<>(out.size());
+        for (int i = 0; i < out.size(); i++) numbered.add(out.get(i).withIndex(i));
+        return numbered;
+    }
+
+    /** One band of one region in boustrophedon order along grid rows, starting at the corner nearest {@code startPos}. */
+    private static List<ColumnBox> orderBand(List<ColumnBox> chunks, BlockPos startPos) {
         int minX = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
         int maxX = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
         Map<Integer, List<ColumnBox>> rowsByZ = new TreeMap<>();
@@ -200,16 +322,13 @@ public final class ChunkGrid {
         }
 
         List<ColumnBox> out = new ArrayList<>(chunks.size());
-        int idx = 0;
         for (int r = 0; r < zKeys.size(); r++) {
             List<ColumnBox> row = new ArrayList<>(rowsByZ.get(zKeys.get(r)));
             boolean reverseX = (r % 2 == 0) ? startMaxX : !startMaxX;
             row.sort(reverseX
                     ? Comparator.comparingInt(ColumnBox::gridX).reversed()
                     : Comparator.comparingInt(ColumnBox::gridX));
-            for (ColumnBox c : row) {
-                out.add(new ColumnBox(idx++, c.gridX(), c.gridZ(), c.min(), c.max()));
-            }
+            out.addAll(row);
         }
         return out;
     }
@@ -224,11 +343,17 @@ public final class ChunkGrid {
         if (strategy != OrderStrategy.NEAREST || playerPos == null) {
             return candidates.get(0);
         }
-        ColumnBox best = candidates.get(0);
-        double bestDist = best.distanceSqXZ(playerPos);
-        for (int i = 1; i < candidates.size(); i++) {
+        // never skip ahead to a lower band (a hole is dug from the top) or another region before this one is done
+        int region = Integer.MAX_VALUE, band = Integer.MIN_VALUE;
+        for (ColumnBox c : candidates) region = Math.min(region, c.cluster());
+        for (ColumnBox c : candidates) if (c.cluster() == region) band = Math.max(band, c.gridY());
+        ColumnBox best = null;
+        double bestDist = Double.MAX_VALUE;
+        for (int i = 0; i < candidates.size(); i++) {
             ColumnBox c = candidates.get(i);
+            if (c.cluster() != region || c.gridY() != band) continue;
             double d = c.distanceSqXZ(playerPos);
+            if (best == null) { best = c; bestDist = d; continue; }
             if (d < bestDist) {
                 best = c;
                 bestDist = d;

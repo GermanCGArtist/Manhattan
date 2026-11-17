@@ -143,6 +143,7 @@ public class ChunkRunnerTest {
         testCancelRestoresSelectionAndClearsProtection();
         testLedgerResumeSkipsDoneChunks();
         testConfigAndModulesOptions();
+        testBandsAndEmptyChunks();
         testMapLayersRegistrationAndState();
 
         System.out.println("ChunkRunnerTest: " + passes + " passed, " + fails + " failed.");
@@ -541,9 +542,34 @@ public class ChunkRunnerTest {
         eq("resumed run executed chunk 1", secondRuns.get(1), 1);
     }
 
+    /** A hole 24 tall in 12-high bands: top band first, and a band that is already empty is not walked to. */
+    private static void testBandsAndEmptyChunks() throws Exception {
+        freshLedger("bands");
+        Areas.setSingleBox(new BlockPos(0, 40, 0), new BlockPos(9, 63, 9));
+        FakeEnv env = new FakeEnv();
+        env.playerPos = new BlockPos(5, 64, 5);
+        List<String> ran = new ArrayList<>();
+        ChunkRunner runner = new ChunkRunner(new ChunkRunner.ChunkWorkload() {
+            @Override public String actionKind() { return "clear_area"; }
+            @Override public boolean skipWhenEmpty() { return true; }
+            @Override public List<int[]> fullBounds() { return List.of(new int[]{0, 40, 0, 9, 63, 9}); }
+            @Override public Actions.Action createChunkAction(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
+                ran.add(chunk.minY() + ".." + chunk.maxY());
+                return new Actions.Now(() -> 0.0);
+            }
+            @Override public int countRemaining(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
+                return chunk.minY() == 52 ? 0 : (ran.contains(chunk.minY() + ".." + chunk.maxY()) ? 0 : 5);   // the top band is air already
+            }
+        }, 32, ChunkGrid.OrderStrategy.SERPENTINE, env).withGeometry(12, -1);
+        runToCompletion(runner, 500);
+        check("bands runner finished", runner.done);
+        eq("the empty top band is skipped, only the lower band is dug", ran, List.of("40..51"));
+        eq("three bands existed", runner.chunks().size(), 2);
+    }
+
     private static void testConfigAndModulesOptions() {
         boolean oldEnabled = Config.cfg.chunkEnabled;
-        int oldSize = Config.cfg.chunkSize;
+        int oldSize = Config.cfg.chunkSize, oldSizeY = Config.cfg.chunkSizeY, oldGap = Config.cfg.chunkGap;
         String oldOrder = Config.cfg.chunkOrder;
         try {
             Modules.set("chunk.enabled", false, 1);
@@ -557,6 +583,15 @@ public class ChunkRunnerTest {
             Modules.set("chunk.size", 24.0, 1);
             eq("Modules.get chunk.size", Modules.get("chunk.size", 1), 24.0);
 
+            Modules.set("chunk.sizeY", 2.0, 1);
+            eq("chunk.sizeY clamped low to 4", Config.cfg.chunkSizeY, 4);
+            Modules.set("chunk.sizeY", 0.0, 1);
+            eq("chunk.sizeY 0 = off", Config.cfg.chunkSizeY, 0);
+            Modules.set("chunk.gap", -5.0, 1);
+            eq("chunk.gap below 0 = off", Config.cfg.chunkGap, -1);
+            Modules.set("chunk.gap", 12.0, 1);
+            eq("chunk.gap set", Config.cfg.chunkGap, 12);
+
             Modules.set("chunk.order", "NEAREST", 1);
             eq("chunk.order normalized lowercase", Config.cfg.chunkOrder, "nearest");
             eq("Modules.get chunk.order", Modules.get("chunk.order", 1), "nearest");
@@ -568,6 +603,8 @@ public class ChunkRunnerTest {
         } finally {
             Config.cfg.chunkEnabled = oldEnabled;
             Config.cfg.chunkSize = oldSize;
+            Config.cfg.chunkSizeY = oldSizeY;
+            Config.cfg.chunkGap = oldGap;
             Config.cfg.chunkOrder = oldOrder;
         }
     }

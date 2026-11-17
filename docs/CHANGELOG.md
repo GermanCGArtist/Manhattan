@@ -3,6 +3,17 @@
 Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
 
 ## Unreleased
+- New: a stair shaft for digging. `stairs("name", corner1, corner2)` (or the role STAIRS from Heavymatica, API version 2)
+  marks a 2 x 2 or larger area inside the dig. `clear_area()` never mines it; it carves a spiral staircase along its
+  ring, one step deeper with every layer, and when an `on` block fires inside the hole the bot first climbs out by
+  the stairs. The shaft is a saved area, so it is remembered.
+- `clear_area` no longer bridges over a gap just to tear the bridge down again: spots it can only reach by placing
+  blocks in mid-air wait, and are bridged once at the very end only when six or more lie behind the gap.
+- `clear_area` also splits a tall selection into bands (`chunk.sizeY`, 16 by default, top band first) and boxes that
+  are far apart (`chunk.gap`, 8 by default) into separate regions; chunks with nothing left to dig are skipped
+  without walking there.
+- Defence: mobs that are not after the bot and not close or in plain sight (behind a wall, down a cave) no longer
+  start a fight, and a fight is not followed more than 5 blocks from where it began unless the mob is after the bot.
 - Fixed: a job stayed "ended with N chunks open" on every run, and the script walked from chest to chest for nothing,
   because old ledger entries of a `clear_area` that had moved to another line (`clear_area@116`, now `@120`) still
   counted as open. Only the actions of the current script count now.

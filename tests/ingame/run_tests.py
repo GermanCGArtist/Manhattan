@@ -907,6 +907,56 @@ def test_clear_resume(t):
     return "strip cleared, resumed once eating was done (%s)" % resumed[0].split("] ", 1)[-1][:80]
 
 
+def test_clear_shaft(t):
+    """A dirt tower (8 x 8 x 9) is dug out from the top with a 3 x 3 stair shaft in one corner. Eating halfway must
+    leave the hole by the stairs (standing at the top again), the shaft stays, and its steps are carved."""
+    reset_area(t)
+    t.cmd("/fill 104 -60 92 111 -52 99 dirt", "/give @s diamond_shovel 1", "/give @s bread 8",
+          "/tp @s 109 -51 97 0 0")
+    time.sleep(1)
+    t.run("clear-shaft.txt")
+    t.wait_chat("TEST shaft armed", 10)
+    t.wait_chat("Clearing the area from the top", 10)
+    t.wait_chat("Stair shaft 'pit_stairs'", 10)
+    time.sleep(30)   # a few layers down first
+    t.cmd("/effect give @s minecraft:hunger 60 50 true")
+    t.b.wait(lambda: t.state()["food"] < 14, 60, what="food < 14")
+    t.cmd("/effect clear @s minecraft:hunger")
+    ate = t.wait_chat("TEST shaft ate", 120)
+    lines = t.lines()
+    if not any("Climbing out of the hole by the stair shaft" in l for l in lines):
+        raise Fail("it did not climb out by the stairs before eating (%s)" % ate)
+    import re
+    nums = re.findall(r"-?\d+(?:\.\d+)?", ate.split("at=", 1)[-1])
+    if len(nums) < 3 or float(nums[1]) < -52.5:
+        raise Fail("not back at the top when the eat handler ran: %s" % ate)
+    line = t.wait_chat("TEST shaft cleared", 480)
+    if "left=0" not in line:
+        raise Fail("clear_area did not return 0: " + line)
+    # everything outside the shaft is gone
+    solid = [(x, y, z) for x in range(104, 112) for y in range(-60, -51) for z in range(92, 100)
+             if not (104 <= x <= 106 and 92 <= z <= 94) and "air" not in t.block((x, y, z))]
+    if solid:
+        raise Fail("%d blocks left outside the shaft, e.g. %s" % (len(solid), solid[:5]))
+    # the centre pillar of the shaft stays
+    for y in range(-60, -52):
+        if "air" in t.block((105, y, 93)):
+            raise Fail("the shaft's centre pillar was mined at y=%d" % y)
+    # a staircase: step n stands on the ring cell n mod 8, one lower each, three high, with a floor under it
+    ring = [(104, 92), (105, 92), (106, 92), (106, 93), (106, 94), (105, 94), (104, 94), (104, 93)]
+    for n in range(0, 10):
+        x, z = ring[n % 8]
+        feet = -51 - n
+        if feet < -60:
+            break
+        for y in (feet, feet + 1):
+            if "air" not in t.block((x, y, z)):
+                raise Fail("step %d is not carved at %d %d %d" % (n, x, y, z))
+        if "air" in t.block((x, feet - 1, z)):
+            raise Fail("step %d has no floor at %d %d %d" % (n, x, feet - 1, z))
+    return "tower dug, climbed out by the stairs to y=%s, shaft left standing with 10 steps" % nums[1]
+
+
 def test_clear_overnight_stress(t):
     """Multi-layer 10x4x10 clear_area with on full->dump, on restock_needed->restock, on bed_time->sleep, on mobs->defend, on food->eat."""
     new_world(t, "clear-overnight-stress", kit=False)
@@ -2302,7 +2352,7 @@ def _forest(group):
 TREE_TESTS = [("trees_small", test_trees_small)] + [("trees_forest_" + g, _forest(g)) for g in FOREST_GROUPS]
 
 
-TESTS = [("smoke", test_smoke), ("workspace", test_workspace), ("viewport", test_viewport), ("monitor", test_monitor), ("panels", test_panels), ("ui_screens", test_ui_screens), ("fill_water", test_fill_water), ("fill_water_deep", test_fill_water_deep), ("fill_water_shaft", test_fill_water_shaft), ("fill_water_submerged_shaft", test_fill_water_submerged_shaft), ("fill_water_submerged_pocket", test_fill_water_submerged_pocket), ("eat", test_eat), ("defend", test_defend), ("death_recover", test_death_recover), ("death_unlimited", test_death_unlimited),("clear_resume", test_clear_resume), ("clear_overnight_stress", test_clear_overnight_stress), ("dump", test_dump), ("chest_index", test_chest_index), ("hotbar_tools", test_hotbar_tools), ("air", test_air), ("clear_wet", test_clear_wet),
+TESTS = [("smoke", test_smoke), ("workspace", test_workspace), ("viewport", test_viewport), ("monitor", test_monitor), ("panels", test_panels), ("ui_screens", test_ui_screens), ("fill_water", test_fill_water), ("fill_water_deep", test_fill_water_deep), ("fill_water_shaft", test_fill_water_shaft), ("fill_water_submerged_shaft", test_fill_water_submerged_shaft), ("fill_water_submerged_pocket", test_fill_water_submerged_pocket), ("eat", test_eat), ("defend", test_defend), ("death_recover", test_death_recover), ("death_unlimited", test_death_unlimited),("clear_resume", test_clear_resume), ("clear_shaft", test_clear_shaft), ("clear_overnight_stress", test_clear_overnight_stress), ("dump", test_dump), ("chest_index", test_chest_index), ("hotbar_tools", test_hotbar_tools), ("air", test_air), ("clear_wet", test_clear_wet),
          ("schem_list", test_schem_list), ("schem_add", test_schem_add), ("schem_fix", test_schem_fix), ("schem_fix_wrong", test_schem_fix_wrong), ("schem_exact", test_schem_exact),
          ("colossal_schem", test_colossal_schem)]
 

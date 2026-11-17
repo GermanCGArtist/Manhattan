@@ -467,11 +467,14 @@ final class GameBuiltins {
             int layers = a.isEmpty() ? 3 : toInt(a.get(0), "The layers of clear_area()", l);
             return in.await(() -> {
                 List<int[]> boxes = Areas.read();
-                if (!ChunkGrid.shouldChunk(boxes, cfg.chunkSize, cfg.chunkEnabled)) {
+                Shaft.current = Shaft.find(boxes);   // the stair shaft of this dig, if a "stairs" area lies in it
+                if (Shaft.current != null) Util.msg("Stair shaft '" + Shaft.current.name() + "' stays standing; its steps are carved as the hole gets deeper.");
+                if (!ChunkGrid.shouldChunk(boxes, cfg.chunkSize, cfg.chunkSizeY, cfg.chunkGap, cfg.chunkEnabled)) {
                     return clearFeature(layers);
                 }
                 return new ChunkRunner(new ChunkRunner.ChunkWorkload() {
                     @Override public String actionKind() { return "clear_area"; }
+                    @Override public boolean skipWhenEmpty() { return true; }
                     @Override public List<int[]> fullBounds() { return boxes; }
                     @Override public Actions.Action createChunkAction(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
                         return clearFeature(layers);
@@ -480,7 +483,7 @@ final class GameBuiltins {
                         Minecraft mc = Minecraft.getInstance();
                         return mc == null || mc.level == null ? 0 : ClearProcess.countSolid(mc.level, clippedBoxes);
                     }
-                });
+                }).withGeometry(cfg.chunkSizeY, cfg.chunkGap);
             }, "clear_area", l);
         });
         def(g, "clear_trees", 0, 1, "clear_trees([chest])", "mine every tree in the selection, one by one, nearest first (logs, mangrove roots, huge mushrooms, vines, bee nests; leaves are left to decay), picking up the drops and taking the scaffolding down after each tree, then sweeping for saplings; with a chest, a full inventory and the end go into it; returns what was gained (item -> count)", (in, a, l) -> {
@@ -838,6 +841,14 @@ final class GameBuiltins {
         def(g, "area_box", 3, 3, "area_box(\"name\", corner1, corner2)", "an area written in the script: the first area_box of a name replaces what was saved under it, more of the same name add boxes; area(\"name\") selects it", (in, a, l) -> {
             Pos p = toPos(a, 1, "area_box()", l), q = toPos(a, 2, "area_box()", l);
             String err = Areas.box(str(a.get(0)), p.x(), p.y(), p.z(), q.x(), q.y(), q.z());
+            if (err != null) throw error(err, l);
+            return null;
+        });
+        def(g, "stairs", 3, 3, "stairs(\"name\", corner1, corner2)", "the stair shaft of a dig: a saved area (at least 2 x 2 blocks) inside the area clear_area() digs out. It is never mined; a spiral staircase is carved along its outer ring, a step deeper with every layer, and the bot leaves the hole by it (food, chests, the bed). Heavymatica sends one as a region with the role STAIRS", (in, a, l) -> {
+            Pos p = toPos(a, 1, "stairs()", l), q = toPos(a, 2, "stairs()", l);
+            int[] box = {Math.min(p.x(), q.x()), Math.min(p.y(), q.y()), Math.min(p.z(), q.z()), Math.max(p.x(), q.x()), Math.max(p.y(), q.y()), Math.max(p.z(), q.z())};
+            if (!Shaft.valid(box)) throw error("The stair shaft needs at least 2 x 2 blocks of floor (a spiral needs something to go around, or a ring of four cells).", l);
+            String err = Areas.box(str(a.get(0)), box[0], box[1], box[2], box[3], box[4], box[5], "stairs");
             if (err != null) throw error(err, l);
             return null;
         });

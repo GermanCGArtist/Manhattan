@@ -62,6 +62,11 @@ public class ChunkRunner extends Actions.Action {
             return true;
         }
 
+        /** True: a chunk whose blocks are all loaded and that has nothing left to do is ticked off without walking there. */
+        default boolean skipWhenEmpty() {
+            return false;
+        }
+
         default void onChunkStart(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {}
 
         default void onChunkEnd(ChunkGrid.ColumnBox chunk) {}
@@ -167,6 +172,8 @@ public class ChunkRunner extends Actions.Action {
     private final int chunkSize;
     private final ChunkGrid.OrderStrategy strategy;
     private final Env env;
+    private int chunkSizeY;   // > 0: bands of this height in Y, top first
+    private int gap = -1;     // >= 0: boxes further apart than this are separate regions
 
     private List<int[]> fullBounds = List.of();
     private List<int[]> savedSelection;
@@ -208,6 +215,13 @@ public class ChunkRunner extends Actions.Action {
         this.env = Objects.requireNonNull(env, "env");
     }
 
+    /** Also cut the selection into bands in Y and split it into regions at gaps (see {@link ChunkGrid#split}). */
+    public ChunkRunner withGeometry(int chunkSizeY, int gap) {
+        this.chunkSizeY = Math.max(0, chunkSizeY);
+        this.gap = gap;
+        return this;
+    }
+
     Phase phase() { return phase; }
     Step step() { return step; }
     int retryPass() { return retryPass; }
@@ -223,7 +237,7 @@ public class ChunkRunner extends Actions.Action {
             savedSelection = null;
         }
 
-        List<ChunkGrid.ColumnBox> raw = ChunkGrid.split(fullBounds, chunkSize);
+        List<ChunkGrid.ColumnBox> raw = ChunkGrid.split(fullBounds, chunkSize, chunkSizeY, gap);
         if (raw.isEmpty()) {
             finishCleanly(0.0);
             return;
@@ -245,7 +259,7 @@ public class ChunkRunner extends Actions.Action {
         currentClipped = null;
         activeChunkAction = null;
 
-        signature = buildSignature(workload.actionKind(), chunkSize, fullBounds);
+        signature = buildSignature(workload.actionKind(), chunkSize, chunkSizeY, gap, fullBounds);
         actionNode = Jobs.action(sanitizeIdPart(workload.actionKind()), env.runnerLine(), "", env.runnerRunning());
         actionNode.state = Ledger.State.RUNNING;
 
@@ -297,6 +311,10 @@ public class ChunkRunner extends Actions.Action {
             if (!primaryQueue.isEmpty()) {
                 ChunkGrid.ColumnBox next = ChunkGrid.pickNext(primaryQueue, env.playerBlockPos(), strategy);
                 primaryQueue.remove(next);
+                if (nothingToDo(next)) {
+                    tickOffEmpty(next);
+                    return;
+                }
                 beginChunk(next, false);
                 return;
             }
@@ -335,6 +353,23 @@ public class ChunkRunner extends Actions.Action {
             }
             finishCleanly(computeTotalRemaining());
         }
+    }
+
+    /** A chunk of solid-free air (a cave, an earlier dig) or already finished: no reason to walk there. */
+    private boolean nothingToDo(ChunkGrid.ColumnBox chunk) {
+        if (!workload.skipWhenEmpty() || !allMcChunksLoaded(chunk)) return false;
+        return workload.countRemaining(chunk, clippedByChunk.getOrDefault(chunk.index(), List.of())) == 0;
+    }
+
+    private void tickOffEmpty(ChunkGrid.ColumnBox chunk) {
+        Jobs.Node node = nodeByChunk.get(chunk.index());
+        if (node != null) {
+            Jobs.set(node, Ledger.State.DONE, node.tries, 0, null, signature);
+        }
+        if (actionNode != null) {
+            Jobs.settle(actionNode);
+        }
+        syncProtectedCompletedAreas(null);
     }
 
     private boolean startNextRetryPass() {
@@ -709,9 +744,10 @@ public class ChunkRunner extends Actions.Action {
         return out;
     }
 
-    private static String buildSignature(String kind, int chunkSize, List<int[]> bounds) {
+    private static String buildSignature(String kind, int chunkSize, int chunkSizeY, int gap, List<int[]> bounds) {
         StringBuilder sb = new StringBuilder();
         sb.append(sanitizeIdPart(kind)).append(':').append(chunkSize);
+        if (chunkSizeY > 0 || gap >= 0) sb.append('y').append(chunkSizeY).append('g').append(gap);
         for (int[] b : bounds) {
             sb.append(':').append(b[0]).append(',').append(b[1]).append(',').append(b[2])
               .append('-').append(b[3]).append(',').append(b[4]).append(',').append(b[5]);

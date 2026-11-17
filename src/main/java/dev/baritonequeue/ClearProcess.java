@@ -1,5 +1,6 @@
 package dev.baritonequeue;
 
+import dev.midtown.api.Area;
 import dev.midtown.api.EngineSelector;
 import dev.midtown.api.EngineStatus;
 import dev.midtown.api.GoalSpec;
@@ -73,6 +74,11 @@ public final class ClearProcess {
     private long stepTick, tickCount;
     private boolean keysHeld;
     private boolean midtownTraveling;
+    private Shaft.Spec shaft;                     // the stair shaft of this dig (kept, and carved step by step), or null
+    private final List<BlockPos> deferred = new ArrayList<>();   // stops behind a gap, tried again at the end of the pass
+    private boolean retryingDeferred, allowBridge;
+    private final Set<BlockPos> shaftStops = new HashSet<>();   // stops on the shaft's steps: stood on exactly, to carve the next step
+    private int gapSkipped;
 
     // where the time goes
     private int broken, tBreak, tWalk, tTravel, tPick, tOther, nearFluid;
@@ -110,6 +116,9 @@ public final class ClearProcess {
         paused = false;
         boxes.clear();
         boxes.addAll(Areas.read());
+        shaft = Shaft.current;
+        Shaft.stopClimb();
+        keepShaft();
         if (boxes.isEmpty()) return "Select the area first: area(\"name\") or select(corner1, corner2).";
         yTop = Integer.MIN_VALUE;
         yBottom = Integer.MAX_VALUE;
@@ -119,6 +128,7 @@ public final class ClearProcess {
         scaffoldCleanupPass = false;
         skipped.clear();
         ignoredItems.clear();
+        gapSkipped = 0;
         planPass(mc.level);
         broken = tBreak = tWalk = tTravel = tPick = tOther = nearFluid = resumes = travelFails = 0;
         workTicks = 0;
@@ -137,6 +147,7 @@ public final class ClearProcess {
 
     void cancel() {
         paused = false;
+        releaseShaft();
         if (!working) return;
         working = false;
         activeClear = false;
@@ -151,6 +162,8 @@ public final class ClearProcess {
         end();
         paused = true;
         pausedBoxes = new ArrayList<>(boxes);
+        // leaving the hole (food, a chest, the bed): by the stairs, not by whatever the pathfinder makes of the pit
+        if (shaft != null) Shaft.startClimb();
     }
 
     /** After the "on" block: on from the same stop (or from scratch if the selection changed meanwhile). */
@@ -173,6 +186,22 @@ public final class ClearProcess {
         Util.msg("Carrying on clearing at stop " + Math.min(stop + 1, stops.size()) + " of " + stops.size()
                 + " (layer y " + feetY + ", " + broken + " blocks so far).");
         return null;
+    }
+
+    private static final String SHAFT_KEEP = "manhattan_stair_shaft";
+
+    /** The pathfinder may walk the shaft but never digs into the part that stays (see {@link Shaft#keepBoxes}). */
+    private void keepShaft() {
+        if (shaft == null) return;
+        int yMin = Integer.MAX_VALUE;
+        for (int[] b : boxes) yMin = Math.min(yMin, b[1]);
+        List<Area> keep = new ArrayList<>();
+        for (int[] k : Shaft.keepBoxes(shaft, yMin)) keep.add(new Area(k[0], k[1], k[2], k[3], k[4], k[5]));
+        EngineSelector.current().setProtectedArea(SHAFT_KEEP, keep);
+    }
+
+    private void releaseShaft() {
+        if (shaft != null) EngineSelector.current().removeProtectedArea(SHAFT_KEEP);
     }
 
     private void end() {
@@ -207,6 +236,11 @@ public final class ClearProcess {
     private void planPass(Level level) {
         stops.clear();
         stop = 0;
+        deferred.clear();
+        retryingDeferred = false;
+        allowBridge = false;
+        shaftStops.clear();
+        addShaftStops();
         for (int[] b : boxes) {
             if (feetY < b[1] || feetY > b[4] + pass) continue;
             boolean alongZ = (b[5] - b[2]) >= (b[3] - b[0]);
@@ -229,6 +263,19 @@ public final class ClearProcess {
             }
         }
         addUncoveredBridgeStops(level);
+    }
+
+    /**
+     * The steps of the shaft that belong to this pass (their floor at feetY or higher), each carved from the step above
+     * it, top down: the corner of a shaft is out of sight from the lanes, so it is dug from the stairs themselves.
+     */
+    private void addShaftStops() {
+        if (shaft == null) return;
+        for (int n = 1; shaft.topY() + 1 - n >= Math.max(feetY, yBottom); n++) {
+            BlockPos from = shaft.stand(n - 1);
+            stops.add(from);
+            shaftStops.add(from);
+        }
     }
 
     /** Appends standing stops for any wanted blocks in this pass band not reachable from a solid grid stop. */
@@ -363,6 +410,7 @@ public final class ClearProcess {
     /** A block of the selection this pass (and anything above it that is still there) should break. */
     private boolean wanted(Level level, BlockPos p) {
         if (p.getY() < feetY || skipped.contains(p)) return false;
+        if (shaft != null && Shaft.inFootprint(shaft, p) && !Shaft.isCarve(shaft, p, feetY)) return false;   // the shaft stays
         if (!inSelection(p) && !(inSelection(p, 2) && dev.buildtools.Api.isScaffold(level, p))) return false;
         BlockState s = level.getBlockState(p);
         if (s.isAir() || !s.getFluidState().isEmpty()) return false;
@@ -502,6 +550,7 @@ public final class ClearProcess {
     /** Every client tick: drives clear_area when active, or releases keys if paused. */
     void tick() {
         tickCount++;
+        Shaft.tick();
         if (working && (Minecraft.getInstance().player == null || PauseWatch.paused)) {
             if (Minecraft.getInstance().player == null) cancel();
             releaseKeys();
@@ -514,6 +563,7 @@ public final class ClearProcess {
             } catch (Throwable t) {
                 t.printStackTrace();
                 failure = "clear_area hit an error (" + t + "). Details are in the game log.";
+                releaseShaft();
                 working = false;
                 activeClear = false;
                 end();
@@ -694,6 +744,28 @@ public final class ClearProcess {
         int checked = 0;
         while (true) {
             if (stop >= stops.size()) {
+                if (!deferred.isEmpty()) {
+                    if (!retryingDeferred) {   // the digging may have opened a way meanwhile
+                        retryingDeferred = true;
+                        stops.clear();
+                        stops.addAll(deferred);
+                        deferred.clear();
+                        stop = 0;
+                        continue;
+                    }
+                    if (lastPass && !scaffoldCleanupPass && !allowBridge && deferred.size() >= BRIDGE_WORTH) {
+                        // a whole region only reachable over a gap: bridge it once, at the very end
+                        allowBridge = true;
+                        Util.msg("Part of the area lies behind a gap; bridging to it once, now that everything else is done.");
+                        stops.clear();
+                        stops.addAll(deferred);
+                        deferred.clear();
+                        stop = 0;
+                        continue;
+                    }
+                    gapSkipped += deferred.size();
+                    deferred.clear();
+                }
                 if (!nextPass(level)) { finish(level); return; }
                 continue;
             }
@@ -720,6 +792,15 @@ public final class ClearProcess {
             target = s;
             break;
         }
+        if (shaftStops.contains(stops.get(stop)) && target.equals(stops.get(stop))) exactTarget = true;   // on the step itself
+        // no bridging over gaps just to build it and tear it down again: a stop that can only be reached by placing
+        // blocks in mid-air waits (the digging may open a way) and is only bridged at the end, if it is worth it
+        if (!allowBridge && !exactTarget && !p.blockPosition().equals(target)
+                && !straight(level, p.blockPosition(), target) && !reachableDry(level, p.blockPosition(), target)) {
+            deferred.add(stops.get(stop));
+            stop++;
+            return;
+        }
         stateTicks = 0;
         System.out.println("[Queue] clear_area stop " + (stop + 1) + "/" + stops.size() + " y=" + feetY + ": "
                 + stops.get(stop).toShortString() + " -> stand " + target.toShortString() + (exactTarget ? " (pillar beside)" : ""));
@@ -736,10 +817,63 @@ public final class ClearProcess {
         midtownTraveling = true;
     }
 
+    private static final int BRIDGE_WORTH = 6;
+
+    /** Can a block in the way be dug or walked through, i.e. is the cell no fluid, no bedrock and not protected? */
+    private boolean openCell(Level level, BlockPos c) {
+        BlockState s = level.getBlockState(c);
+        if (!s.getFluidState().isEmpty()) return false;
+        if (s.getCollisionShape(level, c).isEmpty()) return true;
+        return s.getDestroySpeed(level, c) >= 0 && !protectedOrForbidden(s, c);
+    }
+
+    /**
+     * Is {@code to} reachable from {@code from} without placing a single block: walking, jumping up one, dropping
+     * down three, digging through walls? (Only a gap with no floor stops it.) A search of at most 20000 cells.
+     */
+    private boolean reachableDry(Level level, BlockPos from, BlockPos to) {
+        final int pad = 12;
+        int minX = Math.min(from.getX(), to.getX()) - pad, maxX = Math.max(from.getX(), to.getX()) + pad;
+        int minY = Math.min(from.getY(), to.getY()) - pad, maxY = Math.max(from.getY(), to.getY()) + pad;
+        int minZ = Math.min(from.getZ(), to.getZ()) - pad, maxZ = Math.max(from.getZ(), to.getZ()) + pad;
+        java.util.ArrayDeque<BlockPos> queue = new java.util.ArrayDeque<>();
+        java.util.HashSet<Long> seen = new java.util.HashSet<>();
+        queue.add(from);
+        seen.add(from.asLong());
+        int[][] dirs = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+        int[] drops = {0, 1, -1, -2, -3};
+        int visited = 0;
+        while (!queue.isEmpty() && visited++ < 20000) {
+            BlockPos n = queue.poll();
+            if (n.distSqr(to) <= 2) return true;
+            for (int[] d : dirs) {
+                BlockPos side = n.offset(d[0], 0, d[1]);
+                if (!level.hasChunkAt(side)) continue;
+                boolean sideOpen = openCell(level, side) && openCell(level, side.above());
+                for (int dy : drops) {
+                    if (dy <= 0 && !sideOpen) continue;   // walking or dropping off needs the cell beside; stepping up does not
+                    BlockPos m = n.offset(d[0], dy, d[1]);
+                    if (m.getX() < minX || m.getX() > maxX || m.getY() < minY || m.getY() > maxY
+                            || m.getZ() < minZ || m.getZ() > maxZ) continue;
+                    if (seen.contains(m.asLong()) || !level.hasChunkAt(m)) continue;
+                    if (!openCell(level, m) || !openCell(level, m.above())) continue;
+                    if (dy > 0 && !openCell(level, n.above(2))) continue;
+                    boolean column = true;
+                    for (int k = 1; k < -dy && column; k++) column = openCell(level, side.below(k));
+                    if (!column || !dev.buildtools.Api.solid(level, m.below())) continue;
+                    seen.add(m.asLong());
+                    queue.add(m);
+                }
+            }
+        }
+        return false;
+    }
+
     /** A support block that is itself to be cleared (now or in a later pass) and has at most one solid block beside it (a 1x1 pillar top or a floating block). */
     private boolean precarious(Level level, BlockPos support) {
         // to be cleared in this pass or a later one (wanted() only looks at this pass)
         if (!inSelection(support) || skipped.contains(support)) return false;
+        if (shaft != null && Shaft.inFootprint(shaft, support)) return false;   // a step of the shaft is a steady floor
         BlockState st = level.getBlockState(support);
         if (st.isAir() || !st.getFluidState().isEmpty() || st.getDestroySpeed(level, support) < 0) return false;
         // at most one solid side: a lone pillar, a floating block, or such a pillar with our own scaffold column
@@ -844,6 +978,7 @@ public final class ClearProcess {
                     for (int z = b[2]; z <= b[5]; z++) {
                         BlockPos pos = new BlockPos(x, y, z);
                         if (!level.hasChunkAt(pos)) continue;
+                        if (shaft != null && Shaft.inFootprint(shaft, pos) && !Shaft.isCarve(shaft, pos, yBottom)) continue;   // the shaft is meant to stay
                         BlockState s = level.getBlockState(pos);
                         if (s.isAir() || !s.getFluidState().isEmpty() || s.getDestroySpeed(level, pos) < 0) continue;
                         left++;
@@ -856,7 +991,9 @@ public final class ClearProcess {
             }
         }
         int open = left - wet - guarded;
+        if (gapSkipped > 0) Util.msg(gapSkipped + " spot" + (gapSkipped == 1 ? "" : "s") + " across a gap were left rather than bridged and torn down again.");
         result = open;   // what is still worth another go; the wet and protected ones never are
+        releaseShaft();
         working = false;
         activeClear = false;
         end();
@@ -899,6 +1036,7 @@ public final class ClearProcess {
                     for (int y = y0; y <= y1; y++) {
                         pos.set(x, y, z);
                         if (!level.hasChunkAt(pos)) continue;
+                        if (Shaft.inFootprint(Shaft.current, pos) && !Shaft.isCarve(Shaft.current, pos, y0)) continue;   // the stair shaft is meant to stay
                         BlockState s = level.getBlockState(pos);
                         if (s.isAir() || !s.getFluidState().isEmpty()) continue;
                         if (s.is(net.minecraft.world.level.block.Blocks.BEDROCK)

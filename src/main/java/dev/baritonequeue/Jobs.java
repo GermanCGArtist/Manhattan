@@ -150,8 +150,9 @@ public final class Jobs {
 
     /** Registers a spatial chunk leaf node under an action node. */
     static Node chunk(Node action, ChunkGrid.ColumnBox box) {
-        String key = box.minX() + "," + box.minZ();
-        String label = box.minX() + " " + box.minZ() + " .. " + box.maxX() + " " + box.maxZ();
+        String key = box.minX() + "," + box.minZ() + (box.ySlices() > 1 ? "," + box.minY() : "");
+        String label = box.minX() + " " + box.minZ() + " .. " + box.maxX() + " " + box.maxZ()
+                + (box.ySlices() > 1 ? " (y " + box.minY() + " .. " + box.maxY() + ")" : "");
         Node c = new Node(Kind.CHUNK, action.id + "/" + key, label, action);
         c.box = box;
         return c;

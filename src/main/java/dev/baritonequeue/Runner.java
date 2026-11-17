@@ -324,8 +324,10 @@ public final class Runner {
         }
         if (!running) return;
         if (recovering()) return;
+        if (Shaft.climbing()) return;   // on the way out of the hole by the stairs: the script waits
 
         if (++handlerTick % 10 == 0) checkHandlers();
+        if (Shaft.climbing()) return;   // an "on" block just fired inside the hole: its first line waits for the climb
         var mc = net.minecraft.client.Minecraft.getInstance();
         var p = mc == null ? null : mc.player;
         if (p != null) {
