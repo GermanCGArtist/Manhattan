@@ -12,7 +12,8 @@ import static dev.survivalkit.Config.cfg;
 /**
  * Baritone drops its task when you die. If one was running, this brings it back: after the respawn it first gets
  * you healthy again (eating and fighting are allowed meanwhile), waits until no monster is near, then runs the same
- * command again. Three deaths within ten minutes and it stops trying.
+ * command again. Three deaths within ten minutes and it stops trying (maxdeaths 0: never; it then also carries
+ * on after ten minutes of waiting instead of giving up).
  *
  * While a script runs, the script itself resumes its current step: the two talk through
  * system properties ("baritonequeue.active" -> this stays out of the way, "survivalkit.recovering" while we wait,
@@ -128,26 +129,40 @@ final class Recovery {
         }
         if (!waiting || ++check % 20 != 0) return;
         if (now - waitStart > GIVE_UP_AFTER) {
+            if (cfg.maxDeaths == 0) {
+                // Never stop for dying (keep-inventory server): carry on even if not healthy or safe yet.
+                // The task eats, fights and restocks by itself; another death just starts another wait.
+                Util.warn("resumeanyway", "Could not get healthy and safe within 10 minutes - carrying on anyway (maxdeaths 0).");
+                resume(true);
+                return;
+            }
             cancel();
             if (queueMode) System.setProperty("survivalkit.gaveup", "could not get healthy again within 10 minutes after the respawn.");
             Util.warn("resumefail", "Could not get safe within 10 minutes, so the task is not resumed.");
             return;
         }
         if (PauseWatch.paused || p.isSleeping() || Util.guiOpen(p)) return;
-        if (p.getHealth() < p.getMaxHealth() * SAFE_HEALTH) return;
         if (SurvivalKitMod.eat.busy() || SurvivalKitMod.defence.busy() || SurvivalKitMod.restock.busy() || SurvivalKitMod.sleep.busy()) return;
+        // Health only comes back by itself with a food bar of 18 or more. Below that, with nothing being eaten,
+        // waiting does not help: after a while go on (the task can restock food), like for unreachable mobs.
+        boolean canHeal = p.getFoodData().getFoodLevel() >= 18;
+        if (p.getHealth() < p.getMaxHealth() * SAFE_HEALTH && (canHeal || now - waitStart < IGNORE_THREATS_AFTER)) return;
         // Only mobs the defence would fight count (not calm endermen, not mobs in a cave far below). If some
         // stay near that the defence cannot get to, carry on after a while anyway: the task has its own defence.
         if (DefenceProcess.threats(mc, p, SAFE_RADIUS) > 0 && now - waitStart < IGNORE_THREATS_AFTER) return;
+        resume(false);
+    }
 
+    private void resume(boolean anyway) {
         waiting = false;
         System.clearProperty("survivalkit.recovering");
         if (queueMode) {
             System.setProperty("survivalkit.safe", "1");
-            Util.msg("Safe again - the queue carries on.");
+            if (!anyway) Util.msg("Safe again - the queue carries on.");
             return;
         }
-        Util.msg("Safe again - resuming: " + lastTask);
+        if (lastTask == null) return;
+        if (!anyway) Util.msg("Safe again - resuming: " + lastTask);
         boolean ok = false;
         try {
             var engine = dev.midtown.api.EngineSelector.current();
