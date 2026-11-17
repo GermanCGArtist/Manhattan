@@ -45,6 +45,8 @@ final class Config {
     String captureDir = "";
     String captureSet = "main";
     boolean captureShow = true;
+    /** Draw the planned path in the world (red line, green boxes on blocks to break, blue goal). */
+    boolean showPath = true;
     boolean captureRapid = false;
     String captureType = "dump";
 

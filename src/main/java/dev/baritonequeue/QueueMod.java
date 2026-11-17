@@ -35,7 +35,10 @@ public class QueueMod implements ClientModInitializer {
     public void onInitializeClient() {
         dev.midtown.api.EngineSelector.register("midtown", dev.midtown.exec.MidtownEngine::new);
         Config.load();
-        LevelRenderEvents.BEFORE_GIZMOS.register(ctx -> Areas.renderWireframe());
+        LevelRenderEvents.BEFORE_GIZMOS.register(ctx -> {
+            Areas.renderWireframe();
+            PathRender.render();
+        });
         KeyMapping.Category category = KeyMapping.Category.register(Identifier.fromNamespaceAndPath("baritonequeue", "main"));
         open = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.baritonequeue.open", 74 /* GLFW_KEY_J */, category));
         capture = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.baritonequeue.capture", 75 /* GLFW_KEY_K */, category));
@@ -94,6 +97,19 @@ public class QueueMod implements ClientModInitializer {
                             return 1;
                         }))
                         .then(ClientCommands.literal("skip").executes(ctx -> { runner.skip(); return 1; }))
+                        // the job ledger (what earlier runs finished) of the running script, or of the editor's tab
+                        .then(ClientCommands.literal("jobs").executes(ctx -> {
+                            Jobs.useCommandScript(runner.running());
+                            Jobs.describe().forEach(Util::msg);
+                            return 1;
+                        }))
+                        .then(ClientCommands.literal("reset")
+                                .executes(ctx -> ledgerChange(null, false))
+                                .then(ClientCommands.argument("job", StringArgumentType.greedyString())
+                                        .executes(ctx -> ledgerChange(StringArgumentType.getString(ctx, "job"), false))))
+                        .then(ClientCommands.literal("retry")
+                                .then(ClientCommands.argument("job", StringArgumentType.greedyString())
+                                        .executes(ctx -> ledgerChange(StringArgumentType.getString(ctx, "job"), true))))
                         .then(ClientCommands.literal("remove")
                                 .then(ClientCommands.argument("number", IntegerArgumentType.integer(1)).executes(ctx -> {
                                     int n = IntegerArgumentType.getInteger(ctx, "number");
@@ -296,6 +312,18 @@ public class QueueMod implements ClientModInitializer {
     private static void backFromAiming(Shell.Drawer drawer) {
         if (Shell.suspended()) Shell.resume(drawer);
         else if (Shell.isOpen() && drawer != null) Shell.drawer = drawer;
+    }
+
+    /** /queue reset [job] and /queue retry <job>: never while a script runs (it reads and writes the same ledger). */
+    private static int ledgerChange(String job, boolean retry) {
+        if (runner.running()) {
+            Util.msg("A script is running: stop it first (/queue stop), then " + (retry ? "retry" : "reset") + ".");
+            return 0;
+        }
+        Jobs.useCommandScript(false);
+        String j = job == null ? null : job.trim();   // a job name, or any ledger id prefix (/queue jobs shows them)
+        Util.msg((retry ? Jobs.retry(j) : Jobs.reset(j)) + " (" + Jobs.ledger().path().getFileName() + ")");
+        return 1;
     }
 
     private static int run() {

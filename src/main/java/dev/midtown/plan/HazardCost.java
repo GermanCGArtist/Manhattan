@@ -9,6 +9,8 @@ package dev.midtown.plan;
  */
 public final class HazardCost {
 
+    private static final int COVER_SCAN = 12;
+
     public static final HazardCost DEFAULT = new Builder().build();
 
     private final double lavaCost;
@@ -25,6 +27,7 @@ public final class HazardCost {
     private final double lavaAdjacentBreakPenalty;
     private final double waterAdjacentBreakPenalty;
     private final double fallingAboveBreakPenalty;
+    private final double caveNodePenalty;
 
     private HazardCost(Builder b) {
         this.lavaCost = b.lavaCost;
@@ -41,6 +44,7 @@ public final class HazardCost {
         this.lavaAdjacentBreakPenalty = b.lavaAdjacentBreakPenalty;
         this.waterAdjacentBreakPenalty = b.waterAdjacentBreakPenalty;
         this.fallingAboveBreakPenalty = b.fallingAboveBreakPenalty;
+        this.caveNodePenalty = b.caveNodePenalty;
     }
 
     public static Builder builder() {
@@ -68,6 +72,13 @@ public final class HazardCost {
         if (isCactusNear(world, x, y, z)) {
             if (Double.isInfinite(cactusCost)) return Double.POSITIVE_INFINITY;
             cost += cactusCost;
+        }
+
+        // Open space with solid cover overhead (a cave): dark, mobs spawn, lava and drops hide in it. Walking
+        // there is costed up so the planner takes the surface when it is a fair detour. Cells still full of
+        // stone (about to be dug) are not open, so a fresh tunnel is not charged.
+        if (caveNodePenalty > 0.0 && feet.isPassable() && head.isPassable() && isCovered(world, x, y + 2, z)) {
+            cost += caveNodePenalty;
         }
 
         // Unprotected cliff / lava-rim edge penalty.
@@ -157,6 +168,16 @@ public final class HazardCost {
         };
     }
 
+    /** True if a solid block sits within {@link #COVER_SCAN} blocks above {@code (x, fromY, z)}: no open sky. */
+    private static boolean isCovered(BlockView world, int x, int fromY, int z) {
+        int top = Math.min(world.maxY(), fromY + COVER_SCAN);
+        for (int cy = fromY; cy < top; cy++) {
+            if (!world.isLoaded(x, cy, z)) return false;
+            if (world.hasSolidCollision(x, cy, z)) return true;
+        }
+        return false;
+    }
+
     private static boolean isCactusNear(BlockView world, int x, int y, int z) {
         return world.kindAt(x + 1, y, z) == BlockKind.CACTUS
                 || world.kindAt(x - 1, y, z) == BlockKind.CACTUS
@@ -228,6 +249,7 @@ public final class HazardCost {
         private double lavaAdjacentBreakPenalty = Double.POSITIVE_INFINITY;
         private double waterAdjacentBreakPenalty = 100.0;
         private double fallingAboveBreakPenalty = 25.0;
+        private double caveNodePenalty = 6.0;  // a walked block costs ~4.6 ticks, so a cave block costs about 2.3x
 
         public Builder lavaCost(double v) { this.lavaCost = v; return this; }
         public Builder fireCost(double v) { this.fireCost = v; return this; }
@@ -243,6 +265,8 @@ public final class HazardCost {
         public Builder lavaAdjacentBreakPenalty(double v) { this.lavaAdjacentBreakPenalty = v; return this; }
         public Builder waterAdjacentBreakPenalty(double v) { this.waterAdjacentBreakPenalty = v; return this; }
         public Builder fallingAboveBreakPenalty(double v) { this.fallingAboveBreakPenalty = v; return this; }
+
+        public Builder caveNodePenalty(double v) { this.caveNodePenalty = v; return this; }
 
         public HazardCost build() {
             return new HazardCost(this);
