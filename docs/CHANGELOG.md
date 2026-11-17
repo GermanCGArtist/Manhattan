@@ -3,6 +3,11 @@
 Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
 
 ## Unreleased
+- The mod is now called **manhattan** everywhere: mod id, `manhattan-<version>.jar`, `config/manhattan.json`,
+  `config/manhattan-presets.txt`. An existing `config/baritonequeue.json` (and presets file) is copied over on the
+  first start and left in place. The old id is still provided, so addons that name `baritonequeue` keep working.
+  The Java packages (`dev.baritonequeue`, including the Heavymatica API) and the internal system properties keep
+  their names. Keybinds and assets keep theirs too, so nothing has to be rebound.
 - New: a stair shaft for digging. `stairs("name", corner1, corner2)` (or the role STAIRS from Heavymatica, API version 2)
   marks a 2 x 2 or larger area inside the dig. `clear_area()` never mines it; it carves a spiral staircase along its
   ring, one step deeper with every layer, and when an `on` block fires inside the hole the bot first climbs out by

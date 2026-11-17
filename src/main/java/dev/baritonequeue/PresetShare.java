@@ -15,13 +15,13 @@ import static dev.baritonequeue.Config.cfg;
 /**
  * Presets as plain text, to send to someone or keep: a "## name" line, then the lines of the preset.
  * Copy puts it on the clipboard, Paste adds what is on the clipboard, and Export/Import use
- * config/baritonequeue-presets.txt.
+ * config/manhattan-presets.txt.
  */
 final class PresetShare {
     private PresetShare() {}
 
     private static Path file() {
-        return FabricLoader.getInstance().getConfigDir().resolve("baritonequeue-presets.txt");
+        return Migrate.fromOldName("baritonequeue-presets.txt", "manhattan-presets.txt");
     }
 
     static String toText(Map<String, List<String>> presets) {

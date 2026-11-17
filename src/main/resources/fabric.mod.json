@@ -1,9 +1,10 @@
 {
   "schemaVersion": 1,
-  "id": "baritonequeue",
+  "id": "manhattan",
+  "provides": ["baritonequeue"],
   "version": "${version}",
-  "name": "Manhattan (Baritone Script)",
-  "description": "A script language for Baritone: variables, loops, functions, 'on' handlers, # lines for Baritone commands, and built-in helpers for fighting, eating, sleeping, restocking, filling water, clearing areas, safe areas and chests.",
+  "name": "Manhattan",
+  "description": "A script language for automating Minecraft: variables, loops, functions, 'on' handlers, and built-in helpers for fighting, eating, sleeping, restocking, filling water, clearing areas, safe areas and chests, on its own Midtown path engine.",
   "contact": { "sources": "https://github.com/GermanCGArtist/Manhattan" },
   "license": "MIT",
   "environment": "client",
@@ -11,7 +12,7 @@
     "client": ["dev.baritonequeue.QueueMod", "dev.survivalkit.SurvivalKitMod", "dev.buildtools.BuildToolsMod", "dev.loadchest.LoadChestMod"]
   },
   "mixins": [
-    "baritonequeue.mixins.json"
+    "manhattan.mixins.json"
   ],
   "depends": {
     "fabricloader": ">=0.19.3",

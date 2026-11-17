@@ -1,6 +1,6 @@
 # Manhattan changes for Heavymatica
 
-What Manhattan (`midtown-impl`, MC 26.1.1, mod id `baritonequeue`) needs so the Heavymatica addon can send its
+What Manhattan (`midtown-impl`, MC 26.1.1, mod id `manhattan`, formerly `baritonequeue`, which it still provides) needs so the Heavymatica addon can send its
 areas in directly. Decisions this follows (from the Heavymatica plan review, 2026-11-14):
 
 | # | Decision |
@@ -103,8 +103,8 @@ Notes:
 * **`MAX_BOXES`:** a hard safety limit (e.g. 4096). Heavymatica's own warning at ~64 boxes is a UI matter.
 * **Listener:** fire it from `save`, `box`, `move`, `delete` and `putOwned`. That is how a Heavymatica row learns it
   went "out of sync" when a script rewrites the area.
-* Heavymatica side: `"suggests": { "baritonequeue": "*" }` in its `fabric.mod.json`, a
-  `FabricLoader.isModLoaded("baritonequeue")` check, and an `API_VERSION` check before calling anything.
+* Heavymatica side: `"suggests": { "manhattan": "*" }` in its `fabric.mod.json`, a
+  `FabricLoader.isModLoaded("manhattan")` check, and an `API_VERSION` check before calling anything.
 
 ## 3. "In use": when a send is refused
 

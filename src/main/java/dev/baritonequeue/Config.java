@@ -11,7 +11,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Persisted settings (config/baritonequeue.json). */
+/** Persisted settings (config/manhattan.json; an old config/baritonequeue.json is copied over once). */
 final class Config {
     /** The commands as typed, one per line. */
     List<String> script = new ArrayList<>();
@@ -83,7 +83,7 @@ final class Config {
     static Config cfg = new Config();
 
     private static Path path() {
-        return FabricLoader.getInstance().getConfigDir().resolve("baritonequeue.json");
+        return Migrate.fromOldName("baritonequeue.json", "manhattan.json");
     }
 
     static void load() {
@@ -134,7 +134,7 @@ final class Config {
         if (!cfg.script.isEmpty()) {
             cfg.scriptBeforeV2 = new ArrayList<>(cfg.script);
             cfg.script = new ArrayList<>(Migrate.convert(cfg.script));
-            cfg.script.add(0, "// Converted from the old kind of script. The old one is kept in config/baritonequeue.json (scriptBeforeV2).");
+            cfg.script.add(0, "// Converted from the old kind of script. The old one is kept in config/manhattan.json (scriptBeforeV2).");
         }
         java.util.Map<String, List<String>> converted = new java.util.LinkedHashMap<>();
         Presets.defaults().forEach(converted::put);

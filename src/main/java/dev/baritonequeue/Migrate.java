@@ -12,6 +12,21 @@ import java.util.Set;
  * take_upto(dirt, "dirt", 512),  /buildtools terminator dirt -> fill_water("dirt"),  if has dirt 64 -> if has("dirt", 64) ...
  */
 final class Migrate {
+    /**
+     * The config file under its new name. When only the old one exists (the mod was called baritonequeue) it is
+     * copied over once and left where it is, so going back to an older jar still finds its settings.
+     */
+    static java.nio.file.Path fromOldName(String oldName, String newName) {
+        java.nio.file.Path dir = net.fabricmc.loader.api.FabricLoader.getInstance().getConfigDir();
+        java.nio.file.Path now = dir.resolve(newName), old = dir.resolve(oldName);
+        try {
+            if (!java.nio.file.Files.exists(now) && java.nio.file.Files.exists(old)) java.nio.file.Files.copy(old, now);
+        } catch (java.io.IOException e) {
+            e.printStackTrace();
+        }
+        return now;
+    }
+
     private Migrate() {}
 
     private static final Set<String> RESERVED_EXTRA = Set.of("chest", "pos", "area", "take", "put", "dump", "wait", "sleep", "eat");

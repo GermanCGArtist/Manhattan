@@ -37,7 +37,7 @@ PORT = int(os.environ.get("MANHATTAN_BRIDGE_PORT", str(PORT_BASE + 1)))
 USERNAME = "ManhattanTest"
 WORLD = "manhattan-test"
 
-# Never installed into the testing profile (the old separate addons are part of baritonequeue now).
+# Never installed into the testing profile (the old separate addons are part of Manhattan now).
 FORBIDDEN = ("survivalkit", "buildtools", "loadchest", "litematica-printer")
 
 # Litematica + malilib for the schematic tests: copied (read only) from the profile the user builds in, if it is there.
@@ -111,7 +111,7 @@ def install():
     os.makedirs(mods, exist_ok=True)
     wanted = {
         FABRIC_API: _fabric_api_jar(),
-        "baritonequeue-%s.jar" % ver: os.path.join(REPO, "build", "libs", "baritonequeue-%s.jar" % ver),
+        "manhattan-%s.jar" % ver: os.path.join(REPO, "build", "libs", "manhattan-%s.jar" % ver),
         "manhattan-testbridge-%s.jar" % ver: os.path.join(REPO, "build", "libs", "manhattan-testbridge-%s.jar" % ver),
     }
     if os.path.isdir(LITEMATICA_SRC):
@@ -123,7 +123,7 @@ def install():
             raise RuntimeError("missing %s (looked for %s). Build first: build.bat" % (name, src))
     for f in os.listdir(mods):
         low = f.lower()
-        stale = (low.startswith(("baritonequeue-", "manhattan-testbridge-", "fabric-api-", "litematica-fabric-", "malilib-fabric-", "baritone-", "baritoneui-")) and f not in wanted) \
+        stale = (low.startswith(("baritonequeue-", "manhattan-", "manhattan-testbridge-", "fabric-api-", "litematica-fabric-", "malilib-fabric-", "baritone-", "baritoneui-")) and f not in wanted) \
             or low.startswith(FORBIDDEN)
         if stale and low.endswith(".jar"):
             os.remove(os.path.join(mods, f))
@@ -142,7 +142,7 @@ def _reset_mod_config():
     game: they live in config/ and would otherwise carry from one test run into the next (a `want("_shovel", 2)` of an
     earlier canal test made a later dump test keep two shovels). Litematica's and the other mods' files stay."""
     cfg = os.path.join(PROFILE, "config")
-    for f in ("baritonequeue.json", "buildtools.json", "loadchest.json", "survivalkit.json"):
+    for f in ("manhattan.json", "baritonequeue.json", "buildtools.json", "loadchest.json", "survivalkit.json"):
         try:
             os.remove(os.path.join(cfg, f))
         except FileNotFoundError:
