@@ -13,6 +13,7 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.LeavesBlock;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.phys.AABB;
 
 import java.util.ArrayDeque;
@@ -23,6 +24,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.BiConsumer;
 
 import static dev.baritonequeue.Values.error;
 
@@ -32,6 +34,12 @@ import static dev.baritonequeue.Values.error;
  * picked up and the scaffolding is taken down before the next tree. Leaves are left to decay; at the end it waits for
  * them a little and sweeps the area for saplings, sticks and apples. With a chest, a nearly full inventory and the end
  * go into it. Returns what was gained (item -> count, what went into the chest included).
+ *
+ * A big selection is cut into chunks (the same 32 x 32 columns and bands in Y as clear_area, regions apart from each
+ * other on their own) and worked one chunk at a time: each chunk is scanned just before it is cut, so work starts
+ * at once, and finished chunks are written to the job ledger and skipped after a restart. A tree belongs to the
+ * chunk that finds its first block (the whole tree is collected, also the part over a chunk border). Sections of
+ * the world that hold only air are skipped by every scan.
  */
 final class TreeClear {
     private TreeClear() {}
@@ -74,19 +82,58 @@ final class TreeClear {
         return body(s) || ATTACHED.contains(s.getBlock());
     }
 
-    /** Every tree in the selection: logs etc. that touch (also diagonally), plus vines and bee nests near them. */
-    private static List<Tree> scan(Interp in, Level level, List<int[]> boxes) {
-        List<Tree> out = new ArrayList<>();
-        Set<BlockPos> seen = new HashSet<>();
-        long cells = 0;
+    /**
+     * Calls {@code f} for every block of the boxes (each grown by {@code padH} sideways and {@code padUp} upwards) in a
+     * loaded chunk, skipping every 16 x 16 x 16 section that holds only air without looking at its blocks. Gives the
+     * game a tick now and then (about every 40000 blocks looked at).
+     */
+    static void forBlocks(Interp in, Level level, List<int[]> boxes, int padH, int padUp, BiConsumer<BlockPos.MutableBlockPos, BlockState> f) {
+        long work = 0;
         BlockPos.MutableBlockPos m = new BlockPos.MutableBlockPos();
         for (int[] b : boxes) {
-            for (int x = b[0]; x <= b[3]; x++) {
-                for (int z = b[2]; z <= b[5]; z++) {
-                    for (int y = b[1]; y <= b[4]; y++) {
-                        if (++cells % 40000 == 0) in.yieldTick();
-                        m.set(x, y, z);
-                        if (!level.hasChunkAt(m) || !body(level.getBlockState(m)) || seen.contains(m)) continue;
+            int x0 = b[0] - padH, x1 = b[3] + padH, z0 = b[2] - padH, z1 = b[5] + padH, y0 = b[1], y1 = b[4] + padUp;
+            for (int cx = x0 >> 4; cx <= x1 >> 4; cx++) {
+                for (int cz = z0 >> 4; cz <= z1 >> 4; cz++) {
+                    LevelChunk ch = level.getChunkSource().getChunkNow(cx, cz);
+                    if (ch == null) continue;
+                    for (int sy = y0 >> 4; sy <= y1 >> 4; sy++) {
+                        int idx = ch.getSectionIndex(sy << 4);
+                        if (idx < 0 || idx >= ch.getSectionsCount()) continue;
+                        if (ch.getSection(idx).hasOnlyAir()) {
+                            if ((work += 16) >= 40000) { work = 0; in.yieldTick(); }
+                            continue;
+                        }
+                        int ax = Math.max(x0, cx << 4), bx = Math.min(x1, (cx << 4) + 15);
+                        int az = Math.max(z0, cz << 4), bz = Math.min(z1, (cz << 4) + 15);
+                        int ay = Math.max(y0, sy << 4), by = Math.min(y1, (sy << 4) + 15);
+                        for (int x = ax; x <= bx; x++) {
+                            for (int z = az; z <= bz; z++) {
+                                for (int y = ay; y <= by; y++) {
+                                    if (++work >= 40000) { work = 0; in.yieldTick(); }
+                                    m.set(x, y, z);
+                                    f.accept(m, ch.getBlockState(m));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * The trees whose first block (found in scan order) lies in {@code scanBoxes}: logs etc. that touch (also
+     * diagonally), plus vines and bee nests near them. A tree is collected whole inside {@code allBoxes}; what is in
+     * {@code seen} already belongs to a tree found before.
+     */
+    private static List<Tree> scan(Interp in, Level level, List<int[]> scanBoxes, List<int[]> boxes, Set<BlockPos> seen) {
+        List<Tree> out = new ArrayList<>();
+        forBlocks(in, level, scanBoxes, 0, 0, (m, state) -> {
+            if (!body(state) || seen.contains(m)) return;
+            int x = m.getX(), y = m.getY(), z = m.getZ();
+            {
+                {
+                    {
                         Tree t = new Tree(m.immutable());
                         ArrayDeque<BlockPos> todo = new ArrayDeque<>();
                         todo.add(t.seed);
@@ -126,7 +173,7 @@ final class TreeClear {
                     }
                 }
             }
-        }
+        });
         return out;
     }
 
@@ -185,21 +232,10 @@ final class TreeClear {
             if (it instanceof net.minecraft.world.item.BlockItem bi) kinds.add(bi.getBlock());
         }
         Set<BlockPos> out = new HashSet<>();
-        BlockPos.MutableBlockPos m = new BlockPos.MutableBlockPos();
-        long cells = 0;
-        for (int[] b : boxes) {
-            for (int x = b[0] - AROUND; x <= b[3] + AROUND; x++) {
-                for (int z = b[2] - AROUND; z <= b[5] + AROUND; z++) {
-                    for (int y = b[1]; y <= b[4] + 3; y++) {
-                        if (++cells % 40000 == 0) in.yieldTick();
-                        m.set(x, y, z);
-                        if (!level.hasChunkAt(m)) continue;
-                        Block k = level.getBlockState(m).getBlock();
-                        if (except == null ? kinds.contains(k) || GROUND.contains(k) : kinds.contains(k) && !except.contains(m)) out.add(m.immutable());
-                    }
-                }
-            }
-        }
+        forBlocks(in, level, boxes, AROUND, 3, (m, state) -> {
+            Block k = state.getBlock();
+            if (except == null ? kinds.contains(k) || GROUND.contains(k) : kinds.contains(k) && !except.contains(m)) out.add(m.immutable());
+        });
         return out;
     }
 
@@ -212,24 +248,12 @@ final class TreeClear {
 
     /** Leaves in the selection that no longer touch a log (within 6) and will fall apart. */
     private static int decaying(Interp in, Level level, List<int[]> boxes) {
-        int n = 0;
-        long cells = 0;
-        BlockPos.MutableBlockPos m = new BlockPos.MutableBlockPos();
-        for (int[] b : boxes) {
-            for (int x = b[0]; x <= b[3]; x++) {
-                for (int z = b[2]; z <= b[5]; z++) {
-                    for (int y = b[1]; y <= b[4]; y++) {
-                        if (++cells % 40000 == 0) in.yieldTick();
-                        m.set(x, y, z);
-                        if (!level.hasChunkAt(m)) continue;
-                        BlockState s = level.getBlockState(m);
-                        if (s.getBlock() instanceof LeavesBlock && s.hasProperty(LeavesBlock.PERSISTENT) && !s.getValue(LeavesBlock.PERSISTENT)
-                                && s.hasProperty(LeavesBlock.DISTANCE) && s.getValue(LeavesBlock.DISTANCE) >= LeavesBlock.DECAY_DISTANCE) n++;
-                    }
-                }
-            }
-        }
-        return n;
+        int[] n = new int[1];
+        forBlocks(in, level, boxes, 0, 0, (m, s) -> {
+            if (s.getBlock() instanceof LeavesBlock && s.hasProperty(LeavesBlock.PERSISTENT) && !s.getValue(LeavesBlock.PERSISTENT)
+                    && s.hasProperty(LeavesBlock.DISTANCE) && s.getValue(LeavesBlock.DISTANCE) >= LeavesBlock.DECAY_DISTANCE) n[0]++;
+        });
+        return n[0];
     }
 
     // ------------------------------------------------------------------ the run
@@ -298,6 +322,16 @@ final class TreeClear {
         }
     }
 
+    /** Are all the game's chunks under this column there (the client has them)? */
+    private static boolean loaded(Level level, ChunkGrid.ColumnBox c) {
+        for (int cx = c.minX() >> 4; cx <= c.maxX() >> 4; cx++) {
+            for (int cz = c.minZ() >> 4; cz <= c.maxZ() >> 4; cz++) {
+                if (level.getChunkSource().getChunkNow(cx, cz) == null) return false;
+            }
+        }
+        return true;
+    }
+
     static Object run(Interp in, int line, BlockPos chest, String chestText) {
         Minecraft mc = Minecraft.getInstance();
         Level level = mc.level;
@@ -312,64 +346,112 @@ final class TreeClear {
         for (Item it : THROWAWAY_ITEMS) if (start.containsKey(it)) throwaway = true;
         if (!throwaway) Util.msg("clear_trees: you carry no scaffolding blocks (e.g. dirt): tall trees may be out of reach.");
 
-        List<Tree> trees = scan(in, level, boxes);
+        boolean chunked = Config.cfg.chunkEnabled;
+        int size = chunked ? Config.cfg.chunkSize : 1 << 20;
+        List<ChunkGrid.ColumnBox> chunks = ChunkGrid.orderSerpentine(
+                ChunkGrid.split(boxes, size, chunked ? Config.cfg.chunkSizeY : 0, chunked ? Config.cfg.chunkGap : -1), p.blockPosition());
+        // finished chunks of an earlier run (same selection, same sizes) are skipped; one chunk is not worth a ledger entry
+        String signature = "clear_trees:" + size + "y" + (chunked ? Config.cfg.chunkSizeY : 0) + "g" + (chunked ? Config.cfg.chunkGap : -1);
+        for (int[] b : boxes) signature += ":" + b[0] + "," + b[1] + "," + b[2] + "-" + b[3] + "," + b[4] + "," + b[5];
+        Jobs.Node actionNode = chunks.size() > 1 ? Jobs.action("clear_trees", line, "", QueueMod.runner != null && QueueMod.runner.running()) : null;
+        Ledger ledger = Jobs.ledger();
+
         Set<BlockPos> ground = throwaway(in, level, boxes, null);   // what is there before: never taken for scaffolding
-        int total = trees.size(), cleared = 0;
+        Set<BlockPos> seen = new HashSet<>();
+        List<Tree> trees = new ArrayList<>();
+        int total = 0, cleared = 0, chunkNo = 0, skipped = 0;
         List<BlockPos> spots = new ArrayList<>();
-        Util.msg("clear_trees: " + total + " trees in the selection.");
+        Util.msg("clear_trees: " + (chunks.size() == 1 ? "scanning the selection." : chunks.size() + " chunks, scanned and cut one after the other."));
         try {
-            while (true) {
-                // the nearest tree that still stands and has tries left
-                BlockPos me = player(line).blockPosition();
-                Tree next = null;
-                double best = Double.MAX_VALUE;
-                for (Tree t : trees) {
-                    if (t.tries >= TRIES) continue;
-                    t.blocks.removeIf(b -> !level.hasChunkAt(b) || !tree(level, b));
-                    if (t.blocks.isEmpty()) continue;
-                    double dx = t.seed.getX() - me.getX(), dz = t.seed.getZ() - me.getZ();
-                    double d = dx * dx + dz * dz + 0.25 * (t.seed.getY() - me.getY()) * (t.seed.getY() - me.getY());
-                    if (d < best) { best = d; next = t; }
+            for (ChunkGrid.ColumnBox chunk : chunks) {
+                chunkNo++;
+                Jobs.Node node = actionNode == null ? null : Jobs.chunk(actionNode, chunk);
+                if (node != null) {
+                    Ledger.Entry e = ledger.get(node.id, signature);
+                    if (e != null && e.state == Ledger.State.DONE) {
+                        node.state = Ledger.State.DONE;
+                        skipped++;
+                        continue;
+                    }
+                    Jobs.set(node, Ledger.State.RUNNING, 0, 0, null, signature);
                 }
-                if (next == null) break;
-                Tree t = next;
-                t.tries++;
-                int x0 = Integer.MAX_VALUE, y0 = Integer.MAX_VALUE, z0 = Integer.MAX_VALUE;
-                int x1 = Integer.MIN_VALUE, y1 = Integer.MIN_VALUE, z1 = Integer.MIN_VALUE;
-                Set<String> kinds = new LinkedHashSet<>();
-                for (BlockPos b : t.blocks) {
-                    x0 = Math.min(x0, b.getX()); x1 = Math.max(x1, b.getX());
-                    y0 = Math.min(y0, b.getY()); y1 = Math.max(y1, b.getY());
-                    z0 = Math.min(z0, b.getZ()); z1 = Math.max(z1, b.getZ());
-                    kinds.add(id(level.getBlockState(b).getBlock()));
+                List<int[]> clipped = chunk.clip(boxes);
+                // far from where the bot is, the chunks of the world may not be there yet: go there first
+                BlockPos at = chunk.centerXZ(chunk.minY());
+                BlockPos here = player(line).blockPosition();
+                if (!loaded(level, chunk) || chunk.distanceSqXZ(here) > 96.0 * 96.0) {
+                    String go = "goto " + at.getX() + " " + at.getZ();
+                    in.await(() -> new Actions.BaritoneCommand(go), go, line);
                 }
-                int n = t.blocks.size();
-                Util.msg("Tree " + (cleared + 1) + "/" + total + (t.tries > 1 ? " (second try)" : "") + ": " + n + " blocks ("
-                        + String.join(", ", kinds) + ") at " + t.seed.getX() + " " + t.seed.getY() + " " + t.seed.getZ());
-                select(x0, y0, z0, x1, y1, z1);
-                List<int[]> box = List.of(new int[]{x0, y0 - 2, z0, x1, y1, z1});
-                Set<BlockPos> before = throwaway(in, level, box, null);
-                String cmd = "sel replace " + String.join(" ", kinds) + " air";
-                in.await(() -> new Actions.BaritoneCommand(cmd), cmd, line);
-                r.pickup();   // drops on the leaves: Baritone may pillar up to them
-                // every scaffolding block that is new around the tree, also those BuildTools' recorder did not see
-                markNew(in, level, box, before);
-                r.scaffold();
-                r.pickup();   // what the scaffolding dropped
-                t.blocks.removeIf(b -> !tree(level, b));
-                if (t.blocks.isEmpty()) {
-                    cleared++;
-                    spots.add(t.seed);
-                } else if (t.tries >= TRIES) {
-                    Util.msg("clear_trees: " + t.blocks.size() + " blocks of the tree at " + t.seed.getX() + " " + t.seed.getY() + " "
-                            + t.seed.getZ() + " are out of reach; leaving them.");
-                    spots.add(t.seed);
+                List<Tree> found = scan(in, level, clipped, boxes, seen);
+                trees.addAll(found);
+                total += found.size();
+                if (chunks.size() > 1) {
+                    Util.msg("clear_trees: chunk " + chunkNo + "/" + chunks.size() + " (" + chunk.minX() + " " + chunk.minZ() + " .. "
+                            + chunk.maxX() + " " + chunk.maxZ() + (chunk.ySlices() > 1 ? ", y " + chunk.minY() + " .. " + chunk.maxY() : "")
+                            + "): " + found.size() + " tree" + (found.size() == 1 ? "" : "s") + ".");
                 }
-                r.dumpIfFull();
+                while (true) {
+                    // the nearest tree that still stands and has tries left
+                    BlockPos me = player(line).blockPosition();
+                    Tree next = null;
+                    double best = Double.MAX_VALUE;
+                    for (Tree t : found) {
+                        if (t.tries >= TRIES) continue;
+                        t.blocks.removeIf(b -> !level.hasChunkAt(b) || !tree(level, b));
+                        if (t.blocks.isEmpty()) continue;
+                        double dx = t.seed.getX() - me.getX(), dz = t.seed.getZ() - me.getZ();
+                        double d = dx * dx + dz * dz + 0.25 * (t.seed.getY() - me.getY()) * (t.seed.getY() - me.getY());
+                        if (d < best) { best = d; next = t; }
+                    }
+                    if (next == null) break;
+                    Tree t = next;
+                    t.tries++;
+                    int x0 = Integer.MAX_VALUE, y0 = Integer.MAX_VALUE, z0 = Integer.MAX_VALUE;
+                    int x1 = Integer.MIN_VALUE, y1 = Integer.MIN_VALUE, z1 = Integer.MIN_VALUE;
+                    Set<String> kinds = new LinkedHashSet<>();
+                    for (BlockPos b : t.blocks) {
+                        x0 = Math.min(x0, b.getX()); x1 = Math.max(x1, b.getX());
+                        y0 = Math.min(y0, b.getY()); y1 = Math.max(y1, b.getY());
+                        z0 = Math.min(z0, b.getZ()); z1 = Math.max(z1, b.getZ());
+                        kinds.add(id(level.getBlockState(b).getBlock()));
+                    }
+                    int n = t.blocks.size();
+                    Util.msg("Tree " + (cleared + 1) + "/" + total + (t.tries > 1 ? " (second try)" : "") + ": " + n + " blocks ("
+                            + String.join(", ", kinds) + ") at " + t.seed.getX() + " " + t.seed.getY() + " " + t.seed.getZ());
+                    select(x0, y0, z0, x1, y1, z1);
+                    List<int[]> box = List.of(new int[]{x0, y0 - 2, z0, x1, y1, z1});
+                    Set<BlockPos> before = throwaway(in, level, box, null);
+                    String cmd = "sel replace " + String.join(" ", kinds) + " air";
+                    in.await(() -> new Actions.BaritoneCommand(cmd), cmd, line);
+                    r.pickup();   // drops on the leaves: Baritone may pillar up to them
+                    // every scaffolding block that is new around the tree, also those BuildTools' recorder did not see
+                    markNew(in, level, box, before);
+                    r.scaffold();
+                    r.pickup();   // what the scaffolding dropped
+                    t.blocks.removeIf(b -> !tree(level, b));
+                    if (t.blocks.isEmpty()) {
+                        cleared++;
+                        spots.add(t.seed);
+                    } else if (t.tries >= TRIES) {
+                        Util.msg("clear_trees: " + t.blocks.size() + " blocks of the tree at " + t.seed.getX() + " " + t.seed.getY() + " "
+                                + t.seed.getZ() + " are out of reach; leaving them.");
+                        spots.add(t.seed);
+                    }
+                    r.dumpIfFull();
+                }
+                int open = 0;
+                for (Tree t : found) {
+                    t.blocks.removeIf(bb -> !level.hasChunkAt(bb) || !tree(level, bb));
+                    if (!t.blocks.isEmpty()) open++;
+                }
+                if (node != null) Jobs.set(node, open == 0 ? Ledger.State.DONE : Ledger.State.DEFERRED, 1, open, open == 0 ? null : open + " out of reach", signature);
+                if (actionNode != null) Jobs.settle(actionNode);
             }
         } finally {
             Areas.apply(boxes);
         }
+        if (skipped > 0) Util.msg("clear_trees: " + skipped + " chunk" + (skipped == 1 ? "" : "s") + " already done in an earlier run, skipped.");
 
         // leaves: give them a while to fall apart, then one sweep over the area for what they dropped
         if (!spots.isEmpty()) {

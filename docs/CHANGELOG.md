@@ -3,6 +3,12 @@
 Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
 
 ## Unreleased
+- `clear_trees` is chunked like `clear_area`: a big selection is cut into chunks (and bands in Y, regions apart from
+  each other on their own), and each chunk is scanned just before it is cut, so work starts at once instead of after a
+  scan of the whole selection. Finished chunks go into the job ledger and are skipped after a restart. A tree belongs
+  to the chunk that finds its first block and is cut whole. Every scan (trees, scaffolding, decaying leaves) now skips
+  16x16x16 sections of the world that hold only air, which is most of a tall selection.
+- Fixed: chunks of bands in Y (ids like `10,20,5`) were not counted by `/queue jobs` and the resume message.
 - The mod is now called **manhattan** everywhere: mod id, `manhattan-<version>.jar`, `config/manhattan.json`,
   `config/manhattan-presets.txt`. An existing `config/baritonequeue.json` (and presets file) is copied over on the
   first start and left in place. The old id is still provided, so addons that name `baritonequeue` keep working.

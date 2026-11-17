@@ -2296,6 +2296,35 @@ def test_trees_small(t):
     return "%s cleared (%s); %s; %d dirt back" % ("+".join(planted), start.split("TEST trees ")[-1], line.split("done ")[-1], dirt)
 
 
+def test_trees_chunks(t):
+    """The same oak and birch with 8-block chunks and bands: cut chunk by chunk (the log says so); no log left, no scaffolding left, the logs are carried and
+    reported, the 64 dirt for scaffolding are all back."""
+    new_world(t, "trees-chunks")
+    t.cmd("/tp @s 100 -60 100 0 0")
+    time.sleep(2)
+    planted = [f for f, p in (("oak", (96, -60, 96)), ("birch", (104, -60, 104))) if plant(t, f, p)]
+    if not planted:
+        raise Fail("no tree could be planted")
+    t.cmd("/give @s dirt 64")
+    time.sleep(1)
+    line = run_scenario(t, "trees-chunks.txt", "TEST trees done", 400)
+    start = next((l for l in t.lines() if "TEST trees start" in l), "")
+    if kv(line, "left") != 0:
+        raise Fail("logs left standing: %s (%s)" % (line, start))
+    if kv(line, "scaffold") != 0:
+        raise Fail("scaffolding left in the area: %s at %s" % (line, dirt_at(t, (92, -60, 92), (110, -52, 110))))
+    oak = kv(line, "oak") or 0
+    if "oak" in planted and (oak <= 0 or kv(line, "carried") < oak):
+        raise Fail("the oak logs were not reported / carried: %s" % line)
+    dirt = t.count("dirt")
+    if dirt < 64:
+        raise Fail("only %d of the 64 scaffolding dirt came back" % dirt)
+    chunk_lines = [l for l in t.lines() if "clear_trees: chunk " in l]
+    if len(chunk_lines) < 4:
+        raise Fail("it was not cut into chunks: %d chunk lines" % len(chunk_lines))
+    return "%d chunks; %s cleared (%s); %s; %d dirt back" % (len(chunk_lines), "+".join(planted), start.split("TEST trees ")[-1], line.split("done ")[-1], dirt)
+
+
 FOREST = [("oak", (92, -60, 92)), ("birch", (102, -60, 92)), ("fancy_oak", (114, -60, 94)), ("mega_spruce", (92, -60, 106)),
           ("dark_oak", (106, -60, 108)), ("jungle_tree", (118, -60, 108)), ("mangrove", (96, -60, 120)),
           ("huge_red_mushroom", (110, -60, 122)), ("huge_brown_mushroom", (120, -60, 122))]
@@ -2349,7 +2378,7 @@ def _forest(group):
     return lambda t: run_forest(t, group)
 
 
-TREE_TESTS = [("trees_small", test_trees_small)] + [("trees_forest_" + g, _forest(g)) for g in FOREST_GROUPS]
+TREE_TESTS = [("trees_small", test_trees_small), ("trees_chunks", test_trees_chunks)] + [("trees_forest_" + g, _forest(g)) for g in FOREST_GROUPS]
 
 
 TESTS = [("smoke", test_smoke), ("workspace", test_workspace), ("viewport", test_viewport), ("monitor", test_monitor), ("panels", test_panels), ("ui_screens", test_ui_screens), ("fill_water", test_fill_water), ("fill_water_deep", test_fill_water_deep), ("fill_water_shaft", test_fill_water_shaft), ("fill_water_submerged_shaft", test_fill_water_submerged_shaft), ("fill_water_submerged_pocket", test_fill_water_submerged_pocket), ("eat", test_eat), ("defend", test_defend), ("death_recover", test_death_recover), ("death_unlimited", test_death_unlimited),("clear_resume", test_clear_resume), ("clear_shaft", test_clear_shaft), ("clear_overnight_stress", test_clear_overnight_stress), ("dump", test_dump), ("chest_index", test_chest_index), ("hotbar_tools", test_hotbar_tools), ("air", test_air), ("clear_wet", test_clear_wet),

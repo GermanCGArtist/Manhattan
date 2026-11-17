@@ -402,7 +402,7 @@ public final class Jobs {
                     if (c.state != State.DONE) open++;
                     if (c.state == State.DEFERRED || c.state == State.FAILED) { deferred++; left += c.left; }
                     if (c.state == State.RUNNING) running++;
-                    chunks.add(new Row(2, cid, m.group(2) + "," + m.group(3), c.state, c.left, c.reason, 0));
+                    chunks.add(new Row(2, cid, m.group(2) + "," + m.group(3) + (m.group(4) == null ? "" : m.group(4)), c.state, c.left, c.reason, 0));
                 }
                 State s = running > 0 ? State.RUNNING : deferred > 0 ? State.DEFERRED : open > 0 ? State.PENDING : State.DONE;
                 below.add(new Row(1, ae.getKey(), ae.getKey().substring(job.length() + 1), s, left, null, open));
@@ -438,7 +438,7 @@ public final class Jobs {
 
     // ------------------------------------------------------------------ chat: /queue jobs | reset | retry
 
-    private static final Pattern CHUNK = Pattern.compile("^(.*)/(-?\\d+),(-?\\d+)$");
+    private static final Pattern CHUNK = Pattern.compile("^(.*)/(-?\\d+),(-?\\d+)(,-?\\d+)?$");
 
     /** The ledger as lines: per action (or job) the counts, then what is not done. */
     static List<String> describe() {
@@ -455,7 +455,7 @@ public final class Jobs {
                 if (e.state == State.DONE) c[0]++;
                 else {
                     if (e.state == State.DEFERRED || e.state == State.FAILED) c[1]++; else c[2]++;
-                    notDone.computeIfAbsent(m.group(1), k -> new ArrayList<>()).add("    " + m.group(2) + "," + m.group(3) + ": " + e.state.name().toLowerCase()
+                    notDone.computeIfAbsent(m.group(1), k -> new ArrayList<>()).add("    " + m.group(2) + "," + m.group(3) + (m.group(4) == null ? "" : m.group(4)) + ": " + e.state.name().toLowerCase()
                             + (e.left > 0 ? ", " + e.left + " left" : "") + (e.reason != null ? " (" + e.reason + ")" : ""));
                 }
             } else if (id.indexOf('/') < 0) {
