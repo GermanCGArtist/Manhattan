@@ -3,6 +3,9 @@
 Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
 
 ## Unreleased
+- Fixed: a job stayed "ended with N chunks open" on every run, and the script walked from chest to chest for nothing,
+  because old ledger entries of a `clear_area` that had moved to another line (`clear_area@116`, now `@120`) still
+  counted as open. Only the actions of the current script count now.
 - Fixed: `goto()`, `mine()`, `clear_trees()` and the other native functions logged "PROBLEM: Legacy '#sel' command is
   deprecated" on every call. Only a literal `#command` line in a script warns now.
 - `/queue jobs` shows the job ledger (which jobs and chunks earlier runs finished), `/queue reset [job]` forgets a

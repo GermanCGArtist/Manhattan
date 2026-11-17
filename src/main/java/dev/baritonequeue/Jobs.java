@@ -95,6 +95,14 @@ public final class Jobs {
         try { return DockedPanels.activeTabName(); } catch (Throwable t) { return SCRIPT; }
     }
 
+    /**
+     * For /queue jobs | reset | retry: the ledger of the script that runs now, or (nothing running) of the editor's
+     * open tab, the one Run would start.
+     */
+    static void useCommandScript(boolean running) {
+        if (!running) script = fileSafe(editorScript());
+    }
+
     /** A file-name-safe script name: "build.txt" -> "build"; empty -> "main". */
     static String fileSafe(String name) {
         String n = name == null ? "" : name.trim();
@@ -237,8 +245,13 @@ public final class Jobs {
     static void finish(String job, Map<String, Object> vars) {
         Node n = jobs.computeIfAbsent(job, k -> new Node(Kind.JOB, k, k, root));
         int open = 0;
+        // only the actions this run started: entries of actions that are no longer in the script (their id holds the
+        // old line number, e.g. clear_area@116 after it moved to @120) must not keep the job open for ever
         for (String id : ledger().ids(job, null)) {
             if (id.equals(job)) continue;
+            boolean current = false;
+            for (Node k : n.kids) if (Ledger.under(id, k.id)) { current = true; break; }
+            if (!current) continue;
             State s = ledger().state(id, null);
             if (s == State.DEFERRED || s == State.FAILED) open++;
         }
