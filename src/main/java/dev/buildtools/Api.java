@@ -122,6 +122,19 @@ public final class Api {
         return far;
     }
 
+    /** Like stashScaffoldFarFrom, but takes off the list (and returns) every recorded spot for which {@code keep} is true. */
+    public static java.util.Map<net.minecraft.core.BlockPos, net.minecraft.world.level.block.Block> stashScaffoldIf(java.util.function.Predicate<net.minecraft.core.BlockPos> keep) {
+        java.util.Map<net.minecraft.core.BlockPos, net.minecraft.world.level.block.Block> kept = new java.util.LinkedHashMap<>();
+        for (var it = Scaffold.spots().entrySet().iterator(); it.hasNext(); ) {
+            var e = it.next();
+            if (keep.test(e.getKey())) {
+                kept.put(e.getKey(), e.getValue());
+                it.remove();
+            }
+        }
+        return kept;
+    }
+
     public static void restoreScaffold(java.util.Map<net.minecraft.core.BlockPos, net.minecraft.world.level.block.Block> stashed) {
         if (stashed != null) Scaffold.spots().putAll(stashed);
     }

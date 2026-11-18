@@ -57,6 +57,9 @@ final class TreeClear {
     private static final int DUMP_BELOW = 2;    // free slots: below this (inventory about full), a chest trip between trees
     private static final double PICK_BASE = 5;    // a drop is worth a walk of this many blocks ...
     private static final double PICK_PER_ITEM = 2; // ... plus this many per item in its cluster
+    private static final int SCAFFOLD_LOW = 24;     // fewer scaffolding blocks than this in the inventory: take pillars down for material
+    private static final int MAX_PENDING = 40;      // more pillar blocks than this standing: take the stale ones down
+    private static final int REUSE_R = 16;          // pillars this close to a tree still to be cut are kept for it
     private static final int SCAFFOLD_NEAR = 32;   // only scaffolding this close to the tree is taken down between trees
     private static final long SPOT_AGE_MS = 4 * 60_000L;   // drops despawn after 5 min: older spots are not swept
 
@@ -192,6 +195,13 @@ final class TreeClear {
         return m;
     }
 
+    private static int scaffoldCount(LocalPlayer p) {
+        int n = 0;
+        Map<Item, Integer> inv = inventory(p);
+        for (Item it : THROWAWAY_ITEMS) n += inv.getOrDefault(it, 0);
+        return n;
+    }
+
     private static int freeSlots(LocalPlayer p) {
         int n = 0;
         for (int k = 0; k < 36; k++) if (p.getInventory().getItem(k).isEmpty()) n++;
@@ -292,6 +302,44 @@ final class TreeClear {
             } finally {
                 dev.buildtools.Api.restoreScaffold(far);
             }
+        }
+
+        /**
+         * Lazy scaffold teardown. Pillars stay up between trees (taking them down after every tree and building them again
+         * for the next one is most of the time spent). They come down when
+         *  - the scaffolding blocks in the inventory run low (needed as material): everything near the bot,
+         *  - more than MAX_PENDING stand (the list and the walk back to them would grow): near the bot, but not those that
+         *    are within REUSE_R of a tree that is still to be cut (they are likely to be used again),
+         *  - a chunk is finished ({@code chunkEnd}): all of them, the next trees are elsewhere.
+         * Pillars not taken now stay on the list; the end of the run takes down what is left.
+         */
+        void tidy(Level level, List<Tree> open, boolean chunkEnd) {
+            int pending = dev.buildtools.Api.scaffoldCount();
+            if (pending == 0) return;
+            BlockPos me = player(line).blockPosition();
+            boolean low = scaffoldCount(player(line)) < SCAFFOLD_LOW;
+            if (!chunkEnd && !low && pending <= MAX_PENDING) return;
+            double near2 = (double) SCAFFOLD_NEAR * SCAFFOLD_NEAR, reuse2 = (double) REUSE_R * REUSE_R;
+            var keep = dev.buildtools.Api.stashScaffoldIf(b -> {
+                if (chunkEnd) return false;
+                if (b.distSqr(me) > near2) return true;   // far from here: later
+                if (low) return false;
+                for (Tree t : open) {
+                    double dx = b.getX() - t.seed.getX(), dz = b.getZ() - t.seed.getZ();
+                    if (dx * dx + dz * dz <= reuse2) return true;   // a tree is still to be cut near it
+                }
+                return false;
+            });
+            try {
+                if (dev.buildtools.Api.scaffoldCount() == 0) return;
+                Util.msg("clear_trees: taking down " + dev.buildtools.Api.scaffoldCount() + " pillar blocks ("
+                        + (chunkEnd ? "chunk done" : low ? "running low on blocks" : "too many standing") + "), keeping " + keep.size() + ".");
+                in.await(() -> new Actions.Feature(dev.buildtools.Api::collectScaffoldNow, dev.buildtools.Api::collectingScaffold,
+                        dev.buildtools.Api::stopCollectingScaffold, () -> true), "collect_scaffold", line);
+            } finally {
+                dev.buildtools.Api.restoreScaffold(keep);
+            }
+            collect(level, player(line).blockPosition());   // what the scaffolding dropped
         }
 
         /**
@@ -403,7 +451,7 @@ final class TreeClear {
         Set<BlockPos> ground = throwaway(in, level, boxes, null);   // what is there before: never taken for scaffolding
         Set<BlockPos> seen = new HashSet<>();
         List<Tree> trees = new ArrayList<>();
-        int total = 0, cleared = 0, gaveUp = 0, chunkNo = 0, skipped = 0;
+        int total = 0, cleared = 0, gaveUp = 0, chunkNo = 0, skipped = 0, quickFails = 0;
         List<BlockPos> spots = new ArrayList<>();
         Map<BlockPos, Long> spotTimes = new HashMap<>();
         Util.msg("clear_trees: " + (chunks.size() == 1 ? "scanning the selection." : chunks.size() + " chunks, scanned and cut one after the other."));
@@ -474,6 +522,25 @@ final class TreeClear {
                             // the mining below tries on
                         }
                     }
+                    // no scaffolding blocks (a restock may have emptied them): mined trees stay out of reach, every try ends in seconds
+                    if (scaffoldCount(player(line)) < 16 && quickFails >= 1) {
+                        Util.msg("clear_trees: only " + scaffoldCount(player(line)) + " scaffolding blocks left, mining some dirt.");
+                        try {
+                            in.await(() -> new Actions.BaritoneCommand("mine 32 dirt"), "mine 32 dirt", line);
+                        } catch (Values.ScriptError e) {
+                            // goes on with what it has
+                        }
+                    }
+                    // two quick failures in a row: the bot probably stands in a cave or pit; walk to the tree's surface first
+                    if (quickFails >= 2 && !wasFar) {
+                        String go = "goto " + t.seed.getX() + " " + t.seed.getZ();
+                        try {
+                            in.await(() -> new Actions.BaritoneCommand(go), go, line);
+                        } catch (Values.ScriptError e) {
+                            // the mining below tries on
+                        }
+                        quickFails = 0;
+                    }
                     long tryStart = System.nanoTime();
                     Util.msg("Tree " + (cleared + gaveUp + 1) + "/" + total + (t.tries > 1 ? " (second try)" : "") + ": " + n + " blocks ("
                             + String.join(", ", kinds) + ") at " + t.seed.getX() + " " + t.seed.getY() + " " + t.seed.getZ());
@@ -486,9 +553,19 @@ final class TreeClear {
                     r.collect(level, mid);   // the drops that are close; the others are not worth a walk
                     // every scaffolding block that is new around the tree, also those BuildTools' recorder did not see
                     markNew(in, level, box, before);
-                    r.scaffold(mid);
-                    r.collect(level, mid);   // what the scaffolding dropped
                     t.blocks.removeIf(b -> !tree(level, b));
+                    // pillars stay up for the next tree; only taken down when blocks run low or too many stand
+                    List<Tree> openTrees = new ArrayList<>();
+                    for (Tree o : found) if (o != t && o.tries < TRIES && !o.blocks.isEmpty()) openTrees.add(o);
+                    r.tidy(level, openTrees, false);
+                    if (!t.blocks.isEmpty() && t.blocks.size() == n && System.nanoTime() - tryStart < 15_000_000_000L) {
+                        quickFails++;
+                        BlockPos pp = player(line).blockPosition();
+                        Util.msg("clear_trees: no way to the tree (bot at " + pp.getX() + " " + pp.getY() + " " + pp.getZ()
+                                + ", " + scaffoldCount(player(line)) + " scaffolding blocks).");
+                    } else {
+                        quickFails = 0;
+                    }
                     // a try that found no path (ends within seconds and took nothing) will fail the same way again: do not repeat it
                     if (!t.blocks.isEmpty() && t.blocks.size() == n && t.tries < TRIES
                             && !wasFar && System.nanoTime() - tryStart < 15_000_000_000L) {
@@ -507,6 +584,7 @@ final class TreeClear {
                     }
                     r.dumpIfFull();
                 }
+                r.tidy(level, List.of(), true);
                 int open = 0;
                 for (Tree t : found) {
                     t.blocks.removeIf(bb -> !level.hasChunkAt(bb) || !tree(level, bb));
