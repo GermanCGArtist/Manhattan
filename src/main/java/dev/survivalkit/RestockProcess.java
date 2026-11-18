@@ -145,11 +145,30 @@ final class RestockProcess extends Feature {
     }
 
     private boolean neededNow(LocalPlayer p) {
+        // far from the base a trip costs minutes: only for what cannot wait (a worn tool, something used up). Stock that is
+        // merely low waits for the next time at the base (the bed trip tops it up, see topUpWanted).
+        boolean far = cfg.supply != null && !Util.nearBase(p);
         for (Map.Entry<String, Integer> e : cfg.want.entrySet()) {
             if (exhausted.getOrDefault(e.getKey(), 0L) > now) continue;
             int have = Util.countHave(p, e.getKey());
             if (have < e.getValue() && Util.hasWorn(p, e.getKey())) return true;
-            if (have * 2 < e.getValue()) return true;
+            if (have * 2 < e.getValue() && (!far || have == 0)) return true;
+        }
+        return false;
+    }
+
+    /** At the base anyway (on the way to bed): is anything on the want-list under 75% (or worn)? */
+    static boolean topUpWanted(LocalPlayer p) {
+        return SurvivalKitMod.restock.topUpNow(p);
+    }
+
+    private boolean topUpNow(LocalPlayer p) {
+        if (cfg.supply == null || cfg.want.isEmpty()) return false;
+        for (Map.Entry<String, Integer> e : cfg.want.entrySet()) {
+            if (exhausted.getOrDefault(e.getKey(), 0L) > now) continue;
+            int have = Util.countHave(p, e.getKey());
+            if (have < e.getValue() && Util.hasWorn(p, e.getKey())) return true;
+            if (have * 4 < e.getValue() * 3) return true;
         }
         return false;
     }

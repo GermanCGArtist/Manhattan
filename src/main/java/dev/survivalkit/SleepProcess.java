@@ -16,7 +16,7 @@ import static dev.survivalkit.Config.cfg;
 
 /** At night: walk to the saved bed, sleep until morning, then hand control back to the task that was running. */
 final class SleepProcess extends Feature {
-    private enum State { IDLE, PATHING, WAITING, ENTERING, SLEEPING }
+    private enum State { IDLE, PATHING, TOPUP, WAITING, ENTERING, SLEEPING }
 
     private static final int MIN_PATH_TIMEOUT = 20 * 90;
     /** Dusk: hostile mobs start to spawn outdoors about now; beds can be used from tick 12542. */
@@ -31,6 +31,7 @@ final class SleepProcess extends Feature {
     private int timer, tries, cooldown, check, pathTimeout = MIN_PATH_TIMEOUT;
     private double startDist;
     private boolean wasThunder;
+    private boolean toppedUp;   // supplies were refilled on this trip to the bed
 
     SleepProcess() {
         super("SurvivalKit sleep", 15);
@@ -125,6 +126,7 @@ final class SleepProcess extends Feature {
         }
         timer = 0;
         tries = 0;
+        toppedUp = false;
         state = State.PATHING;
         startDist = Math.sqrt(bed.distSqr(mc.player.blockPosition()));
         double travel = travelTicks(mc.player);
@@ -167,6 +169,17 @@ final class SleepProcess extends Feature {
                 if (dist <= 2.5) {
                     EngineSelector.current().cancel();
                     learnPace();
+                    // one trip for everything: the base is here anyway, so refill the supplies before the night
+                    if (!toppedUp && RestockProcess.topUpWanted(p)) {
+                        toppedUp = true;
+                        Util.msg("At the bed - topping up supplies first (one trip to the base instead of two).");
+                        SurvivalKitMod.restock.startNow();
+                        if (SurvivalKitMod.restock.busy()) {
+                            state = State.TOPUP;
+                            timer = 0;
+                            return;
+                        }
+                    }
                     state = isNight(mc) ? State.ENTERING : State.WAITING;
                     timer = 0;
                     if (state == State.WAITING) Util.msg("At the bed, waiting for nightfall.");
@@ -175,6 +188,15 @@ final class SleepProcess extends Feature {
                 if (!EngineSelector.current().isBusy()) {
                     EngineSelector.current().goTo(GoalSpec.near(bed, 1));
                 }
+            }
+            case TOPUP -> {
+                if (SurvivalKitMod.restock.busy() && timer < 20 * 180) return;
+                if (SurvivalKitMod.restock.busy()) SurvivalKitMod.restock.onLostControl();
+                state = State.PATHING;   // back to the bed
+                timer = 0;
+                startDist = 0;
+                pathTimeout = Math.max(MIN_PATH_TIMEOUT, pathTimeout);
+                EngineSelector.current().goTo(GoalSpec.near(bed, 1));
             }
             case WAITING -> {
                 if (isNight(mc)) {

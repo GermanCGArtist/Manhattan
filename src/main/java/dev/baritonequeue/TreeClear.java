@@ -54,7 +54,11 @@ final class TreeClear {
     private static final int TRIES = 3;
     private static final int LEAF_WAIT_S = 60;
     private static final int SWEEP_CELL = 24;   // the end sweep stops once per 24x24 cell that had a tree
-    private static final int DUMP_BELOW = 6;    // free slots: below this, a chest trip between trees
+    private static final int DUMP_BELOW = 2;    // free slots: below this (inventory about full), a chest trip between trees
+    private static final double PICK_BASE = 5;    // a drop is worth a walk of this many blocks ...
+    private static final double PICK_PER_ITEM = 2; // ... plus this many per item in its cluster
+    private static final int SCAFFOLD_NEAR = 32;   // only scaffolding this close to the tree is taken down between trees
+    private static final long SPOT_AGE_MS = 4 * 60_000L;   // drops despawn after 5 min: older spots are not swept
 
     static boolean body(BlockState s) {
         return s.is(BlockTags.LOGS) || BODY.contains(s.getBlock());
@@ -278,10 +282,48 @@ final class TreeClear {
                     dev.loadchest.LoadChestMod::pickingUp, null, () -> true), "pickup", line);
         }
 
-        void scaffold() {
-            if (dev.buildtools.Api.scaffoldCount() == 0) return;
-            in.await(() -> new Actions.Feature(dev.buildtools.Api::collectScaffoldNow, dev.buildtools.Api::collectingScaffold,
-                    dev.buildtools.Api::stopCollectingScaffold, () -> true), "collect_scaffold", line);
+        /** Takes down the scaffolding near c (all of it when c is null); pillars elsewhere stay on the list for later. */
+        void scaffold(BlockPos c) {
+            var far = c == null ? null : dev.buildtools.Api.stashScaffoldFarFrom(c, SCAFFOLD_NEAR);
+            try {
+                if (dev.buildtools.Api.scaffoldCount() == 0) return;
+                in.await(() -> new Actions.Feature(dev.buildtools.Api::collectScaffoldNow, dev.buildtools.Api::collectingScaffold,
+                        dev.buildtools.Api::stopCollectingScaffold, () -> true), "collect_scaffold", line);
+            } finally {
+                dev.buildtools.Api.restoreScaffold(far);
+            }
+        }
+
+        /**
+         * Picks up the drops near {@code around} that are worth the walk: a drop (or a cluster of them) is fetched when
+         * it is closer than PICK_BASE + PICK_PER_ITEM per item; the rest stays where it is (and is not walked back for).
+         */
+        void collect(Level level, BlockPos around) {
+            Set<Integer> tried = new HashSet<>();
+            for (int trip = 0; trip < 8; trip++) {
+                LocalPlayer p = player(line);
+                List<ItemEntity> items = level.getEntitiesOfClass(ItemEntity.class, new AABB(around).inflate(14, 10, 14),
+                        e -> e.isAlive() && !tried.contains(e.getId()));
+                ItemEntity best = null;
+                double bd = Double.MAX_VALUE;
+                for (ItemEntity e : items) {
+                    double d = e.distanceToSqr(p);
+                    if (d < bd) { bd = d; best = e; }
+                }
+                if (best == null) return;
+                int n = 0;
+                for (ItemEntity e : items) if (e.distanceToSqr(best) <= 9) n += e.getItem().getCount();
+                if (Math.sqrt(bd) > PICK_BASE + PICK_PER_ITEM * n) return;
+                tried.add(best.getId());
+                if (bd < 1.5 * 1.5) continue;   // within reach: picked up by itself
+                BlockPos at = best.blockPosition();
+                String go = "goto " + at.getX() + " " + at.getY() + " " + at.getZ();
+                try {
+                    in.await(() -> new Actions.BaritoneCommand(go), go, line);
+                } catch (Values.ScriptError e) {
+                    // no way to it: leave it
+                }
+            }
         }
 
         /** Into the chest, keeping the scaffolding blocks; what went in is counted per item. */
@@ -363,6 +405,7 @@ final class TreeClear {
         List<Tree> trees = new ArrayList<>();
         int total = 0, cleared = 0, gaveUp = 0, chunkNo = 0, skipped = 0;
         List<BlockPos> spots = new ArrayList<>();
+        Map<BlockPos, Long> spotTimes = new HashMap<>();
         Util.msg("clear_trees: " + (chunks.size() == 1 ? "scanning the selection." : chunks.size() + " chunks, scanned and cut one after the other."));
         try {
             for (ChunkGrid.ColumnBox chunk : chunks) {
@@ -419,6 +462,18 @@ final class TreeClear {
                         kinds.add(id(level.getBlockState(b).getBlock()));
                     }
                     int n = t.blocks.size();
+                    // after a trip to the base (restock, bed, chest) the bot may stand far away: mining from there finds no path
+                    BlockPos from = player(line).blockPosition();
+                    double fdx = t.seed.getX() - from.getX(), fdz = t.seed.getZ() - from.getZ();
+                    boolean wasFar = fdx * fdx + fdz * fdz > 48 * 48;
+                    if (wasFar) {
+                        String go = "goto " + t.seed.getX() + " " + t.seed.getZ();
+                        try {
+                            in.await(() -> new Actions.BaritoneCommand(go), go, line);
+                        } catch (Values.ScriptError e) {
+                            // the mining below tries on
+                        }
+                    }
                     long tryStart = System.nanoTime();
                     Util.msg("Tree " + (cleared + gaveUp + 1) + "/" + total + (t.tries > 1 ? " (second try)" : "") + ": " + n + " blocks ("
                             + String.join(", ", kinds) + ") at " + t.seed.getX() + " " + t.seed.getY() + " " + t.seed.getZ());
@@ -427,24 +482,27 @@ final class TreeClear {
                     Set<BlockPos> before = throwaway(in, level, box, null);
                     String cmd = "sel replace " + String.join(" ", kinds) + " air";
                     in.await(() -> new Actions.BaritoneCommand(cmd), cmd, line);
-                    r.pickup();   // drops on the leaves: Baritone may pillar up to them
+                    BlockPos mid = new BlockPos((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
+                    r.collect(level, mid);   // the drops that are close; the others are not worth a walk
                     // every scaffolding block that is new around the tree, also those BuildTools' recorder did not see
                     markNew(in, level, box, before);
-                    r.scaffold();
-                    r.pickup();   // what the scaffolding dropped
+                    r.scaffold(mid);
+                    r.collect(level, mid);   // what the scaffolding dropped
                     t.blocks.removeIf(b -> !tree(level, b));
                     // a try that found no path (ends within seconds and took nothing) will fail the same way again: do not repeat it
                     if (!t.blocks.isEmpty() && t.blocks.size() == n && t.tries < TRIES
-                            && System.nanoTime() - tryStart < 15_000_000_000L) {
-                        t.tries = TRIES;
+                            && !wasFar && System.nanoTime() - tryStart < 15_000_000_000L) {
+                        t.tries = Math.max(t.tries, TRIES - 1);   // one more try, then give up
                     }
                     if (t.blocks.isEmpty()) {
                         cleared++;
                         spots.add(t.seed);
+                        spotTimes.put(t.seed, System.currentTimeMillis());
                     } else if (t.tries >= TRIES) {
                         Util.msg("clear_trees: " + t.blocks.size() + " blocks of the tree at " + t.seed.getX() + " " + t.seed.getY() + " "
                                 + t.seed.getZ() + " are out of reach; leaving them.");
                         spots.add(t.seed);
+                        spotTimes.put(t.seed, System.currentTimeMillis());
                         gaveUp++;
                     }
                     r.dumpIfFull();
@@ -462,7 +520,10 @@ final class TreeClear {
         }
         if (skipped > 0) Util.msg("clear_trees: " + skipped + " chunk" + (skipped == 1 ? "" : "s") + " already done in an earlier run, skipped.");
 
-        // leaves: give them a while to fall apart, then one sweep over the area for what they dropped
+        // leaves: give them a while to fall apart, then one sweep for what they dropped. Drops despawn after 5 minutes, so
+        // only the spots of the last minutes are worth it (in a big area the early ones are long gone)
+        long cutoff = System.currentTimeMillis() - SPOT_AGE_MS;
+        spots.removeIf(b -> spotTimes.getOrDefault(b, 0L) < cutoff);
         if (!spots.isEmpty()) {
             int waited = 0;
             while (waited < LEAF_WAIT_S && decaying(in, level, boxes) > 0) {
@@ -494,7 +555,7 @@ final class TreeClear {
         }
         // anything left standing from pickups and the sweep (pillars up to drops on the leaves)
         for (int round = 0; round < 3 && markNew(in, level, boxes, ground) > 0; round++) {
-            r.scaffold();
+            r.scaffold(null);
             r.pickup();   // may climb again: look once more
         }
         if (chest != null) r.dump();

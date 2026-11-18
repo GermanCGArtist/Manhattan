@@ -105,6 +105,27 @@ public final class Api {
         Scaffold.spots().put(pos.immutable(), block);
     }
 
+    /**
+     * Takes the recorded scaffolding farther than r blocks from c off the list and returns it, so collect_scaffold() only
+     * works near c instead of walking to old pillars somewhere else; put it back with restoreScaffold.
+     */
+    public static java.util.Map<net.minecraft.core.BlockPos, net.minecraft.world.level.block.Block> stashScaffoldFarFrom(net.minecraft.core.BlockPos c, int r) {
+        java.util.Map<net.minecraft.core.BlockPos, net.minecraft.world.level.block.Block> far = new java.util.LinkedHashMap<>();
+        double r2 = (double) r * r;
+        for (var it = Scaffold.spots().entrySet().iterator(); it.hasNext(); ) {
+            var e = it.next();
+            if (e.getKey().distSqr(c) > r2) {
+                far.put(e.getKey(), e.getValue());
+                it.remove();
+            }
+        }
+        return far;
+    }
+
+    public static void restoreScaffold(java.util.Map<net.minecraft.core.BlockPos, net.minecraft.world.level.block.Block> stashed) {
+        if (stashed != null) Scaffold.spots().putAll(stashed);
+    }
+
     public static void forgetScaffold() {
         Scaffold.spots().clear();
     }
