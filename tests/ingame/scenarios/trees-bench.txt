@@ -1,0 +1,14 @@
+// trees_bench: a small plantation of oaks and birches cleared into a chest; prints how many seconds it took (speed benchmark)
+stall(1)
+#acceptableThrowawayItems dirt
+let wood_chest = pos(100, -60, 84)
+let body = ["oak_log", "birch_log", "bee_nest", "vine"]
+select(pos(80, -60, 86), pos(126, -20, 130))
+let before = count_blocks(body)
+let t0 = now()
+print("TEST bench start blocks={before}")
+let got = clear_trees(wood_chest)
+let secs = round((now() - t0) / 1000, 1)
+let left = count_blocks(body)
+let dirt_carried = count("dirt")
+print("TEST bench done secs={secs} left={left} dirt_carried={dirt_carried} blocks={before}")

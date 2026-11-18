@@ -361,7 +361,7 @@ final class TreeClear {
         Set<BlockPos> ground = throwaway(in, level, boxes, null);   // what is there before: never taken for scaffolding
         Set<BlockPos> seen = new HashSet<>();
         List<Tree> trees = new ArrayList<>();
-        int total = 0, cleared = 0, chunkNo = 0, skipped = 0;
+        int total = 0, cleared = 0, gaveUp = 0, chunkNo = 0, skipped = 0;
         List<BlockPos> spots = new ArrayList<>();
         Util.msg("clear_trees: " + (chunks.size() == 1 ? "scanning the selection." : chunks.size() + " chunks, scanned and cut one after the other."));
         try {
@@ -419,7 +419,8 @@ final class TreeClear {
                         kinds.add(id(level.getBlockState(b).getBlock()));
                     }
                     int n = t.blocks.size();
-                    Util.msg("Tree " + (cleared + 1) + "/" + total + (t.tries > 1 ? " (second try)" : "") + ": " + n + " blocks ("
+                    long tryStart = System.nanoTime();
+                    Util.msg("Tree " + (cleared + gaveUp + 1) + "/" + total + (t.tries > 1 ? " (second try)" : "") + ": " + n + " blocks ("
                             + String.join(", ", kinds) + ") at " + t.seed.getX() + " " + t.seed.getY() + " " + t.seed.getZ());
                     select(x0, y0, z0, x1, y1, z1);
                     List<int[]> box = List.of(new int[]{x0, y0 - 2, z0, x1, y1, z1});
@@ -432,6 +433,11 @@ final class TreeClear {
                     r.scaffold();
                     r.pickup();   // what the scaffolding dropped
                     t.blocks.removeIf(b -> !tree(level, b));
+                    // a try that found no path (ends within seconds and took nothing) will fail the same way again: do not repeat it
+                    if (!t.blocks.isEmpty() && t.blocks.size() == n && t.tries < TRIES
+                            && System.nanoTime() - tryStart < 15_000_000_000L) {
+                        t.tries = TRIES;
+                    }
                     if (t.blocks.isEmpty()) {
                         cleared++;
                         spots.add(t.seed);
@@ -439,6 +445,7 @@ final class TreeClear {
                         Util.msg("clear_trees: " + t.blocks.size() + " blocks of the tree at " + t.seed.getX() + " " + t.seed.getY() + " "
                                 + t.seed.getZ() + " are out of reach; leaving them.");
                         spots.add(t.seed);
+                        gaveUp++;
                     }
                     r.dumpIfFull();
                 }

@@ -47,6 +47,8 @@ public final class Runner {
         boolean wasTrue;
         int fired;
         long lastEnd = Long.MIN_VALUE / 2;   // tick when its block last finished
+        long lastStart;                       // tick when its block last fired
+        long rearm = 1200;                    // ticks until it may fire again while its condition stays true
 
         Handler(Ast.On on, Ast.Env env) {
             this.on = on;
@@ -395,6 +397,10 @@ public final class Runner {
             if (!stack.isEmpty() && f == stack.peek().f() && !f.exited) {
                 Frame popped = stack.pop();
                 popped.h().lastEnd = tickCounter;
+                // a block that ended at once did nothing (no food, nothing to fight): wait longer before the next try,
+                // up to 10 minutes, instead of interrupting the work every minute
+                Handler ph = popped.h();
+                ph.rearm = tickCounter - ph.lastStart < 100 ? Math.min(12000, ph.rearm * 2) : 1200;
                 if (referencesVar(popped.h().on.cond, "chunk_needs")) {
                     popped.h().env.assign("chunk_needs", Values.newMap());
                 }
@@ -480,8 +486,9 @@ public final class Runner {
                 return;
             }
             // when it becomes true; and again a minute after it last ran if it is still true (no food, a mob left ...)
-            boolean fire = now && (!h.wasTrue || tickCounter - h.lastEnd > 1200);
+            boolean fire = now && (!h.wasTrue || tickCounter - h.lastEnd > h.rearm);
             h.wasTrue = now;
+            if (!now) h.rearm = 1200;
             if (!fire) continue;
             h.fired++;
             fire(h);
@@ -498,6 +505,7 @@ public final class Runner {
                 t.printStackTrace();
             }
         }
+        h.lastStart = tickCounter;
         Ast.Env env = new Ast.Env(h.env);
         Interp[] holder = new Interp[1];
         Fiber f = new Fiber("queue-on-" + h.on.line, () -> Ast.run(h.on.body, holder[0], env));

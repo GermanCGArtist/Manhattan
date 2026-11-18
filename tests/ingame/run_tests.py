@@ -2381,6 +2381,31 @@ def _forest(group):
 TREE_TESTS = [("trees_small", test_trees_small), ("trees_chunks", test_trees_chunks)] + [("trees_forest_" + g, _forest(g)) for g in FOREST_GROUPS]
 
 
+BENCH_SPOTS = [("oak", (84, -60, 92)), ("birch", (94, -60, 90)), ("oak", (108, -60, 92)), ("birch", (120, -60, 94)),
+               ("oak", (88, -60, 104)), ("oak", (100, -60, 106)), ("birch", (112, -60, 106)), ("oak", (122, -60, 108)),
+               ("birch", (86, -60, 120)), ("oak", (98, -60, 122)), ("oak", (110, -60, 120)), ("birch", (122, -60, 124))]
+
+
+def run_bench(t, n):
+    """Speed benchmark: the same 12 oaks and birches cleared into a chest; reports the seconds clear_trees() took.
+    Not part of the default run (name it: trees_bench_1 ... trees_bench_16)."""
+    new_world(t, "trees-bench-%d" % n)
+    t.cmd("/tp @s 105 -60 105 0 0")
+    time.sleep(3)
+    planted = [f for f, p in BENCH_SPOTS if plant(t, f, p)]
+    if len(planted) < 10:
+        raise Fail("only %d of %d trees could be planted" % (len(planted), len(BENCH_SPOTS)))
+    chest_with(t, (100, -60, 84), [])
+    t.cmd("/give @s dirt 128", "/tp @s 100 -60 100 0 0")
+    line = run_scenario(t, "trees-bench.txt", "TEST bench done", 1500)
+    if kv(line, "left") != 0:
+        raise Fail("tree blocks left standing: %s" % line)
+    return line.split("bench ", 1)[-1]
+
+
+BENCH_TESTS = [("trees_bench_%d" % k, (lambda k: lambda t: run_bench(t, k))(k)) for k in range(1, 17)]
+
+
 TESTS = [("smoke", test_smoke), ("workspace", test_workspace), ("viewport", test_viewport), ("monitor", test_monitor), ("panels", test_panels), ("ui_screens", test_ui_screens), ("fill_water", test_fill_water), ("fill_water_deep", test_fill_water_deep), ("fill_water_shaft", test_fill_water_shaft), ("fill_water_submerged_shaft", test_fill_water_submerged_shaft), ("fill_water_submerged_pocket", test_fill_water_submerged_pocket), ("eat", test_eat), ("defend", test_defend), ("death_recover", test_death_recover), ("death_unlimited", test_death_unlimited),("clear_resume", test_clear_resume), ("clear_shaft", test_clear_shaft), ("clear_overnight_stress", test_clear_overnight_stress), ("dump", test_dump), ("chest_index", test_chest_index), ("hotbar_tools", test_hotbar_tools), ("air", test_air), ("clear_wet", test_clear_wet),
          ("schem_list", test_schem_list), ("schem_add", test_schem_add), ("schem_fix", test_schem_fix), ("schem_fix_wrong", test_schem_fix_wrong), ("schem_exact", test_schem_exact),
          ("colossal_schem", test_colossal_schem)]
@@ -2389,6 +2414,7 @@ MIDTOWN_TESTS = [("midtown_smoke", test_midtown_smoke), ("midtown_eat", test_mid
 
 TESTS += CANAL_TESTS
 TESTS += TREE_TESTS
+TESTS += BENCH_TESTS
 TESTS += MIDTOWN_TESTS
 
 
@@ -2417,7 +2443,7 @@ def enter_world(b):
 
 TEST_TIMEOUT = 600          # seconds; a test that takes longer fails and its game is restarted
 RAM_PER_CLIENT_GB = 3.5     # a game with its 3 GB heap (MANHATTAN_XMX) and its own memory
-TEST_TIMEOUTS = {"trees_forest_spruce": 1200, "trees_forest_jungle": 1200, "colossal_canal": 1500, "colossal_schem": 1200, "canal_smoke": 1200}   # Baritone stalls on the 2x2 spruce (2 min a try); --test-timeout can only raise it
+TEST_TIMEOUTS = {**{"trees_bench_%d" % k: 1500 for k in range(1, 17)}, "trees_forest_spruce": 1200, "trees_forest_jungle": 1200, "colossal_canal": 1500, "colossal_schem": 1200, "canal_smoke": 1200}   # Baritone stalls on the 2x2 spruce (2 min a try); --test-timeout can only raise it
 MAX_WORKERS = 16            # bridge ports 25700+N for worker N: 25701..25716 (the other harness uses 25599 and 25601..25603)
 LONG_FIRST = ["trees_forest_spruce", "trees_small", "clear_resume", "schem_exact", "schem_fix_wrong", "schem_fix", "fill_water", "schem_add"]   # start the slow ones first
 
@@ -2655,7 +2681,7 @@ def main(argv):
     timeout = int(opt(argv, "--test-timeout", TEST_TIMEOUT))
     values = {opt(argv, f, None) for f in ("--workers", "-j", "--worker", "--queue", "--test-timeout", "--tick", "--retries", "--engine")}
     names = [a for a in argv if not a.startswith("-") and a not in values]
-    tests = [(n, f) for n, f in TESTS if not names or n in names]
+    tests = [(n, f) for n, f in TESTS if n in names or (not names and not n.startswith("trees_bench_"))]
     if names and len(tests) != len(names):
         print("unknown test; known: " + ", ".join(n for n, _ in TESTS))
         return 2
