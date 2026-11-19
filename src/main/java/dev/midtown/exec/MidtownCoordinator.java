@@ -54,16 +54,19 @@ public final class MidtownCoordinator {
         CONTINUE_EDGE,
         /** Player drifted too far or edge was invalid; replanned locally from current position. */
         REPLANNED,
+        /** Player drifted too far while {@code asyncReplanMode} is enabled; caller must launch an async replan. */
+        NEEDS_REPLAN,
         /** Replan was required but produced no path (status set to {@link EngineStatus#FAILED}). */
         FAILED
     }
 
     /** Action emitted by {@link #tick(double, double, double)} for the executor. */
-    public sealed interface TickAction permits TickAction.Idle, TickAction.MoveTo, TickAction.Done, TickAction.Failed {
+    public sealed interface TickAction permits TickAction.Idle, TickAction.MoveTo, TickAction.Done, TickAction.Failed, TickAction.NeedsReplan {
         record Idle() implements TickAction {}
         record MoveTo(PathNode node, boolean replannedThisTick) implements TickAction {}
         record Done() implements TickAction {}
         record Failed(String reason) implements TickAction {}
+        record NeedsReplan(GoalSpec goal, BlockPos start, String reason) implements TickAction {}
     }
 
     private final EdgeTracker edgeTracker;
@@ -78,6 +81,7 @@ public final class MidtownCoordinator {
     private int pathIndex;
     private BlockPos edgeFrom;
     private boolean paused;
+    private boolean asyncReplanMode;
     private long tickCounter;
     private int replanCount;
     private int maxReplans = DEFAULT_MAX_REPLANS;
@@ -218,6 +222,14 @@ public final class MidtownCoordinator {
         }
 
         BlockPos playerBlock = BlockPos.containing(playerX, playerY, playerZ);
+        if (asyncReplanMode) {
+            this.path = List.of();
+            this.pathIndex = 0;
+            this.edgeFrom = playerBlock;
+            this.status = EngineStatus.PLANNING;
+            edgeTracker.resetEdge();
+            return ResumeOutcome.NEEDS_REPLAN;
+        }
         if (planFrom(playerBlock)) {
             return ResumeOutcome.REPLANNED;
         }
@@ -328,13 +340,55 @@ public final class MidtownCoordinator {
             edgeTracker.resetEdge();
             return new TickAction.Failed(lastFailureReason);
         }
-        status = EngineStatus.STUCK;
         BlockPos start = BlockPos.containing(playerX, playerY, playerZ);
+        if (asyncReplanMode) {
+            status = EngineStatus.PLANNING;
+            edgeTracker.resetEdge();
+            return new TickAction.NeedsReplan(activeGoal, start, reason);
+        }
+        status = EngineStatus.STUCK;
         if (planFrom(start)) {
             return new TickAction.MoveTo(path.get(pathIndex), true);
         }
         lastFailureReason = reason + " (replan produced no path)";
         return new TickAction.Failed(lastFailureReason);
+    }
+
+    /**
+     * Applies an asynchronously replanned path while preserving {@code replanCount},
+     * or marks the coordinator {@link EngineStatus#FAILED} if {@code planned} is empty.
+     */
+    public boolean applyReplannedPath(BlockPos start, List<PathNode> planned) {
+        Objects.requireNonNull(start, "start");
+        if (activeGoal == null) {
+            return false;
+        }
+        this.paused = false;
+        this.lastFailureReason = null;
+        return applyPlannedPath(start, planned);
+    }
+
+    /**
+     * Requests an async replan triggered by rolling lookahead validation while {@link EngineStatus#MOVING}.
+     * Increments {@code replanCount} against {@code maxReplans}; transitions {@code MOVING -> PLANNING}
+     * and returns {@code true} if allowed, or marks {@link EngineStatus#FAILED} and returns {@code false}
+     * if {@code maxReplans} is exceeded.
+     */
+    public boolean requestLookaheadReplan(String reason) {
+        if (paused || activeGoal == null || status != EngineStatus.MOVING) {
+            return false;
+        }
+        replanCount++;
+        LOGGER.info("[MidtownCoordinator] lookahead replan #{}: {}", replanCount, reason);
+        if (replanCount > maxReplans) {
+            status = EngineStatus.FAILED;
+            lastFailureReason = "Exceeded max replans (" + maxReplans + "): " + reason;
+            edgeTracker.resetEdge();
+            return false;
+        }
+        status = EngineStatus.PLANNING;
+        edgeTracker.resetEdge();
+        return true;
     }
 
     private boolean planFrom(BlockPos start) {
@@ -560,6 +614,14 @@ public final class MidtownCoordinator {
 
     public boolean isPaused() {
         return paused;
+    }
+
+    public boolean isAsyncReplanMode() {
+        return asyncReplanMode;
+    }
+
+    public void setAsyncReplanMode(boolean asyncReplanMode) {
+        this.asyncReplanMode = asyncReplanMode;
     }
 
     public int interruptStackSize() {

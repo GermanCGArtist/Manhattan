@@ -13,17 +13,22 @@ import dev.midtown.exec.MidtownCoordinator;
 import dev.midtown.exec.MidtownCoordinator.ResumeOutcome;
 import dev.midtown.exec.MidtownCoordinator.TickAction;
 import dev.midtown.exec.MidtownEngine;
+import dev.midtown.exec.MineController;
 import dev.midtown.exec.PathNode;
 import dev.midtown.exec.PathNode.EdgeKey;
 import dev.midtown.exec.Planner;
+import dev.midtown.plan.AStarStorage;
 import dev.midtown.plan.BlockKind;
 import dev.midtown.plan.CalculationContext;
 import dev.midtown.plan.CalculationContext.ProtectedRegion;
+import dev.midtown.plan.EdgeGenerator;
+import dev.midtown.plan.GoalAdapters;
 import dev.midtown.plan.GridWorldSnapshot;
 import dev.midtown.plan.HazardCost;
 import dev.midtown.plan.MidtownPlanner;
 import dev.midtown.plan.MoveEdge;
 import dev.midtown.plan.PlanResult;
+import dev.midtown.plan.WorldSnapshot;
 import net.minecraft.core.BlockPos;
 
 import java.util.Arrays;
@@ -61,6 +66,9 @@ public class MidtownTest {
         testItemSaverSettings();
         testMultiBoxProtectedArea();
         testWaterToShoreCrossing();
+        testGoalChunkRadius();
+        testPlannerComponentsParity();
+        testMineController();
 
         System.out.println("\nMidtownTest summary: " + passes + " passed, " + fails + " failed.");
         if (fails > 0) {
@@ -966,6 +974,177 @@ public class MidtownTest {
         TickAction losEnd = coord.tick(3.5, 64.0, 2.5); // reaches final waypoint (pathIndex == path.size())
         assertTrue("LineOfSight completes at end of path within range", losEnd instanceof TickAction.Done);
         same("LineOfSight DONE at end of path", coord.status(), EngineStatus.DONE);
+    }
+
+    private static void testGoalChunkRadius() {
+        System.out.println("Checking WorldSnapshot.goalChunkRadius for near, medium, far, and unbounded/null goals...");
+        BlockPos start = new BlockPos(0, 64, 0);
+
+        // Near spatial goals clamp at minimum 4 chunks
+        same("exact near radius", WorldSnapshot.goalChunkRadius(start, GoalSpec.exact(new BlockPos(10, 64, 10))), 4);
+        same("near close radius", WorldSnapshot.goalChunkRadius(start, GoalSpec.near(new BlockPos(15, 64, -15), 2)), 4);
+        same("xz close radius", WorldSnapshot.goalChunkRadius(start, GoalSpec.xz(0, 0)), 4);
+        same("los close radius", WorldSnapshot.goalChunkRadius(start, GoalSpec.lineOfSight(new BlockPos(20, 64, 5), 4.5)), 4);
+
+        // Medium spatial goals scale linearly with (horizDist >> 4) + 3
+        same("exact 80 blocks -> radius 8", WorldSnapshot.goalChunkRadius(start, GoalSpec.exact(new BlockPos(80, 64, 10))), 8);
+        same("near 64 blocks -> radius 7", WorldSnapshot.goalChunkRadius(start, GoalSpec.near(new BlockPos(-64, 64, 32), 3)), 7);
+        same("xz 48 blocks -> radius 6", WorldSnapshot.goalChunkRadius(start, GoalSpec.xz(12, -48)), 6);
+        same("los 32 blocks -> radius 5", WorldSnapshot.goalChunkRadius(start, GoalSpec.lineOfSight(new BlockPos(32, 70, 16), 4.0)), 5);
+
+        // Far spatial goals clamp at DEFAULT_CHUNK_RADIUS (12)
+        same("exact far radius", WorldSnapshot.goalChunkRadius(start, GoalSpec.exact(new BlockPos(500, 64, 0))), WorldSnapshot.DEFAULT_CHUNK_RADIUS);
+        same("xz far radius", WorldSnapshot.goalChunkRadius(start, GoalSpec.xz(-300, 300)), WorldSnapshot.DEFAULT_CHUNK_RADIUS);
+
+        // Unbounded / null fall back to DEFAULT_CHUNK_RADIUS
+        same("runAway radius", WorldSnapshot.goalChunkRadius(start, GoalSpec.runAway(start, 24.0)), WorldSnapshot.DEFAULT_CHUNK_RADIUS);
+        same("null goal radius", WorldSnapshot.goalChunkRadius(start, null), WorldSnapshot.DEFAULT_CHUNK_RADIUS);
+        same("null start radius", WorldSnapshot.goalChunkRadius(null, GoalSpec.exact(start)), WorldSnapshot.DEFAULT_CHUNK_RADIUS);
+    }
+
+    private static void testPlannerComponentsParity() {
+        System.out.println("Checking AStarStorage, EdgeGenerator, GoalAdapters, and planner parity...");
+
+        // 1. AStarStorage: heap ordering, decreaseKey, closed flags, and dynamic capacity growth
+        AStarStorage storage = new AStarStorage(16);
+        int n0 = storage.addNode(0, 64, 0, 0.0, 10.0, -1, (byte) 0, (byte) 0, 0L, Long.MIN_VALUE, Long.MIN_VALUE, 0.0, 0);
+        int n1 = storage.addNode(1, 64, 0, 8.0, 6.0, n0, EdgeGenerator.EDGE_WALK, (byte) 0, 0L, Long.MIN_VALUE, Long.MIN_VALUE, 8.0, 0);
+        int n2 = storage.addNode(2, 64, 0, 4.0, 5.0, n0, EdgeGenerator.EDGE_WALK, (byte) 0, 0L, Long.MIN_VALUE, Long.MIN_VALUE, 4.0, 0);
+        storage.push(n0);
+        storage.push(n1);
+        storage.push(n2);
+        same("heap pops lowest fScore (n2)", storage.popMin(), n2);
+        // Relax n1 so its fScore beats n0 (new g=1.0 -> f = 1.0 + 1.1*6.0 = 7.6 < 11.0)
+        storage.updateNode(n1, 1.0, n2, EdgeGenerator.EDGE_ASCEND, (byte) 0, 0L, Long.MIN_VALUE, Long.MIN_VALUE, 1.0, 0);
+        same("heap pops relaxed n1 before n0", storage.popMin(), n1);
+        same("n1 updated parentId", storage.parentId(n1), n2);
+        same("n1 updated edgeType", storage.edgeType(n1), EdgeGenerator.EDGE_ASCEND);
+        same("pos lookup finds n2", storage.getNodeId(BlockPos.asLong(2, 64, 0)), n2);
+        same("pos lookup missing returns -1", storage.getNodeId(BlockPos.asLong(99, 64, 99)), -1);
+        storage.markClosed(n2);
+        assertTrue("n2 marked closed", storage.isClosed(n2));
+
+        // Grow beyond initial capacity (16) to verify array growth + PosToNodeMap rehash
+        for (int i = 0; i < 40; i++) {
+            int id = storage.addNode(10 + i, 64, 0, i, 1.0, -1, (byte) 0, (byte) 0, 0L, Long.MIN_VALUE, Long.MIN_VALUE, 1.0, 0);
+            storage.push(id);
+            same("lookup after growth idx " + i, storage.getNodeId(BlockPos.asLong(10 + i, 64, 0)), id);
+        }
+        assertTrue("storage size grew past 16", storage.size() >= 43);
+
+        // 2. EdgeGenerator: direct neighbor generation & isPlacedSupportEdge
+        assertTrue("bridge is placed support", EdgeGenerator.isPlacedSupportEdge(EdgeGenerator.EDGE_BRIDGE, (byte) 0));
+        assertTrue("pillar is placed support", EdgeGenerator.isPlacedSupportEdge(EdgeGenerator.EDGE_PILLAR, (byte) 0));
+        assertTrue("parkour-place is placed support", EdgeGenerator.isPlacedSupportEdge(EdgeGenerator.EDGE_PARKOUR, (byte) 9));
+        assertFalse("plain parkour not placed support", EdgeGenerator.isPlacedSupportEdge(EdgeGenerator.EDGE_PARKOUR, (byte) 1));
+        assertFalse("walk not placed support", EdgeGenerator.isPlacedSupportEdge(EdgeGenerator.EDGE_WALK, (byte) 0));
+
+        GridWorldSnapshot flat = GridWorldSnapshot.builder(0, 0, 0, 6, 6, 6)
+                .fillFloor(0, BlockKind.SOLID)
+                .build();
+        EdgeGenerator.NeighborBuffer nb = new EdgeGenerator.NeighborBuffer();
+        nb.clear(0);
+        EdgeGenerator.generateNeighbors(flat, CalculationContext.defaults(), 2, 1, 2, 0, false, nb);
+        assertTrue("flat world generates cardinal/diagonal/pillar neighbors", nb.count >= 8);
+
+        // 3. GoalAdapters: adapter types, heuristics, and parity across all GoalSpec variants
+        GoalAdapters.GoalAdapter exactAdapter = GoalAdapters.forGoal(flat, GoalSpec.exact(new BlockPos(4, 1, 4)));
+        assertTrue("exactAdapter is ExactGoal", exactAdapter instanceof GoalAdapters.ExactGoal);
+        assertTrue("exactAdapter isGoal at target", exactAdapter.isGoal(4, 1, 4));
+        assertFalse("exactAdapter !isGoal elsewhere", exactAdapter.isGoal(3, 1, 4));
+
+        GoalAdapters.GoalAdapter xzAdapter = GoalAdapters.forGoal(flat, GoalSpec.xz(4, 4));
+        assertTrue("xzAdapter is XZGoal", xzAdapter instanceof GoalAdapters.XZGoal);
+        assertTrue("xzAdapter ignores Y", xzAdapter.isGoal(4, 99, 4));
+
+        GoalAdapters.GoalAdapter losAdapter = GoalAdapters.forGoal(flat, GoalSpec.lineOfSight(new BlockPos(4, 2, 4), 4.5));
+        assertTrue("losAdapter is LineOfSightGoal", losAdapter instanceof GoalAdapters.LineOfSightGoal);
+        assertTrue("losAdapter has clear sight", losAdapter.isGoal(2, 1, 2));
+
+        GoalAdapters.GoalAdapter runAdapter = GoalAdapters.forGoal(flat, GoalSpec.runAway(new BlockPos(0, 1, 0), 3.0));
+        assertTrue("runAdapter is RunAwayGoal", runAdapter instanceof GoalAdapters.RunAwayGoal);
+        assertTrue("runAdapter satisfied at distance 4", runAdapter.isGoal(4, 1, 0));
+        assertFalse("runAdapter unsatisfied at distance 2", runAdapter.isGoal(2, 1, 0));
+
+        MidtownPlanner planner = new MidtownPlanner();
+        try {
+            CalculationContext ctx = CalculationContext.defaults();
+            PlanResult xzRes = planner.planSync(flat, ctx, new BlockPos(0, 1, 0), GoalSpec.xz(5, 5));
+            assertTrue("planner XZ goal complete", xzRes.isComplete());
+            same("planner XZ end X", xzRes.endPos().getX(), 5);
+            same("planner XZ end Z", xzRes.endPos().getZ(), 5);
+
+            PlanResult runRes = planner.planSync(flat, ctx, new BlockPos(0, 1, 0), GoalSpec.runAway(new BlockPos(0, 1, 0), 4.0));
+            assertTrue("planner RunAway goal complete", runRes.isComplete());
+            assertTrue("planner RunAway moved >= 4 blocks",
+                    Math.hypot(runRes.endPos().getX(), runRes.endPos().getZ()) >= 4.0);
+        } finally {
+            planner.shutdown();
+        }
+    }
+
+    private static void testMineController() {
+        System.out.println("Checking MineController state, attempt blacklisting, beginMine, and clear...");
+        MineController mcCtrl = new MineController();
+        BlockFilter oreFilter = BlockFilter.ofNames("minecraft:iron_ore");
+        Area box = Area.of(0, 0, 0, 10, 10, 10);
+
+        assertFalse("initially inactive", mcCtrl.isActive());
+        same("initial filter null", mcCtrl.filter(), null);
+        same("initial box null", mcCtrl.box(), null);
+        assertTrue("initial blacklist empty", mcCtrl.blacklist().isEmpty());
+        assertFalse("null target never blacklists", mcCtrl.recordAttemptAndCheckBlacklist(null));
+
+        mcCtrl.beginMine(oreFilter, box);
+        assertTrue("active after beginMine", mcCtrl.isActive());
+        same("filter set after beginMine", mcCtrl.filter(), oreFilter);
+        same("box set after beginMine", mcCtrl.box(), box);
+
+        BlockPos target1 = new BlockPos(3, 64, 4);
+        BlockPos target2 = new BlockPos(5, 64, 4);
+
+        // Consecutive > 2 attempts blacklists target1 on the 3rd attempt
+        assertFalse("attempt 1 does not blacklist", mcCtrl.recordAttemptAndCheckBlacklist(target1));
+        assertFalse("not blacklisted after attempt 1", mcCtrl.isBlacklisted(target1));
+        assertFalse("attempt 2 does not blacklist", mcCtrl.recordAttemptAndCheckBlacklist(target1));
+        assertFalse("not blacklisted after attempt 2", mcCtrl.isBlacklisted(target1));
+        assertTrue("attempt 3 blacklists target1", mcCtrl.recordAttemptAndCheckBlacklist(target1));
+        assertTrue("target1 is blacklisted", mcCtrl.isBlacklisted(target1));
+        same("blacklist size 1", mcCtrl.blacklist().size(), 1);
+
+        // Switching targets resets consecutive counter before blacklisting
+        assertFalse("attempt 1 on target2", mcCtrl.recordAttemptAndCheckBlacklist(target2));
+        assertFalse("attempt 2 on target2", mcCtrl.recordAttemptAndCheckBlacklist(target2));
+        assertFalse("switching back to target1 resets target2 streak", mcCtrl.recordAttemptAndCheckBlacklist(target1));
+        assertFalse("target2 not blacklisted after interrupted streak", mcCtrl.isBlacklisted(target2));
+        assertFalse("target2 attempt 1 after reset", mcCtrl.recordAttemptAndCheckBlacklist(target2));
+        assertFalse("target2 attempt 2 after reset", mcCtrl.recordAttemptAndCheckBlacklist(target2));
+        assertTrue("target2 attempt 3 blacklists target2", mcCtrl.recordAttemptAndCheckBlacklist(target2));
+        assertTrue("target2 is blacklisted", mcCtrl.isBlacklisted(target2));
+
+        // beginMine resets prior blacklist and attempt state
+        mcCtrl.beginMine(oreFilter, null);
+        assertTrue("beginMine clears blacklist", mcCtrl.blacklist().isEmpty());
+        assertFalse("target1 no longer blacklisted", mcCtrl.isBlacklisted(target1));
+        same("beginMine updates box to null", mcCtrl.box(), null);
+
+        // Null Minecraft safety
+        assertFalse("hasMatchingBlockInArea false with null mc",
+                mcCtrl.hasMatchingBlockInArea(null, target1, oreFilter, box, p -> false, b -> false));
+        same("findNearestMatchingInReach null with null mc",
+                mcCtrl.findNearestMatchingInReach(null, oreFilter, box, target1, p -> false, b -> false), null);
+
+        // clear() resets everything
+        mcCtrl.recordAttemptAndCheckBlacklist(target1);
+        mcCtrl.recordAttemptAndCheckBlacklist(target1);
+        mcCtrl.recordAttemptAndCheckBlacklist(target1);
+        assertTrue("target1 blacklisted before clear", mcCtrl.isBlacklisted(target1));
+        mcCtrl.clear();
+        assertFalse("inactive after clear", mcCtrl.isActive());
+        same("filter null after clear", mcCtrl.filter(), null);
+        same("box null after clear", mcCtrl.box(), null);
+        assertTrue("blacklist empty after clear", mcCtrl.blacklist().isEmpty());
+        assertFalse("isBlacklisted false for null", mcCtrl.isBlacklisted(null));
     }
 
     // ------------------------------------------------------------------ Assertion Helpers

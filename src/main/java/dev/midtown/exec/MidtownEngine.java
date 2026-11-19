@@ -6,7 +6,9 @@ import dev.midtown.api.EngineSelector;
 import dev.midtown.api.EngineStatus;
 import dev.midtown.api.GoalSpec;
 import dev.midtown.api.PathEngine;
+import dev.midtown.exec.MidtownCoordinator.ResumeOutcome;
 import dev.midtown.exec.MidtownCoordinator.TickAction;
+import dev.midtown.plan.BlockKind;
 import dev.midtown.plan.CalculationContext;
 import dev.midtown.plan.MidtownPlanner;
 import dev.midtown.plan.MoveEdge;
@@ -15,17 +17,13 @@ import dev.midtown.plan.WorldSnapshot;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
-import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.block.Block;
-import net.minecraft.world.phys.HitResult;
-import net.minecraft.world.phys.Vec3;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -33,6 +31,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * {@link PathEngine} implementation for Midtown.
@@ -50,21 +49,22 @@ public final class MidtownEngine implements PathEngine {
     private final MidtownCoordinator coordinator;
     private final MidtownExecutor executor;
     private final MidtownPlanner aStarPlanner = new MidtownPlanner();
+    private final MineController mineController = new MineController();
     private final Map<String, List<Area>> protectedAreas = new ConcurrentHashMap<>();
     private final Set<Block> disallowedBreakBlocks = Collections.synchronizedSet(new LinkedHashSet<>());
 
     private volatile boolean useCustomPlanner;
+    private final AtomicLong planGeneration = new AtomicLong();
+    private volatile long activePlanGen;
+    private volatile long inFlightPlanGen;
     private volatile CompletableFuture<PlanResult> inFlightPlan;
     private volatile GoalSpec pendingGoal;
     private volatile BlockPos pendingStart;
     private volatile boolean pendingIsMine;
+    private volatile boolean pendingIsReplan;
     private volatile BlockFilter pendingMineFilter;
     private volatile Area pendingMineBox;
-    private volatile BlockFilter activeMineFilter;
-    private volatile Area activeMineBox;
-    private final Set<BlockPos> activeMineBlacklist = new HashSet<>();
-    private volatile BlockPos lastMineTarget = null;
-    private volatile int lastMineTargetAttempts = 0;
+    private int lookaheadTickCounter;
 
     private volatile boolean allowBreak = true;
     private volatile boolean allowPlace = true;
@@ -76,7 +76,8 @@ public final class MidtownEngine implements PathEngine {
     private volatile EngineStatus lastLoggedStatus = EngineStatus.IDLE;
 
     public MidtownEngine() {
-        this.coordinator = new MidtownCoordinator(new EdgeTracker(), this::syncReplan);
+        this.coordinator = new MidtownCoordinator(new EdgeTracker(), new Planner.DirectStepPlanner());
+        this.coordinator.setAsyncReplanMode(true);
         this.coordinator.setBlockSolidCheck(this::isWorldBlockSolid);
         this.coordinator.setBlockPresentCheck(this::isWorldBlockPresent);
         this.executor = new MidtownExecutor();
@@ -115,6 +116,7 @@ public final class MidtownEngine implements PathEngine {
 
     public void setPlanner(Planner planner) {
         this.useCustomPlanner = true;
+        coordinator.setAsyncReplanMode(false);
         coordinator.setPlanner(planner);
     }
 
@@ -128,6 +130,10 @@ public final class MidtownEngine implements PathEngine {
 
     public MidtownPlanner aStarPlanner() {
         return aStarPlanner;
+    }
+
+    public MineController mineController() {
+        return mineController;
     }
 
     @Override
@@ -157,13 +163,18 @@ public final class MidtownEngine implements PathEngine {
             return;
         }
 
-        WorldSnapshot snap = WorldSnapshot.capture(mc.level, start);
+        WorldSnapshot snap = WorldSnapshot.captureForGoal(mc.level, start, goal);
         CalculationContext ctx = buildContext(player);
+        long gen = planGeneration.incrementAndGet();
+        this.activePlanGen = gen;
+        this.inFlightPlanGen = gen;
         this.pendingGoal = goal;
         this.pendingStart = start;
         this.pendingIsMine = false;
+        this.pendingIsReplan = false;
         this.pendingMineFilter = null;
         this.pendingMineBox = null;
+        this.lookaheadTickCounter = 0;
         coordinator.markPlanning(goal);
         checkStatusTransition();
         this.inFlightPlan = aStarPlanner.planAsync(snap, ctx, start, goal);
@@ -182,11 +193,7 @@ public final class MidtownEngine implements PathEngine {
             return;
         }
         executor.releaseAllInputs(mc);
-        this.activeMineBlacklist.clear();
-        this.lastMineTarget = null;
-        this.lastMineTargetAttempts = 0;
-        this.activeMineFilter = filter;
-        this.activeMineBox = box;
+        mineController.beginMine(filter, box);
         startNextMineTarget(mc, player, filter, box);
         checkStatusTransition();
     }
@@ -206,7 +213,16 @@ public final class MidtownEngine implements PathEngine {
             executor.releaseAllInputs(mc);
             return;
         }
-        coordinator.resume(player.getX(), player.getY(), player.getZ());
+        ResumeOutcome outcome = coordinator.resume(player.getX(), player.getY(), player.getZ());
+        if (outcome == ResumeOutcome.NEEDS_REPLAN && !useCustomPlanner && mc.level != null) {
+            GoalSpec goal = coordinator.activeGoal();
+            if (goal != null) {
+                executor.releaseAllInputs(mc);
+                BlockPos start = groundedStart(mc, player, player.blockPosition());
+                launchAsyncReplan(mc, player, goal, start, "resume drift");
+            }
+        }
+        checkStatusTransition();
     }
 
     @Override
@@ -226,7 +242,7 @@ public final class MidtownEngine implements PathEngine {
 
     @Override
     public boolean isBusy() {
-        return PathEngine.super.isBusy() || (activeMineFilter != null && !coordinator.isPaused());
+        return PathEngine.super.isBusy() || (mineController.isActive() && !coordinator.isPaused());
     }
 
     @Override
@@ -242,6 +258,7 @@ public final class MidtownEngine implements PathEngine {
         }
 
         CompletableFuture<PlanResult> future = this.inFlightPlan;
+        long futureGen = this.inFlightPlanGen;
         if (future != null) {
             if (!future.isDone()) {
                 executor.releaseAllInputs(mc);
@@ -249,7 +266,27 @@ public final class MidtownEngine implements PathEngine {
                 return;
             }
             this.inFlightPlan = null;
-            handleAsyncPlanResult(mc, future);
+            handleAsyncPlanResult(mc, future, futureGen);
+        }
+
+        if (coordinator.status() == EngineStatus.MOVING
+                && this.inFlightPlan == null
+                && !useCustomPlanner
+                && mc.level != null
+                && (++lookaheadTickCounter % 4 == 0)) {
+            String invalidReason = validateLookahead(mc);
+            if (invalidReason != null) {
+                executor.releaseAllInputs(mc);
+                if (coordinator.requestLookaheadReplan(invalidReason)) {
+                    GoalSpec goal = coordinator.activeGoal();
+                    if (goal != null) {
+                        BlockPos start = groundedStart(mc, player, player.blockPosition());
+                        launchAsyncReplan(mc, player, goal, start, "lookahead: " + invalidReason);
+                    }
+                }
+                checkStatusTransition();
+                return;
+            }
         }
 
         TickAction action = coordinator.tick(player.getX(), player.getY(), player.getZ());
@@ -258,14 +295,22 @@ public final class MidtownEngine implements PathEngine {
                 executor.tick(mc, move.node());
                 if (TRACE) trace(mc, player, move.node());
             }
+            case TickAction.NeedsReplan replan -> {
+                executor.releaseAllInputs(mc);
+                if (!useCustomPlanner && mc.level != null) {
+                    BlockPos start = groundedStart(mc, player, replan.start());
+                    launchAsyncReplan(mc, player, replan.goal(), start, replan.reason());
+                } else {
+                    coordinator.markFailed("Async replan unavailable: " + replan.reason());
+                }
+            }
             case TickAction.Idle _, TickAction.Done _, TickAction.Failed _ -> executor.releaseAllInputs(mc);
         }
 
-        BlockFilter mineFilter = this.activeMineFilter;
-        if (mineFilter != null && this.inFlightPlan == null) {
+        if (mineController.isActive() && this.inFlightPlan == null) {
             EngineStatus st = coordinator.status();
             if (st == EngineStatus.DONE) {
-                startNextMineTarget(mc, player, mineFilter, this.activeMineBox);
+                startNextMineTarget(mc, player, mineController.filter(), mineController.box());
             } else if (st == EngineStatus.FAILED || st == EngineStatus.IDLE) {
                 clearActiveMine();
             }
@@ -282,13 +327,9 @@ public final class MidtownEngine implements PathEngine {
     }
 
     private void clearActiveMine() {
-        this.activeMineFilter = null;
-        this.activeMineBox = null;
+        mineController.clear();
         this.pendingMineFilter = null;
         this.pendingMineBox = null;
-        this.activeMineBlacklist.clear();
-        this.lastMineTarget = null;
-        this.lastMineTargetAttempts = 0;
     }
 
     private void startNextMineTarget(Minecraft mc, LocalPlayer player, BlockFilter filter, Area box) {
@@ -300,7 +341,8 @@ public final class MidtownEngine implements PathEngine {
             return;
         }
         BlockPos start = groundedStart(mc, player, player.blockPosition());
-        if (!hasMatchingBlockInArea(mc, start, filter, box)) {
+        if (!mineController.hasMatchingBlockInArea(
+                mc, start, filter, box, this::isProtectedAt, this::isDisallowedBreakBlock)) {
             LOGGER.info("[MidtownEngine] startNextMineTarget: no matching blocks remain");
             clearActiveMine();
             if (coordinator.status() != EngineStatus.DONE && coordinator.status() != EngineStatus.IDLE) {
@@ -311,122 +353,19 @@ public final class MidtownEngine implements PathEngine {
         WorldSnapshot snap = WorldSnapshot.capture(mc.level, start);
         CalculationContext ctx = buildContext(player);
         GoalSpec placeholderGoal = GoalSpec.near(start, 0);
+        long gen = planGeneration.incrementAndGet();
+        this.activePlanGen = gen;
+        this.inFlightPlanGen = gen;
         this.pendingGoal = placeholderGoal;
         this.pendingStart = start;
         this.pendingIsMine = true;
+        this.pendingIsReplan = false;
         this.pendingMineFilter = filter;
         this.pendingMineBox = box;
+        this.lookaheadTickCounter = 0;
         coordinator.markPlanning(placeholderGoal);
         this.inFlightPlan = aStarPlanner.planMineAsync(
-                snap, ctx, start, filter, box, ctx.timeBudgetMs(), activeMineBlacklist);
-    }
-
-    private boolean hasMatchingBlockInArea(Minecraft mc, BlockPos start, BlockFilter filter, Area box) {
-        if (mc.level == null || filter == null) return false;
-        int defaultRadius = 48;
-        int minX = box != null ? box.minX() : start.getX() - defaultRadius;
-        int maxX = box != null ? box.maxX() : start.getX() + defaultRadius;
-        int minY = Math.max(mc.level.getMinY(), box != null ? box.minY() : start.getY() - 24);
-        int maxY = Math.min(mc.level.getMaxY() - 1, box != null ? box.maxY() : start.getY() + 24);
-        int minZ = box != null ? box.minZ() : start.getZ() - defaultRadius;
-        int maxZ = box != null ? box.maxZ() : start.getZ() + defaultRadius;
-
-        if (box != null && box.volume() > 500_000L) {
-            minX = Math.max(minX, start.getX() - defaultRadius);
-            maxX = Math.min(maxX, start.getX() + defaultRadius);
-            minY = Math.max(minY, start.getY() - 32);
-            maxY = Math.min(maxY, start.getY() + 32);
-            minZ = Math.max(minZ, start.getZ() - defaultRadius);
-            maxZ = Math.min(maxZ, start.getZ() + defaultRadius);
-        }
-
-        BlockPos.MutableBlockPos mp = new BlockPos.MutableBlockPos();
-        for (int y = minY; y <= maxY; y++) {
-            for (int z = minZ; z <= maxZ; z++) {
-                for (int x = minX; x <= maxX; x++) {
-                    mp.set(x, y, z);
-                    if (activeMineBlacklist.contains(mp)) continue;
-                    if (!mc.level.hasChunkAt(mp)) continue;
-                    var state = mc.level.getBlockState(mp);
-                    if (state.isAir() || !state.getFluidState().isEmpty()) continue;
-                    if (!filter.matches(state)) continue;
-                    if (isProtectedAt(mp)) continue;
-                    if (state.getDestroySpeed(mc.level, mp) < 0.0f) continue;
-                    if (isDisallowedBreakBlock(state.getBlock())) continue;
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    private BlockPos findNearestMatchingInReach(Minecraft mc, BlockFilter filter, Area box, BlockPos endPos) {
-        if (mc.level == null || filter == null || endPos == null) return null;
-        double eyeX = endPos.getX() + 0.5;
-        double eyeY = endPos.getY() + 1.62;
-        double eyeZ = endPos.getZ() + 0.5;
-        Vec3 eye = new Vec3(eyeX, eyeY, eyeZ);
-
-        int minX = endPos.getX() - 5;
-        int maxX = endPos.getX() + 5;
-        int minY = Math.max(mc.level.getMinY(), endPos.getY() - 4);
-        int maxY = Math.min(mc.level.getMaxY() - 1, endPos.getY() + 6);
-        int minZ = endPos.getZ() - 5;
-        int maxZ = endPos.getZ() + 5;
-
-        if (box != null) {
-            minX = Math.max(minX, box.minX());
-            maxX = Math.min(maxX, box.maxX());
-            minY = Math.max(minY, box.minY());
-            maxY = Math.min(maxY, box.maxY());
-            minZ = Math.max(minZ, box.minZ());
-            maxZ = Math.min(maxZ, box.maxZ());
-        }
-
-        BlockPos bestLos = null;
-        double bestLosDistSq = Double.MAX_VALUE;
-        BlockPos bestAny = null;
-        double bestAnyDistSq = Double.MAX_VALUE;
-        BlockPos.MutableBlockPos mp = new BlockPos.MutableBlockPos();
-        for (int y = minY; y <= maxY; y++) {
-            for (int z = minZ; z <= maxZ; z++) {
-                for (int x = minX; x <= maxX; x++) {
-                    mp.set(x, y, z);
-                    if (activeMineBlacklist.contains(mp)) continue;
-                    if (!mc.level.hasChunkAt(mp)) continue;
-                    var state = mc.level.getBlockState(mp);
-                    if (state.isAir() || !state.getFluidState().isEmpty()) continue;
-                    if (!filter.matches(state)) continue;
-                    if (isProtectedAt(mp)) continue;
-                    if (state.getDestroySpeed(mc.level, mp) < 0.0f) continue;
-                    if (isDisallowedBreakBlock(state.getBlock())) continue;
-
-                    double dx = (x + 0.5) - eyeX;
-                    double dy = (y + 0.5) - eyeY;
-                    double dz = (z + 0.5) - eyeZ;
-                    double distSq = dx * dx + dy * dy + dz * dz;
-                    if (distSq > 20.25) continue;
-
-                    if (distSq < bestAnyDistSq) {
-                        bestAnyDistSq = distSq;
-                        bestAny = mp.immutable();
-                    }
-                    if (distSq < bestLosDistSq && hasClearSight(mc, eye, mp)) {
-                        bestLosDistSq = distSq;
-                        bestLos = mp.immutable();
-                    }
-                }
-            }
-        }
-        return bestLos != null ? bestLos : bestAny;
-    }
-
-    private static boolean hasClearSight(Minecraft mc, Vec3 eye, BlockPos target) {
-        if (mc.level == null || mc.player == null) return true;
-        var hit = mc.level.clip(new ClipContext(
-                eye, Vec3.atCenterOf(target), ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, mc.player));
-        return hit.getType() == HitResult.Type.MISS
-                || (hit.getType() == HitResult.Type.BLOCK && hit.getBlockPos().equals(target));
+                snap, ctx, start, filter, box, ctx.timeBudgetMs(), Set.copyOf(mineController.blacklist()));
     }
 
     private boolean isDisallowedBreakBlock(Block block) {
@@ -435,11 +374,14 @@ public final class MidtownEngine implements PathEngine {
         }
     }
 
-    private void handleAsyncPlanResult(Minecraft mc, CompletableFuture<PlanResult> future) {
-        if (future.isCancelled()) {
-            LOGGER.info("[MidtownEngine] handleAsyncPlanResult: in-flight future was cancelled");
+    private void handleAsyncPlanResult(Minecraft mc, CompletableFuture<PlanResult> future, long gen) {
+        if (gen != this.activePlanGen || future.isCancelled()) {
+            LOGGER.info("[MidtownEngine] handleAsyncPlanResult: ignoring stale/cancelled future (gen={} active={})",
+                    gen, this.activePlanGen);
             return;
         }
+        boolean isReplan = this.pendingIsReplan;
+        this.pendingIsReplan = false;
         PlanResult result;
         try {
             result = future.getNow(null);
@@ -465,9 +407,10 @@ public final class MidtownEngine implements PathEngine {
         BlockPos start = pendingStart != null ? pendingStart : result.start();
         List<PathNode> nodes = toPathNodes(result);
         if (pendingIsMine) {
-            BlockFilter mineFilter = pendingMineFilter != null ? pendingMineFilter : activeMineFilter;
-            Area mineBox = pendingMineBox != null ? pendingMineBox : activeMineBox;
-            BlockPos bestTarget = findNearestMatchingInReach(mc, mineFilter, mineBox, result.endPos());
+            BlockFilter mineFilter = pendingMineFilter != null ? pendingMineFilter : mineController.filter();
+            Area mineBox = pendingMineBox != null ? pendingMineBox : mineController.box();
+            BlockPos bestTarget = mineController.findNearestMatchingInReach(
+                    mc, mineFilter, mineBox, result.endPos(), this::isProtectedAt, this::isDisallowedBreakBlock);
             if (bestTarget == null && result.endPos().equals(start)) {
                 clearActiveMine();
                 coordinator.markFailed("No reachable matching block");
@@ -475,16 +418,7 @@ public final class MidtownEngine implements PathEngine {
                 return;
             }
             if (bestTarget != null) {
-                if (bestTarget.equals(lastMineTarget)) {
-                    lastMineTargetAttempts++;
-                } else {
-                    lastMineTarget = bestTarget;
-                    lastMineTargetAttempts = 1;
-                }
-                if (lastMineTargetAttempts > 2) {
-                    activeMineBlacklist.add(bestTarget);
-                    lastMineTarget = null;
-                    lastMineTargetAttempts = 0;
+                if (mineController.recordAttemptAndCheckBlacklist(bestTarget)) {
                     if (mc.player != null) {
                         startNextMineTarget(mc, mc.player, mineFilter, mineBox);
                         checkStatusTransition();
@@ -502,34 +436,135 @@ public final class MidtownEngine implements PathEngine {
                 nodes = pathWithBreak;
             }
         }
-        LOGGER.info("[MidtownEngine] handleAsyncPlanResult: path found status={} nodes={} edges={} expanded={} ms={} start={} path={}",
-                result.status(), nodes.size(), result.edges().size(), result.nodesExpanded(), result.elapsedMillis(),
+        LOGGER.info("[MidtownEngine] handleAsyncPlanResult: path found replan={} status={} nodes={} edges={} expanded={} ms={} start={} path={}",
+                isReplan, result.status(), nodes.size(), result.edges().size(), result.nodesExpanded(), result.elapsedMillis(),
                 start.toShortString(), describePath(nodes));
-        coordinator.startGoalWithPath(goal, start, nodes);
+        if (isReplan) {
+            if (nodes.isEmpty() && goal != null
+                    && MidtownCoordinator.isGoalSatisfied(goal, start.getX() + 0.5, start.getY(), start.getZ() + 0.5)) {
+                coordinator.startGoalWithPath(goal, start, nodes);
+            } else {
+                coordinator.applyReplannedPath(start, nodes);
+            }
+        } else {
+            coordinator.startGoalWithPath(goal, start, nodes);
+        }
         checkStatusTransition();
     }
 
+    private void launchAsyncReplan(Minecraft mc, LocalPlayer player, GoalSpec goal, BlockPos start, String reason) {
+        if (mc.level == null || player == null || goal == null || start == null) {
+            coordinator.markFailed("Cannot launch async replan: " + reason);
+            return;
+        }
+        cancelInFlightPlan();
+        WorldSnapshot snap = WorldSnapshot.captureForGoal(mc.level, start, goal);
+        CalculationContext ctx = buildContext(player);
+        long gen = planGeneration.incrementAndGet();
+        this.activePlanGen = gen;
+        this.inFlightPlanGen = gen;
+        this.pendingGoal = goal;
+        this.pendingStart = start;
+        this.pendingIsMine = false;
+        this.pendingIsReplan = true;
+        this.pendingMineFilter = null;
+        this.pendingMineBox = null;
+        this.lookaheadTickCounter = 0;
+        LOGGER.info("[MidtownEngine] launchAsyncReplan: gen={} start={} goal={} reason={}",
+                gen, start.toShortString(), goal, reason);
+        this.inFlightPlan = aStarPlanner.planAsync(snap, ctx, start, goal);
+    }
+
+    /**
+     * Validates the next 5 waypoints of the active path against the live {@code mc.level}.
+     *
+     * @return a non-null invalidation reason if an async replan should be triggered, or {@code null} if clear
+     */
+    private String validateLookahead(Minecraft mc) {
+        if (mc.level == null) {
+            return null;
+        }
+        List<PathNode> currentPath = coordinator.path();
+        int startIdx = coordinator.pathIndex();
+        if (currentPath.isEmpty() || startIdx < 0 || startIdx >= currentPath.size()) {
+            return null;
+        }
+        int endIdx = Math.min(currentPath.size(), startIdx + 5);
+        for (int i = startIdx; i < endIdx; i++) {
+            PathNode node = currentPath.get(i);
+            BlockPos feet = node.pos();
+            if (!mc.level.hasChunkAt(feet)) {
+                continue;
+            }
+            BlockPos head = feet.above();
+            BlockPos floor = feet.below();
+            BlockKind feetKind = WorldSnapshot.classify(mc.level.getBlockState(feet));
+            BlockKind headKind = WorldSnapshot.classify(mc.level.getBlockState(head));
+            BlockKind floorKind = WorldSnapshot.classify(mc.level.getBlockState(floor));
+
+            switch (node.action()) {
+                case WALK, ASCEND, DESCEND -> {
+                    if (feetKind.hasSolidCollision() || feetKind.isHazard()) {
+                        return "feet " + feetKind + " at " + feet.toShortString();
+                    }
+                    if (headKind.hasSolidCollision() || headKind.isHazard()) {
+                        return "head " + headKind + " at " + head.toShortString();
+                    }
+                    if (node.action() == PathNode.ActionType.WALK
+                            && !allowPlace
+                            && feetKind != BlockKind.WATER
+                            && feetKind != BlockKind.LADDER_OR_VINE
+                            && !floorKind.canStandOn()
+                            && floorKind != BlockKind.WATER
+                            && floorKind != BlockKind.LADDER_OR_VINE) {
+                        return "walk floor missing (" + floorKind + ") at " + floor.toShortString();
+                    }
+                }
+                case BRIDGE -> {
+                    if (feetKind.hasSolidCollision() || feetKind.isHazard()) {
+                        return "bridge feet " + feetKind + " at " + feet.toShortString();
+                    }
+                    if (headKind.hasSolidCollision() || headKind.isHazard()) {
+                        return "bridge head " + headKind + " at " + head.toShortString();
+                    }
+                    if (!allowPlace && !floorKind.canStandOn()) {
+                        return "bridge floor missing with allowPlace=false at " + floor.toShortString();
+                    }
+                }
+                case BREAK_THROUGH -> {
+                    if (!allowBreak) {
+                        for (BlockPos tb : node.targetBlocks()) {
+                            if (isWorldBlockPresent(tb)) {
+                                return "break disallowed at " + tb.toShortString();
+                            }
+                        }
+                    }
+                }
+                case PILLAR -> {
+                    if (!allowPlace && node.targetBlock() != null && !isWorldBlockSolid(node.targetBlock())) {
+                        return "pillar place disallowed at " + node.targetBlock().toShortString();
+                    }
+                }
+                default -> {}
+            }
+
+            for (BlockPos tb : node.targetBlocks()) {
+                if (isProtectedAt(tb)) {
+                    return "protected area blocks target at " + tb.toShortString();
+                }
+            }
+        }
+        return null;
+    }
+
     private void cancelInFlightPlan() {
+        this.activePlanGen = planGeneration.incrementAndGet();
         CompletableFuture<PlanResult> future = this.inFlightPlan;
         this.inFlightPlan = null;
+        this.pendingIsReplan = false;
         if (future != null && !future.isDone()) {
             future.cancel(true);
         }
-    }
-
-    private List<PathNode> syncReplan(GoalSpec goal, BlockPos start, java.util.function.Predicate<PathNode.EdgeKey> isBlacklisted) {
-        Minecraft mc = Minecraft.getInstance();
-        if (mc.level == null || mc.player == null) {
-            return new Planner.DirectStepPlanner().plan(goal, start, isBlacklisted);
-        }
-        start = groundedStart(mc, mc.player, start);
-        WorldSnapshot snap = WorldSnapshot.capture(mc.level, start);
-        CalculationContext ctx = buildContext(mc.player);
-        PlanResult result = aStarPlanner.planSync(snap, ctx, start, goal);
-        List<PathNode> nodes = result.hasPath() ? toPathNodes(result) : List.of();
-        LOGGER.info("[MidtownEngine] syncReplan: start={} onGround={} status={} path={}",
-                start.toShortString(), mc.player.onGround(), result.status(), describePath(nodes));
-        return nodes;
     }
 
     private CalculationContext buildContext(LocalPlayer player) {

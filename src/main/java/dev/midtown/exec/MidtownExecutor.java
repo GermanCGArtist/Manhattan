@@ -1,39 +1,31 @@
 package dev.midtown.exec;
 
-import dev.midtown.plan.CalculationContext;
-import net.minecraft.client.KeyMapping;
+import dev.midtown.body.BodyController;
+import dev.midtown.body.HotbarController;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.Options;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.Direction;
-import net.minecraft.core.component.DataComponents;
 import net.minecraft.util.Mth;
-import net.minecraft.world.InteractionHand;
-import net.minecraft.world.entity.player.Inventory;
-import net.minecraft.world.inventory.ContainerInput;
-import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.phys.BlockHitResult;
-import net.minecraft.world.phys.Vec3;
 
 /**
  * Client-tick movement and rotation controller for Midtown.
  * <p>
- * Drives {@link LocalPlayer} yaw/pitch via smooth clamped interpolation and updates {@link Options}
- * movement {@link KeyMapping} states toward the active {@link PathNode}. All movement, attack,
- * use, sprint, and sneak states are explicitly released on {@link #releaseAllInputs(Minecraft)}.
+ * Delegates all key presses, camera rotation, block breaking, block placement, and tool/block
+ * hotbar selection to {@link BodyController#INSTANCE} (under motor owner {@value #MOTOR_OWNER})
+ * and {@link HotbarController}.
  */
 public final class MidtownExecutor {
 
-    private static final float DEFAULT_MAX_YAW_STEP = 30.0f;
-    private static final float DEFAULT_MAX_PITCH_STEP = 20.0f;
+    public static final String MOTOR_OWNER = "midtown";
+
+    private static final float DEFAULT_MAX_YAW_STEP = BodyController.DEFAULT_MAX_YAW_STEP;
+    private static final float DEFAULT_MAX_PITCH_STEP = BodyController.DEFAULT_MAX_PITCH_STEP;
 
     private float maxYawStep = DEFAULT_MAX_YAW_STEP;
     private float maxPitchStep = DEFAULT_MAX_PITCH_STEP;
     private boolean inputsActive;
     private int placeCooldown;
-    private BlockPos breakingPos;
     private int itemSaverThreshold;
 
     /**
@@ -44,8 +36,13 @@ public final class MidtownExecutor {
             releaseAllInputs(mc);
             return;
         }
+        BodyController body = BodyController.INSTANCE;
+        if (!body.acquire(mc, MOTOR_OWNER)) {
+            inputsActive = false;
+            return;
+        }
+
         LocalPlayer player = mc.player;
-        Options options = mc.options;
 
         double targetX = target.pos().getX() + 0.5;
         double targetZ = target.pos().getZ() + 0.5;
@@ -67,7 +64,7 @@ public final class MidtownExecutor {
                     BlockState state = mc.level.getBlockState(tb);
                     if (!state.isAir() && state.getFluidState().isEmpty()) {
                         aimBlock = tb;
-                        selectBestTool(mc, player, state, itemSaverThreshold);
+                        HotbarController.selectBestTool(mc, player, state, itemSaverThreshold);
                         attack = true;
                         blockBreakingWait = true;
                         break;
@@ -82,8 +79,8 @@ public final class MidtownExecutor {
                     if (player.onGround()) {
                         placingLanding = true;
                         aimBlock = tb;
-                        if (placeCooldown == 0 && selectExpendableBlock(mc, player)
-                                && tryPlaceBlock(mc, player, tb, true)) {
+                        if (placeCooldown == 0 && HotbarController.selectExpendableBlock(mc, player)
+                                && body.placeBlock(mc, player, tb, true)) {
                             placeCooldown = 4;
                         }
                     }
@@ -91,8 +88,9 @@ public final class MidtownExecutor {
             } else if (target.action() == PathNode.ActionType.BRIDGE) {
                 BlockPos tb = target.targetBlock();
                 if (tb != null && placeCooldown == 0 && player.onGround()
-                        && mc.level.getBlockState(tb).canBeReplaced() && selectExpendableBlock(mc, player)) {
-                    if (tryPlaceBlock(mc, player, tb, true)) {
+                        && mc.level.getBlockState(tb).canBeReplaced()
+                        && HotbarController.selectExpendableBlock(mc, player)) {
+                    if (body.placeBlock(mc, player, tb, true)) {
                         placeCooldown = 4;
                     }
                 }
@@ -102,55 +100,36 @@ public final class MidtownExecutor {
                         && placeCooldown == 0
                         && mc.level.getBlockState(tb).canBeReplaced()
                         && player.getY() >= tb.getY() + 1.0
-                        && selectExpendableBlock(mc, player)) {
-                    if (tryPlacePillarBlock(mc, player, tb)) {
+                        && HotbarController.selectExpendableBlock(mc, player)) {
+                    if (body.placePillarBlock(mc, player, tb)) {
                         placeCooldown = 4;
                     }
                 }
             }
         }
 
-        if (blockBreakingWait && aimBlock != null && mc.gameMode != null) {
-            Direction hitDir = Direction.getApproximateNearest(
-                    player.getX() - (aimBlock.getX() + 0.5),
-                    player.getEyeY() - (aimBlock.getY() + 0.5),
-                    player.getZ() - (aimBlock.getZ() + 0.5));
-            if (!aimBlock.equals(breakingPos)) {
-                breakingPos = aimBlock;
-                mc.gameMode.startDestroyBlock(aimBlock, hitDir);
-            } else {
-                mc.gameMode.continueDestroyBlock(aimBlock, hitDir);
-            }
-            player.swing(InteractionHand.MAIN_HAND);
-        } else if (breakingPos != null) {
-            if (mc.gameMode != null) {
-                mc.gameMode.stopDestroyBlock();
-            }
-            breakingPos = null;
+        if (blockBreakingWait && aimBlock != null) {
+            body.breakBlockTick(mc, aimBlock);
+        } else {
+            body.stopBreaking(mc);
         }
 
+        float aimYaw = player.getYRot();
         if (blockBreakingWait && aimBlock != null) {
             double bx = aimBlock.getX() + 0.5 - player.getX();
             double bz = aimBlock.getZ() + 0.5 - player.getZ();
             if (Math.hypot(bx, bz) > 1e-4) {
-                float aimYaw = (float) (Math.toDegrees(Math.atan2(bz, bx)) - 90.0);
-                float yawDelta = Mth.wrapDegrees(aimYaw - player.getYRot());
-                player.setYRot(player.getYRot() + Mth.clamp(yawDelta, -maxYawStep, maxYawStep));
+                aimYaw = BodyController.yawTo(bx, bz);
             }
         } else if (horizDist > 1e-4) {
-            float desiredYaw = (float) (Math.toDegrees(Math.atan2(dz, dx)) - 90.0);
-            float yawDelta = Mth.wrapDegrees(desiredYaw - player.getYRot());
-            player.setYRot(player.getYRot() + Mth.clamp(yawDelta, -maxYawStep, maxYawStep));
+            aimYaw = BodyController.yawTo(dx, dz);
         }
 
         float desiredPitch = computeDesiredPitch(player, target, aimBlock, horizDist);
-        float pitchDelta = desiredPitch - player.getXRot();
-        player.setXRot(Mth.clamp(player.getXRot() + Mth.clamp(pitchDelta, -maxPitchStep, maxPitchStep), -90.0f, 90.0f));
+        body.aimSmooth(player, aimYaw, desiredPitch, maxYawStep, maxPitchStep);
 
         // Drive movement keys relative to current player yaw
-        float desiredYaw = horizDist > 1e-4
-                ? (float) (Math.toDegrees(Math.atan2(dz, dx)) - 90.0)
-                : player.getYRot();
+        float desiredYaw = horizDist > 1e-4 ? BodyController.yawTo(dx, dz) : player.getYRot();
         float relAngle = Mth.wrapDegrees(desiredYaw - player.getYRot());
 
         boolean isPillar = target.action() == PathNode.ActionType.PILLAR;
@@ -165,54 +144,20 @@ public final class MidtownExecutor {
         boolean sneak = target.sneak();
         boolean sprint = target.sprint() && forward && !sneak && !player.isInWater();
 
-        setKey(options.keyUp, forward);
-        setKey(options.keyDown, back);
-        setKey(options.keyLeft, left);
-        setKey(options.keyRight, right);
-        setKey(options.keyJump, jump);
-        setKey(options.keyShift, sneak);
-        setKey(options.keySprint, sprint);
-        setKey(options.keyAttack, attack);
-        setKey(options.keyUse, false);
-
-        player.setShiftKeyDown(sneak);
-        player.setSprinting(sprint);
+        body.setKeys(mc, forward, back, left, right, jump, sneak, sprint, attack, false);
         inputsActive = true;
     }
 
     /**
-     * Explicitly releases all movement, jump, sneak, sprint, attack, and use key states.
+     * Explicitly releases all movement, jump, sneak, sprint, attack, and use key states
+     * if Midtown currently owns {@link BodyController#INSTANCE}.
      * Safe to call even when no inputs are currently held.
      */
     public void releaseAllInputs(Minecraft mc) {
         if (!inputsActive) {
             return;
         }
-        if (mc == null) {
-            inputsActive = false;
-            return;
-        }
-        Options options = mc.options;
-        if (options != null) {
-            setKey(options.keyUp, false);
-            setKey(options.keyDown, false);
-            setKey(options.keyLeft, false);
-            setKey(options.keyRight, false);
-            setKey(options.keyJump, false);
-            setKey(options.keyShift, false);
-            setKey(options.keySprint, false);
-            setKey(options.keyAttack, false);
-            setKey(options.keyUse, false);
-        }
-        LocalPlayer player = mc.player;
-        if (player != null) {
-            player.setShiftKeyDown(false);
-            player.setSprinting(false);
-        }
-        if (mc.gameMode != null) {
-            mc.gameMode.stopDestroyBlock();
-        }
-        breakingPos = null;
+        BodyController.INSTANCE.releaseIfOwner(mc, MOTOR_OWNER);
         placeCooldown = 0;
         inputsActive = false;
     }
@@ -239,44 +184,6 @@ public final class MidtownExecutor {
         this.maxPitchStep = maxPitchStep;
     }
 
-    /** Places a pillar block at {@code placePos} by clicking the top face of {@code placePos.below()}. */
-    private static boolean tryPlacePillarBlock(Minecraft mc, LocalPlayer player, BlockPos placePos) {
-        if (mc.gameMode == null || mc.level == null) return false;
-        BlockPos support = placePos.below();
-        if (mc.level.getBlockState(support).canBeReplaced()) return false;
-        Vec3 hitVec = Vec3.atCenterOf(support).add(0.0, 0.5, 0.0);
-        BlockHitResult hit = new BlockHitResult(hitVec, Direction.UP, support, false);
-        var res = mc.gameMode.useItemOn(player, InteractionHand.MAIN_HAND, hit);
-        if (res.consumesAction()) {
-            player.swing(InteractionHand.MAIN_HAND);
-            return true;
-        }
-        return false;
-    }
-
-    /** Places a block at {@code placePos} against any adjacent solid neighbor. */
-    private static boolean tryPlaceBlock(Minecraft mc, LocalPlayer player, BlockPos placePos, boolean horizontalFirst) {
-        if (mc.gameMode == null || mc.level == null) return false;
-        Direction[] dirs = horizontalFirst
-                ? new Direction[]{Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST, Direction.DOWN, Direction.UP}
-                : Direction.values();
-        for (Direction dir : dirs) {
-            BlockPos support = placePos.relative(dir);
-            if (mc.level.getBlockState(support).canBeReplaced()) continue;
-            Direction face = dir.getOpposite();
-            Vec3 hitVec = Vec3.atCenterOf(support).add(face.getStepX() * 0.5, face.getStepY() * 0.5, face.getStepZ() * 0.5);
-            if (player.getEyePosition().distanceToSqr(hitVec) > 20.25) continue;
-            BlockHitResult hit = new BlockHitResult(hitVec, face, support, false);
-            var res = mc.gameMode.useItemOn(player, InteractionHand.MAIN_HAND, hit);
-            if (res.consumesAction()) {
-                player.swing(InteractionHand.MAIN_HAND);
-                return true;
-            }
-            return false;
-        }
-        return false;
-    }
-
     public int itemSaverThreshold() {
         return itemSaverThreshold;
     }
@@ -284,120 +191,6 @@ public final class MidtownExecutor {
     public void setItemSaverThreshold(int itemSaverThreshold) {
         if (itemSaverThreshold < 0) throw new IllegalArgumentException("itemSaverThreshold must be >= 0");
         this.itemSaverThreshold = itemSaverThreshold;
-    }
-
-    /**
-     * Selects the fastest tool in inventory {@code 0..35} for breaking {@code state}, skipping
-     * low-durability tools when {@code itemSaverThreshold > 0} and swapping from main inventory
-     * into the hotbar if needed.
-     */
-    private static void selectBestTool(Minecraft mc, LocalPlayer player, BlockState state, int itemSaverThreshold) {
-        Inventory inv = player.getInventory();
-        int cur = inv.getSelectedSlot();
-        int safeCur = (cur >= 0 && cur < 9) ? cur : 0;
-        int bestSlot = -1;
-        float bestSpeed = 1.0f;
-        for (int i = 0; i < 36; i++) {
-            ItemStack stack = inv.getItem(i);
-            if (stack.isEmpty() || isLowDurabilityTool(stack, itemSaverThreshold)) {
-                continue;
-            }
-            float speed = stack.getDestroySpeed(state);
-            if (speed > bestSpeed + 0.01f
-                    || (i < 9 && bestSlot >= 9 && speed >= bestSpeed - 0.01f && speed > 1.0f)
-                    || (i == safeCur && speed >= bestSpeed - 0.01f && speed > 1.0f)) {
-                bestSpeed = speed;
-                bestSlot = i;
-            }
-        }
-        if (bestSlot < 0 || bestSpeed <= 1.0f) {
-            ItemStack curStack = inv.getItem(safeCur);
-            if (isLowDurabilityTool(curStack, itemSaverThreshold)) {
-                for (int i = 0; i < 9; i++) {
-                    ItemStack stack = inv.getItem(i);
-                    if (stack.isEmpty() || !stack.isDamageableItem()) {
-                        inv.setSelectedSlot(i);
-                        return;
-                    }
-                }
-            }
-            return;
-        }
-        if (bestSlot < 9) {
-            if (bestSlot != cur) {
-                inv.setSelectedSlot(bestSlot);
-            }
-            return;
-        }
-        if (mc.gameMode == null || player.containerMenu != player.inventoryMenu) {
-            return;
-        }
-        int targetHotbar = pickHotbarSwapSlot(inv, safeCur);
-        mc.gameMode.handleContainerInput(
-                player.inventoryMenu.containerId, bestSlot, targetHotbar, ContainerInput.SWAP, player);
-        inv.setSelectedSlot(targetHotbar);
-    }
-
-    private static int pickHotbarSwapSlot(Inventory inv, int selected) {
-        for (int i = 0; i < 9; i++) {
-            if (inv.getItem(i).isEmpty()) {
-                return i;
-            }
-        }
-        for (int i = 0; i < 9; i++) {
-            if (i == selected) continue;
-            ItemStack stack = inv.getItem(i);
-            if (!stack.has(DataComponents.FOOD) && !stack.isDamageableItem()) {
-                return i;
-            }
-        }
-        return (selected + 1) % 9;
-    }
-
-    private static boolean isLowDurabilityTool(ItemStack stack, int threshold) {
-        return threshold > 0
-                && !stack.isEmpty()
-                && stack.isDamageableItem()
-                && (stack.getMaxDamage() - stack.getDamageValue()) <= threshold;
-    }
-
-    /**
-     * Ensures an expendable solid building block is selected in the hotbar, swapping from main
-     * inventory if needed. Returns {@code true} if one is now selected.
-     */
-    private static boolean selectExpendableBlock(Minecraft mc, LocalPlayer player) {
-        Inventory inv = player.getInventory();
-        int cur = inv.getSelectedSlot();
-        if (cur >= 0 && cur < 9 && isExpendableBlock(inv.getItem(cur))) {
-            return true;
-        }
-        for (int i = 0; i < 9; i++) {
-            if (isExpendableBlock(inv.getItem(i))) {
-                inv.setSelectedSlot(i);
-                return true;
-            }
-        }
-        if (mc.gameMode == null) return false;
-        int targetHotbar = (cur >= 0 && cur < 9) ? cur : 0;
-        for (int i = 0; i < 9; i++) {
-            if (inv.getItem(i).isEmpty()) {
-                targetHotbar = i;
-                break;
-            }
-        }
-        for (int i = 9; i < 36; i++) {
-            if (isExpendableBlock(inv.getItem(i))) {
-                mc.gameMode.handleContainerInput(
-                        player.inventoryMenu.containerId, i, targetHotbar, ContainerInput.SWAP, player);
-                inv.setSelectedSlot(targetHotbar);
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static boolean isExpendableBlock(ItemStack stack) {
-        return CalculationContext.isExpendableBlockItem(stack);
     }
 
     private static float computeDesiredPitch(LocalPlayer player, PathNode target, BlockPos aimBlock, double horizDist) {
@@ -408,8 +201,7 @@ public final class MidtownExecutor {
             double bx = aimBlock.getX() + 0.5 - player.getX();
             double by = aimBlock.getY() + 0.5 - player.getEyeY();
             double bz = aimBlock.getZ() + 0.5 - player.getZ();
-            double bHoriz = Math.hypot(bx, bz);
-            return (float) -Math.toDegrees(Math.atan2(by, Math.max(1e-4, bHoriz)));
+            return BodyController.pitchTo(bx, by, bz);
         }
         if (target.action() == PathNode.ActionType.ASCEND) {
             return -10.0f;
@@ -452,11 +244,5 @@ public final class MidtownExecutor {
         BlockPos ahead = BlockPos.containing(player.getX() + dx / len * 0.35, player.getY() - 0.5,
                 player.getZ() + dz / len * 0.35);
         return !player.level().getBlockState(ahead).getCollisionShape(player.level(), ahead).isEmpty();
-    }
-
-    private static void setKey(KeyMapping key, boolean down) {
-        if (key != null) {
-            key.setDown(down);
-        }
     }
 }

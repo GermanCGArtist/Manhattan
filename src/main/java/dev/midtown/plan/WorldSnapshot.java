@@ -1,6 +1,7 @@
 package dev.midtown.plan;
 
 import dev.midtown.api.BlockFilter;
+import dev.midtown.api.GoalSpec;
 import net.minecraft.client.multiplayer.ClientChunkCache;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
@@ -62,6 +63,50 @@ public final class WorldSnapshot implements BlockView {
     /** Captures loaded chunks around {@code center} using {@value #DEFAULT_CHUNK_RADIUS} chunk radius. */
     public static WorldSnapshot capture(ClientLevel level, BlockPos center) {
         return capture(level, center, DEFAULT_CHUNK_RADIUS);
+    }
+
+    /**
+     * Computes a goal-aware chunk capture radius around {@code start} for {@code goal},
+     * clamping spatial goals between {@code 4} and {@value #DEFAULT_CHUNK_RADIUS} chunks
+     * and falling back to {@value #DEFAULT_CHUNK_RADIUS} for unbounded or null goals.
+     */
+    public static int goalChunkRadius(BlockPos start, GoalSpec goal) {
+        if (start == null || goal == null) {
+            return DEFAULT_CHUNK_RADIUS;
+        }
+        int tx;
+        int tz;
+        switch (goal) {
+            case GoalSpec.Exact g -> {
+                tx = g.pos().getX();
+                tz = g.pos().getZ();
+            }
+            case GoalSpec.Near g -> {
+                tx = g.pos().getX();
+                tz = g.pos().getZ();
+            }
+            case GoalSpec.XZ g -> {
+                tx = g.x();
+                tz = g.z();
+            }
+            case GoalSpec.LineOfSight g -> {
+                tx = g.target().getX();
+                tz = g.target().getZ();
+            }
+            case GoalSpec.RunAway _ -> {
+                return DEFAULT_CHUNK_RADIUS;
+            }
+        }
+        long dx = Math.abs((long) tx - start.getX());
+        long dz = Math.abs((long) tz - start.getZ());
+        long horizDist = Math.max(dx, dz);
+        long radius = (horizDist >> 4) + 3L;
+        return (int) Math.min(DEFAULT_CHUNK_RADIUS, Math.max(4L, radius));
+    }
+
+    /** Captures loaded chunks around {@code start} sized dynamically via {@link #goalChunkRadius(BlockPos, GoalSpec)}. */
+    public static WorldSnapshot captureForGoal(ClientLevel level, BlockPos start, GoalSpec goal) {
+        return capture(level, start, goalChunkRadius(start, goal));
     }
 
     /**
