@@ -60,6 +60,7 @@ final class TreeClear {
     private static final int SCAFFOLD_LOW = 24;     // fewer scaffolding blocks than this in the inventory: take pillars down for material
     private static final int MAX_PENDING = 40;      // more pillar blocks than this standing: take the stale ones down
     private static final int REUSE_R = 16;          // pillars this close to a tree still to be cut are kept for it
+    private static final int MAX_MARK = 1500;      // more new scaffolding than this at once cannot be pillars
     private static final int SCAFFOLD_NEAR = 32;   // only scaffolding this close to the tree is taken down between trees
     private static final long SPOT_AGE_MS = 4 * 60_000L;   // drops despawn after 5 min: older spots are not swept
 
@@ -256,6 +257,10 @@ final class TreeClear {
     /** New scaffolding in the boxes goes on BuildTools' list, so collect_scaffold() takes it down; returns how many. */
     private static int markNew(Interp in, Level level, List<int[]> boxes, Set<BlockPos> before) {
         Set<BlockPos> fresh = throwaway(in, level, boxes, before);
+        if (fresh.size() > MAX_MARK) {   // that is the terrain, not pillars: marking it would have the bot dig the hill away
+            Util.msg("clear_trees: " + fresh.size() + " 'new' scaffolding blocks is implausible, ignoring them.");
+            return 0;
+        }
         for (BlockPos b : fresh) dev.buildtools.Api.addScaffold(b, level.getBlockState(b).getBlock());
         return fresh.size();
     }
@@ -476,6 +481,9 @@ final class TreeClear {
                     String go = "goto " + at.getX() + " " + at.getZ();
                     in.await(() -> new Actions.BaritoneCommand(go), go, line);
                 }
+                // what stands here before any pillar: natural ground (also stone) is never scaffolding. The snapshot at the start
+                // cannot hold chunks that were not loaded then (a forest far from the base), so this chunk is added now
+                ground.addAll(throwaway(in, level, clipped, null));
                 List<Tree> found = scan(in, level, clipped, boxes, seen);
                 trees.addAll(found);
                 total += found.size();

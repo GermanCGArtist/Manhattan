@@ -2406,6 +2406,104 @@ def run_bench(t, n):
 BENCH_TESTS = [("trees_bench_%d" % k, (lambda k: lambda t: run_bench(t, k))(k)) for k in range(1, 17)]
 
 
+FAR_SEED = 20261109
+FAR_DIST = 400   # blocks between the chest and the forest
+
+
+def _surface(t, x, z, tries=40):
+    """Height of the ground at x, z (first block from the top that is not air, leaves or a log), or None while the chunk is not there."""
+    for _ in range(tries):
+        for y in range(170, -64, -1):
+            b = t.block((x, y, z)).split("|")[0]
+            if "air" in b or "leaves" in b or "_log" in b:
+                continue
+            if y == 170:
+                break
+            return y, b
+        time.sleep(1)
+    return None
+
+
+def run_far(t, n):
+    """Speed test in a normal (not flat) world: a natural forest about FAR_DIST blocks from the chest. clear_trees(chest)
+    walks there, cuts the box around the located forest and comes back. Reports seconds and what was left.
+    Not part of the default run (name it: trees_far_1 ... trees_far_16)."""
+    name = "trees-far-%d-%d" % (n, RUN_ID)
+    fresh_world(t, name, normal=True)
+    wait_server(t)
+    t.cmd("/gamemode creative", "/clear @s", "/tp @s 0 250 0", "/buildtools protect clear")
+    time.sleep(5)
+    mark = t.b("chatlog 0")["next"]
+    t.cmd("/locate biome minecraft:forest")
+    m = None
+    for _ in range(60):
+        m = next((re.search(r"\[(-?\d+), (~|-?\d+), (-?\d+)\]", l) for l in t.b("chatlog %d" % mark)["lines"] if "nearest" in l and "[" in l), None)
+        if m:
+            break
+        time.sleep(1)
+    if not m:
+        raise Fail("no forest located: %s" % t.b("chatlog %d" % mark)["lines"][-2:])
+    fx, fz = int(m.group(1)), int(m.group(3))
+    t.cmd("/tp @s %d 250 %d" % (fx, fz))
+    time.sleep(5)
+    fs = _surface(t, fx, fz)
+    if not fs:
+        raise Fail("forest chunk did not load at %d %d" % (fx, fz))
+    base = None
+    for dx, dz in ((-FAR_DIST, 0), (FAR_DIST, 0), (0, FAR_DIST), (0, -FAR_DIST), (283, 283), (-283, 283), (283, -283), (-283, -283)):
+        bx, bz = fx + dx, fz + dz
+        t.cmd("/tp @s %d 250 %d" % (bx, bz))
+        time.sleep(4)
+        s = _surface(t, bx, bz)
+        if s and "water" not in s[1] and "ice" not in s[1] and "lava" not in s[1] and abs(s[0] - fs[0]) <= 15:
+            base = (bx, s[0], bz)
+            break
+    if not base:
+        raise Fail("no dry land %d blocks from the forest at %d %d" % (FAR_DIST, fx, fz))
+    bx, by, bz = base
+    t.cmd("/tp @s %d %d %d" % (bx + 2, by + 1, bz), "/gamemode survival")
+    chest_with(t, (bx, by + 1, bz), [])
+    give_kit(t)
+    t.cmd("/give @s dirt 128")
+    half = 46
+    t.cmd("/gamemode creative", "/tp @s %d %d %d" % (fx, fs[0] + 3, fz))
+    time.sleep(4)
+    planted = 0
+    for i, (gx, gz) in enumerate((x, z) for x in range(-40, 41, 8) for z in range(-40, 41, 8)):
+        sp = _surface(t, fx + gx, fz + gz)
+        log("trees_far: spot %d %d -> %s" % (fx + gx, fz + gz, sp))
+        if sp and "water" not in sp[1] and "ice" not in sp[1] and "sand" not in sp[1] and plant(t, "oak" if i % 3 else "birch", (fx + gx, sp[0] + 1, fz + gz)):
+            planted += 1
+    if planted < 14:   # (about 25 on dry land are planted: one per 8x8)
+        raise Fail("only %d trees could be planted at the forest" % planted)
+    t.cmd("/tp @s %d %d %d" % (bx + 2, by + 1, bz), "/gamemode survival")
+    box = (fx - half, fs[0] - 12, fz - half, fx + half, fs[0] + 45, fz + half)
+    path = os.path.join(HERE, "..", "..", "tmp", "trees-far-%d.txt" % n)
+    with open(path, "w") as f:
+        f.write("""// trees_far: a natural forest %d blocks from the chest, cleared into it; prints how many seconds it took
+stall(1)
+#acceptableThrowawayItems dirt
+let wood_chest = pos(%d, %d, %d)
+let body = ["oak_log", "birch_log", "bee_nest", "vine"]
+select(pos(%d, %d, %d), pos(%d, %d, %d))
+let before = count_blocks(body)
+let t0 = now()
+print("TEST far start blocks={before}")
+let got = clear_trees(wood_chest)
+let secs = round((now() - t0) / 1000, 1)
+let left = count_blocks(body)
+let dirt_carried = count("dirt")
+print("TEST far done secs={secs} left={left} dirt_carried={dirt_carried} blocks={before}")
+""" % ((FAR_DIST, bx, by + 1, bz) + box))
+    log("trees_far: forest at %d %d (ground %d), chest at %d %d %d, box %s" % (fx, fz, fs[0], bx, by + 1, bz, box))
+    line = run_scenario(t, path, "TEST far done", 2700)
+    dist = ((fx - bx) ** 2 + (fz - bz) ** 2) ** 0.5
+    return "%.0f blocks away; %s" % (dist, line.split("far ", 1)[-1])
+
+
+FAR_TESTS = [("trees_far_%d" % k, (lambda k: lambda t: run_far(t, k))(k)) for k in range(1, 17)]
+
+
 TESTS = [("smoke", test_smoke), ("workspace", test_workspace), ("viewport", test_viewport), ("monitor", test_monitor), ("panels", test_panels), ("ui_screens", test_ui_screens), ("fill_water", test_fill_water), ("fill_water_deep", test_fill_water_deep), ("fill_water_shaft", test_fill_water_shaft), ("fill_water_submerged_shaft", test_fill_water_submerged_shaft), ("fill_water_submerged_pocket", test_fill_water_submerged_pocket), ("eat", test_eat), ("defend", test_defend), ("death_recover", test_death_recover), ("death_unlimited", test_death_unlimited),("clear_resume", test_clear_resume), ("clear_shaft", test_clear_shaft), ("clear_overnight_stress", test_clear_overnight_stress), ("dump", test_dump), ("chest_index", test_chest_index), ("hotbar_tools", test_hotbar_tools), ("air", test_air), ("clear_wet", test_clear_wet),
          ("schem_list", test_schem_list), ("schem_add", test_schem_add), ("schem_fix", test_schem_fix), ("schem_fix_wrong", test_schem_fix_wrong), ("schem_exact", test_schem_exact),
          ("colossal_schem", test_colossal_schem)]
@@ -2415,6 +2513,7 @@ MIDTOWN_TESTS = [("midtown_smoke", test_midtown_smoke), ("midtown_eat", test_mid
 TESTS += CANAL_TESTS
 TESTS += TREE_TESTS
 TESTS += BENCH_TESTS
+TESTS += FAR_TESTS
 TESTS += MIDTOWN_TESTS
 
 
@@ -2443,7 +2542,7 @@ def enter_world(b):
 
 TEST_TIMEOUT = 600          # seconds; a test that takes longer fails and its game is restarted
 RAM_PER_CLIENT_GB = 3.5     # a game with its 3 GB heap (MANHATTAN_XMX) and its own memory
-TEST_TIMEOUTS = {**{"trees_bench_%d" % k: 1500 for k in range(1, 17)}, "trees_forest_spruce": 1200, "trees_forest_jungle": 1200, "colossal_canal": 1500, "colossal_schem": 1200, "canal_smoke": 1200}   # Baritone stalls on the 2x2 spruce (2 min a try); --test-timeout can only raise it
+TEST_TIMEOUTS = {**{"trees_bench_%d" % k: 1500 for k in range(1, 17)}, **{"trees_far_%d" % k: 3000 for k in range(1, 17)}, "trees_forest_spruce": 1200, "trees_forest_jungle": 1200, "colossal_canal": 1500, "colossal_schem": 1200, "canal_smoke": 1200}   # Baritone stalls on the 2x2 spruce (2 min a try); --test-timeout can only raise it
 MAX_WORKERS = 16            # bridge ports 25700+N for worker N: 25701..25716 (the other harness uses 25599 and 25601..25603)
 LONG_FIRST = ["trees_forest_spruce", "trees_small", "clear_resume", "schem_exact", "schem_fix_wrong", "schem_fix", "fill_water", "schem_add"]   # start the slow ones first
 
@@ -2540,13 +2639,13 @@ def leave_world(t):
     t.b.wait(lambda: t.b("state")["screen"].endswith("TitleScreen"), 240, step=1, what="the title screen")
 
 
-def fresh_world(t, name):
+def fresh_world(t, name, normal=False):
     """Leaves the current world and opens (creating it flat, creative, cheats on) a world of its own: name."""
     if t.b("state")["inWorld"]:
         leave_world(t)
     if name == mc.WORLD:
         prepare_schem()   # Litematica saves its placements into the world's file when the world is left: write ours again
-    r = t.b("world " + name)
+    r = t.b("world " + name + (" 20261109 normal" if normal else ""))
     t.world = name
     t.b.wait(lambda: t.b("state")["inWorld"], 300, step=1, what="world %s to load" % name)
     t.b.wait(lambda: t.b("state")["screen"] == "", 60, step=1, what="the loading screen to close")
@@ -2681,7 +2780,7 @@ def main(argv):
     timeout = int(opt(argv, "--test-timeout", TEST_TIMEOUT))
     values = {opt(argv, f, None) for f in ("--workers", "-j", "--worker", "--queue", "--test-timeout", "--tick", "--retries", "--engine")}
     names = [a for a in argv if not a.startswith("-") and a not in values]
-    tests = [(n, f) for n, f in TESTS if n in names or (not names and not n.startswith("trees_bench_"))]
+    tests = [(n, f) for n, f in TESTS if n in names or (not names and not n.startswith("trees_bench_") and not n.startswith("trees_far_"))]
     if names and len(tests) != len(names):
         print("unknown test; known: " + ", ".join(n for n, _ in TESTS))
         return 2

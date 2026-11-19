@@ -264,7 +264,7 @@ public class TestBridge implements ClientModInitializer {
                     if (e.isAlive() && e.distanceTo(mc.player) <= r && BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).toString().equals(want)) n++;
                 return ok("\"count\":" + n);
             });
-            case "world": return onGame(() -> openWorld(mc, a[0], a.length > 1 ? Long.parseLong(a[1]) : 20261109L));
+            case "world": return onGame(() -> openWorld(mc, a[0], a.length > 1 ? Long.parseLong(a[1]) : 20261109L, a.length > 2 && a[2].equals("normal")));
             case "leave": return onGame(() -> {
                 if (mc.level == null) return ok("\"was\":false");
                 mc.disconnectWithSavingScreen();
@@ -631,7 +631,7 @@ public class TestBridge implements ClientModInitializer {
             case IDLE -> {
                 if (mc.level == null && mc.screen instanceof TitleScreen && benchTicks >= 10) {
                     System.out.println("[testbridge] benchmark bootstrap: opening world for scenario=" + BENCHMARK);
-                    openWorld(mc, "manhattan-benchmark", 20261109L);
+                    openWorld(mc, "manhattan-benchmark", 20261109L, false);
                     benchState = BenchState.OPENING_WORLD;
                     benchTicks = 0;
                 }
@@ -1259,7 +1259,7 @@ public class TestBridge implements ClientModInitializer {
     }
 
     /** Opens the world, or creates it first: a flat creative world with cheats, no structures. */
-    private static String openWorld(Minecraft mc, String name, long seed) {
+    private static String openWorld(Minecraft mc, String name, long seed, boolean normal) {
         if (mc.level != null) return err("already in a world");
         if (mc.getLevelSource().levelExists(name)) {
             mc.createWorldOpenFlows().openWorld(name, () -> mc.setScreen(new TitleScreen()));
@@ -1268,7 +1268,7 @@ public class TestBridge implements ClientModInitializer {
         LevelSettings settings = new LevelSettings(name, GameType.CREATIVE,
                 new LevelSettings.DifficultySettings(Difficulty.PEACEFUL, false, false), true, WorldDataConfiguration.DEFAULT);
         mc.createWorldOpenFlows().createFreshLevel(name, settings, new WorldOptions(seed, false, false),
-                WorldPresets::createFlatWorldDimensions, new TitleScreen());
+                normal ? WorldPresets::createNormalWorldDimensions : WorldPresets::createFlatWorldDimensions, new TitleScreen());
         return ok("\"created\":true");
     }
 
