@@ -40,6 +40,15 @@ final class Config {
     boolean scaffoldAuto = true;
     int scaffoldBatch = 25;
 
+    /**
+     * clear_trees only takes scaffolding down inside a vertical cylinder around each cut tree (from its lowest to its
+     * highest log); everything outside is left alone and forgotten. The diameter in blocks (at least; wide trunks get more).
+     */
+    int treeZoneDiameter = 9;
+
+    /** Draw those cylinders in the world (orange: scaffolding still standing inside, green: taken down, cyan: the tree being cut). */
+    boolean showTreeZones = true;
+
     /** Cut #sel selections around safe areas, so the builder never targets anything inside them. */
     boolean trim = true;
     List<Zone> zones = new ArrayList<>();

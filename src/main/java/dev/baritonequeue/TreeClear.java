@@ -257,6 +257,7 @@ final class TreeClear {
     /** New scaffolding in the boxes goes on BuildTools' list, so collect_scaffold() takes it down; returns how many. */
     private static int markNew(Interp in, Level level, List<int[]> boxes, Set<BlockPos> before) {
         Set<BlockPos> fresh = throwaway(in, level, boxes, before);
+        fresh.removeIf(b -> !ScaffoldZones.inAny(b));   // only inside the zones around the cut trees: anything else is terrain or not ours
         if (fresh.size() > MAX_MARK) {   // that is the terrain, not pillars: marking it would have the bot dig the hill away
             Util.msg("clear_trees: " + fresh.size() + " 'new' scaffolding blocks is implausible, ignoring them.");
             return 0;
@@ -325,7 +326,38 @@ final class TreeClear {
          *  - a chunk is finished ({@code chunkEnd}): all of them, the next trees are elsewhere.
          * Pillars not taken now stay on the list; the end of the run takes down what is left.
          */
+        /** Recorded scaffolding outside every tree zone is dropped from the list: it stays where it is (no digging in caves for it). */
+        void forgetOutsideZones() {
+            int n = 0;
+            for (BlockPos b : dev.buildtools.Api.scaffoldSpots()) {
+                if (!ScaffoldZones.inAny(b)) {
+                    dev.buildtools.Api.forgetScaffold(b);
+                    n++;
+                }
+            }
+            if (n > 0) Util.msg("clear_trees: leaving " + n + " scaffolding blocks outside the tree zones alone.");
+        }
+
+        /** Colours of the drawn zones: orange while scaffolding still stands inside, green once it is gone. */
+        void refreshZones() {
+            var spots = dev.buildtools.Api.scaffoldSpots();
+            for (ScaffoldZones.Zone z : ScaffoldZones.all()) {
+                boolean p = false;
+                for (BlockPos b : spots) if (z.contains(b)) { p = true; break; }
+                z.pending = p;
+            }
+        }
+
         void tidy(Level level, List<Tree> open, boolean chunkEnd) {
+            forgetOutsideZones();
+            try {
+                tidy0(level, open, chunkEnd);
+            } finally {
+                refreshZones();
+            }
+        }
+
+        private void tidy0(Level level, List<Tree> open, boolean chunkEnd) {
             int pending = dev.buildtools.Api.scaffoldCount();
             if (pending == 0) return;
             BlockPos me = player(line).blockPosition();
@@ -456,6 +488,8 @@ final class TreeClear {
         if (boxes.isEmpty()) throw error("There is no selection. Select the forest first: area(\"name\") or select(corner1, corner2).", line);
 
         Run r = new Run(in, line, chest, chestText);
+        ScaffoldZones.clear();
+        boolean autoSweep = dev.buildtools.TreeZoneOptions.setAutoSweep(false);   // it would take scaffolding down anywhere, not only in the zones
         Map<Item, Integer> start = inventory(p);
         boolean throwaway = false;
         for (Item it : THROWAWAY_ITEMS) if (start.containsKey(it)) throwaway = true;
@@ -580,6 +614,9 @@ final class TreeClear {
                             + String.join(", ", kinds) + ") at " + t.seed.getX() + " " + t.seed.getY() + " " + t.seed.getZ());
                     select(x0, y0, z0, x1, y1, z1);
                     List<int[]> box = List.of(new int[]{x0, y0 - 2, z0, x1, y1, z1});
+                    ScaffoldZones.Zone zone = ScaffoldZones.add(x0, y0, z0, x1, y1, z1);   // scaffolding comes down only in here
+                    zone.current = true;
+                    zone.pending = true;
                     Set<BlockPos> before = throwaway(in, level, box, null);
                     String cmd = "sel replace " + String.join(" ", kinds) + " air";
                     long m0 = System.nanoTime();
@@ -590,6 +627,7 @@ final class TreeClear {
                     // every scaffolding block that is new around the tree, also those BuildTools' recorder did not see
                     markNew(in, level, box, before);
                     t.blocks.removeIf(b -> !tree(level, b));
+                    zone.current = false;
                     // pillars stay up for the next tree; only taken down when blocks run low or too many stand
                     List<Tree> openTrees = new ArrayList<>();
                     for (Tree o : found) if (o != t && o.tries < TRIES && !o.blocks.isEmpty()) openTrees.add(o);
@@ -631,6 +669,7 @@ final class TreeClear {
             }
         } finally {
             Areas.apply(boxes);
+            dev.buildtools.TreeZoneOptions.setAutoSweep(autoSweep);
         }
         if (skipped > 0) Util.msg("clear_trees: " + skipped + " chunk" + (skipped == 1 ? "" : "s") + " already done in an earlier run, skipped.");
 
@@ -673,9 +712,13 @@ final class TreeClear {
         }
         // anything left standing from pickups and the sweep (pillars up to drops on the leaves)
         for (int round = 0; round < 3 && markNew(in, level, boxes, ground) > 0; round++) {
+            r.forgetOutsideZones();
             r.scaffold(null);
             r.pickup();   // may climb again: look once more
         }
+        r.forgetOutsideZones();
+        r.scaffold(null);   // whatever stands in the zones still
+        r.refreshZones();
         if (chest != null) r.dump();
 
         // the report: what is in the inventory now and not before, plus what went into the chest
