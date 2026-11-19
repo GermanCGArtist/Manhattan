@@ -29,17 +29,23 @@ final class PathRender {
     private static final int MAX_NODES = 600;
 
     static void render() {
-        if (!Config.cfg.showPath) return;
         Minecraft mc = Minecraft.getInstance();
         if (mc.levelRenderer == null || mc.player == null) return;
-        PathEngine engine = EngineSelector.current();
-        if (!(engine instanceof MidtownEngine me)) return;
-        List<PathNode> path = me.coordinator().path();
-        if (path.isEmpty()) return;
-        int idx = Math.max(0, Math.min(me.coordinator().pathIndex(), path.size()));
-        int from = Math.max(0, idx - 3);
-        int to = Math.min(path.size(), idx + MAX_NODES);
+        boolean zones = ScaffoldZones.wanted();   // the tree zones of clear_trees (their own switch: buildtools.showTreeZones)
+        MidtownEngine me = null;
+        List<PathNode> path = List.of();
+        if (Config.cfg.showPath && EngineSelector.current() instanceof MidtownEngine e) {
+            me = e;
+            path = e.coordinator().path();
+        }
+        if (!zones && path.isEmpty()) return;
+        // one gizmo collection for everything drawn this frame
         try (var ignored = mc.levelRenderer.collectPerFrameGizmos()) {
+            if (zones) ScaffoldZones.draw(mc);
+            if (path.isEmpty() || me == null) return;
+            int idx = Math.max(0, Math.min(me.coordinator().pathIndex(), path.size()));
+            int from = Math.max(0, idx - 3);
+            int to = Math.min(path.size(), idx + MAX_NODES);
             Vec3 me0 = mc.player.position().add(0, 0.1, 0);
             Vec3 prev = from > 0 ? centre(path.get(from - 1).pos()) : me0;
             for (int i = from; i < to; i++) {
