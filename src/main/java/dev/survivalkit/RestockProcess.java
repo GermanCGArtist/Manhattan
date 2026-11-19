@@ -37,7 +37,8 @@ final class RestockProcess extends Feature {
 
     private record Action(int slot, int button, ContainerInput type) {}
 
-    private static final int PATH_TIMEOUT = 20 * 180;
+    private static final int PATH_TIMEOUT = 20 * 180;   // at least; a far chest gets 120 s + 1 s per block
+    private int pathLimit = PATH_TIMEOUT;
     private static final int OPEN_TIMEOUT = 20 * 5;
     private static final long RETRY_IDLE = 20L * 60 * 5;    // a rule the chest could not fill is skipped for 5 min
 
@@ -324,7 +325,8 @@ final class RestockProcess extends Feature {
 
         switch (state) {
             case PATHING -> {
-                if (++timer > PATH_TIMEOUT) { fail("Could not reach the " + chestName() + " in time."); return; }
+                if (timer == 0) pathLimit = Math.max(PATH_TIMEOUT, (int) (20 * (120 + Math.sqrt(chest.distSqr(p.blockPosition())))));
+                if (++timer > pathLimit) { fail("Could not reach the " + chestName() + " in time."); return; }
                 double dist = Math.sqrt(chest.distSqr(p.blockPosition()));
                 if (dist <= 3.5) {
                     EngineSelector.current().cancel();

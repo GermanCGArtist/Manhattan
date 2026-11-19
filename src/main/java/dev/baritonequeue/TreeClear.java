@@ -58,7 +58,7 @@ final class TreeClear {
     private static final double PICK_BASE = 5;    // a drop is worth a walk of this many blocks ...
     private static final double PICK_PER_ITEM = 2; // ... plus this many per item in its cluster
     private static final int SCAFFOLD_LOW = 24;     // fewer scaffolding blocks than this in the inventory: take pillars down for material
-    private static final int MAX_PENDING = 40;      // more pillar blocks than this standing: take the stale ones down
+    private static final int MAX_PENDING = 160;     // more pillar blocks than this standing: take the stale ones down
     private static final int REUSE_R = 16;          // pillars this close to a tree still to be cut are kept for it
     private static final int MAX_MARK = 1500;      // more new scaffolding than this at once cannot be pillars
     private static final int SCAFFOLD_NEAR = 32;   // only scaffolding this close to the tree is taken down between trees
@@ -284,6 +284,11 @@ final class TreeClear {
         final String chestText;
         final Map<Item, Integer> stored = new HashMap<>();
         int dumps;
+        final Map<String, Long> phases = new java.util.TreeMap<>();   // where the time goes, for the report at the end
+
+        void lap(String phase, long since) {
+            phases.merge(phase, System.nanoTime() - since, Long::sum);
+        }
 
         Run(Interp in, int line, BlockPos chest, String chestText) {
             this.in = in;
@@ -302,8 +307,10 @@ final class TreeClear {
             var far = c == null ? null : dev.buildtools.Api.stashScaffoldFarFrom(c, SCAFFOLD_NEAR);
             try {
                 if (dev.buildtools.Api.scaffoldCount() == 0) return;
+                long t0 = System.nanoTime();
                 in.await(() -> new Actions.Feature(dev.buildtools.Api::collectScaffoldNow, dev.buildtools.Api::collectingScaffold,
                         dev.buildtools.Api::stopCollectingScaffold, () -> true), "collect_scaffold", line);
+                lap("scaffold teardown", t0);
             } finally {
                 dev.buildtools.Api.restoreScaffold(far);
             }
@@ -339,8 +346,10 @@ final class TreeClear {
                 if (dev.buildtools.Api.scaffoldCount() == 0) return;
                 Util.msg("clear_trees: taking down " + dev.buildtools.Api.scaffoldCount() + " pillar blocks ("
                         + (chunkEnd ? "chunk done" : low ? "running low on blocks" : "too many standing") + "), keeping " + keep.size() + ".");
+                long t0 = System.nanoTime();
                 in.await(() -> new Actions.Feature(dev.buildtools.Api::collectScaffoldNow, dev.buildtools.Api::collectingScaffold,
                         dev.buildtools.Api::stopCollectingScaffold, () -> true), "collect_scaffold", line);
+                lap("scaffold teardown", t0);
             } finally {
                 dev.buildtools.Api.restoreScaffold(keep);
             }
@@ -352,6 +361,15 @@ final class TreeClear {
          * it is closer than PICK_BASE + PICK_PER_ITEM per item; the rest stays where it is (and is not walked back for).
          */
         void collect(Level level, BlockPos around) {
+            long t0 = System.nanoTime();
+            try {
+                collect0(level, around);
+            } finally {
+                lap("drops", t0);
+            }
+        }
+
+        private void collect0(Level level, BlockPos around) {
             Set<Integer> tried = new HashSet<>();
             for (int trip = 0; trip < 8; trip++) {
                 LocalPlayer p = player(line);
@@ -393,6 +411,7 @@ final class TreeClear {
                 }
             }
             if (!added.isEmpty()) dev.loadchest.LoadChestMod.saveSettings();
+            long t0 = System.nanoTime();
             try {
                 ChestOp op = new ChestOp(chestText, ChestOp.Kind.DUMP, null, -1, false);
                 in.await(() -> new Actions.Chest(op, chest), "dump", line);
@@ -400,6 +419,7 @@ final class TreeClear {
             } catch (Values.ScriptError e) {
                 Util.msg("clear_trees: could not empty into the chest (" + e.getMessage() + "), going on.");
             } finally {
+                lap("chest", t0);
                 if (!added.isEmpty()) {
                     added.forEach(rules::remove);
                     dev.loadchest.LoadChestMod.saveSettings();
@@ -479,12 +499,16 @@ final class TreeClear {
                 BlockPos here = player(line).blockPosition();
                 if (!loaded(level, chunk) || chunk.distanceSqXZ(here) > 96.0 * 96.0) {
                     String go = "goto " + at.getX() + " " + at.getZ();
+                    long w0 = System.nanoTime();
                     in.await(() -> new Actions.BaritoneCommand(go), go, line);
+                    r.lap("walk", w0);
                 }
                 // what stands here before any pillar: natural ground (also stone) is never scaffolding. The snapshot at the start
                 // cannot hold chunks that were not loaded then (a forest far from the base), so this chunk is added now
                 ground.addAll(throwaway(in, level, clipped, null));
+                long sc0 = System.nanoTime();
                 List<Tree> found = scan(in, level, clipped, boxes, seen);
+                r.lap("scan", sc0);
                 trees.addAll(found);
                 total += found.size();
                 if (chunks.size() > 1) {
@@ -524,11 +548,13 @@ final class TreeClear {
                     boolean wasFar = fdx * fdx + fdz * fdz > 48 * 48;
                     if (wasFar) {
                         String go = "goto " + t.seed.getX() + " " + t.seed.getZ();
+                        long w0 = System.nanoTime();
                         try {
                             in.await(() -> new Actions.BaritoneCommand(go), go, line);
                         } catch (Values.ScriptError e) {
                             // the mining below tries on
                         }
+                        r.lap("walk", w0);
                     }
                     // no scaffolding blocks (a restock may have emptied them): mined trees stay out of reach, every try ends in seconds
                     if (scaffoldCount(player(line)) < 16 && quickFails >= 1) {
@@ -556,7 +582,9 @@ final class TreeClear {
                     List<int[]> box = List.of(new int[]{x0, y0 - 2, z0, x1, y1, z1});
                     Set<BlockPos> before = throwaway(in, level, box, null);
                     String cmd = "sel replace " + String.join(" ", kinds) + " air";
+                    long m0 = System.nanoTime();
                     in.await(() -> new Actions.BaritoneCommand(cmd), cmd, line);
+                    r.lap("mining + pillars", m0);
                     BlockPos mid = new BlockPos((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
                     r.collect(level, mid);   // the drops that are close; the others are not worth a walk
                     // every scaffolding block that is new around the tree, also those BuildTools' recorder did not see
@@ -613,7 +641,9 @@ final class TreeClear {
         if (!spots.isEmpty()) {
             int waited = 0;
             while (waited < LEAF_WAIT_S && decaying(in, level, boxes) > 0) {
+                long lw0 = System.nanoTime();
                 in.await(() -> new Actions.Wait(5), "wait for the leaves", line);
+                r.lap("leaf wait", lw0);
                 waited += 5;
             }
             Map<Long, BlockPos> cells = new HashMap<>();
@@ -621,6 +651,7 @@ final class TreeClear {
             List<BlockPos> todo = new ArrayList<>(cells.values());
             Util.msg("clear_trees: sweeping " + todo.size() + " spot" + (todo.size() == 1 ? "" : "s") + " for saplings, sticks and apples"
                     + (waited > 0 ? " (waited " + waited + " s for the leaves)" : "") + ".");
+            long sw0 = System.nanoTime();
             while (!todo.isEmpty()) {
                 BlockPos me = player(line).blockPosition();
                 BlockPos at = todo.get(0);
@@ -638,6 +669,7 @@ final class TreeClear {
                 r.pickup();
                 r.dumpIfFull();
             }
+            r.lap("sweep", sw0);
         }
         // anything left standing from pickups and the sweep (pillars up to drops on the leaves)
         for (int round = 0; round < 3 && markNew(in, level, boxes, ground) > 0; round++) {
@@ -660,6 +692,13 @@ final class TreeClear {
             out.put(ChestOp.name(e.getKey()), (double) e.getValue());
             if (sb.length() > 0) sb.append(", ");
             sb.append(e.getValue()).append(' ').append(ChestOp.name(e.getKey()));
+        }
+        {
+            StringBuilder ph = new StringBuilder();
+            long sum = 0;
+            for (long v : r.phases.values()) sum += v;
+            for (var e : r.phases.entrySet()) ph.append(ph.length() > 0 ? ", " : "").append(e.getKey()).append(' ').append(e.getValue() / 1_000_000_000L).append(" s");
+            Util.msg("clear_trees: time per phase (" + sum / 1_000_000_000L + " s counted): " + ph + ".");
         }
         int left = 0;
         for (Tree t : trees) {

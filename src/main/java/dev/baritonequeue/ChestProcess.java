@@ -37,7 +37,8 @@ import java.util.Map;
 final class ChestProcess {
     private enum State { IDLE, PATHING, OPENING, TRANSFER }
 
-    private static final int PATH_TIMEOUT = 20 * 180;
+    private static final int PATH_TIMEOUT = 20 * 180;   // at least; a far chest gets 120 s + 1 s per block (a forest 400 blocks away took more than 180 s one way)
+    private int pathLimit = PATH_TIMEOUT;
     private static final int OPEN_TIMEOUT = 20 * 5;
 
     private State state = State.IDLE;
@@ -166,6 +167,7 @@ final class ChestProcess {
 
         switch (state) {
             case PATHING -> {
+                if (timer == 0) pathLimit = Math.max(PATH_TIMEOUT, (int) (20 * (120 + Math.sqrt(chest.distSqr(p.blockPosition())))));
                 if (!pathingStarted) {
                     EngineSelector.current().goTo(GoalSpec.near(chest, 3));
                     pathingStarted = true;
@@ -185,7 +187,7 @@ final class ChestProcess {
                 if (st == EngineStatus.IDLE) {
                     EngineSelector.current().goTo(GoalSpec.near(chest, 3));
                 }
-                if (++timer > PATH_TIMEOUT) fail("Could not reach the chest " + op.chest + " in time.");
+                if (++timer > pathLimit) fail("Could not reach the chest " + op.chest + " in time.");
             }
             case OPENING -> {
                 if (!isStorage(mc.level.getBlockState(chest).getBlock())) {
