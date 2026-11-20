@@ -592,14 +592,30 @@ final class TreeClear {
                             + "): " + found.size() + " tree" + (found.size() == 1 ? "" : "s") + ".");
                 }
                 while (true) {
-                    // the nearest tree that still stands and has tries left
+                    boolean anyRemaining = false;
+                    for (Tree t : found) {
+                        if (t.tries < TRIES && !t.blocks.isEmpty()) { anyRemaining = true; break; }
+                    }
+                    if (!anyRemaining) break;
+                    // after a long trip away (bed, dump, respawn) walk back before pruning so unloaded chunks never erase uncut trees
+                    if (!loaded(level, chunk)) {
+                        String go = "goto " + at.getX() + " " + at.getZ();
+                        long w0 = System.nanoTime();
+                        try {
+                            in.await(() -> new Actions.BaritoneCommand(go), go, line);
+                        } catch (Values.ScriptError e) {
+                            // try anyway
+                        }
+                        r.lap("walk", w0);
+                    }
+                    // the nearest tree that still stands, is loaded, and has tries left
                     BlockPos me = player(line).blockPosition();
                     Tree next = null;
                     double best = Double.MAX_VALUE;
                     for (Tree t : found) {
                         if (t.tries >= TRIES) continue;
-                        t.blocks.removeIf(b -> !level.hasChunkAt(b) || !tree(level, b));
-                        if (t.blocks.isEmpty()) continue;
+                        t.blocks.removeIf(b -> level.hasChunkAt(b) && !tree(level, b));
+                        if (t.blocks.isEmpty() || !level.hasChunkAt(t.seed)) continue;
                         double dx = t.seed.getX() - me.getX(), dz = t.seed.getZ() - me.getZ();
                         double d = dx * dx + dz * dz + 0.25 * (t.seed.getY() - me.getY()) * (t.seed.getY() - me.getY());
                         if (d < best) { best = d; next = t; }
@@ -614,8 +630,9 @@ final class TreeClear {
                         x0 = Math.min(x0, b.getX()); x1 = Math.max(x1, b.getX());
                         y0 = Math.min(y0, b.getY()); y1 = Math.max(y1, b.getY());
                         z0 = Math.min(z0, b.getZ()); z1 = Math.max(z1, b.getZ());
-                        kinds.add(id(level.getBlockState(b).getBlock()));
+                        if (level.hasChunkAt(b)) kinds.add(id(level.getBlockState(b).getBlock()));
                     }
+                    if (kinds.isEmpty()) continue;
                     int n = t.blocks.size();
                     // after a trip to the base (restock, bed, chest) the bot may stand far away: mining from there finds no path
                     BlockPos from = player(line).blockPosition();
@@ -667,7 +684,7 @@ final class TreeClear {
                     r.collect(level, mid);   // the drops that are close; the others are not worth a walk
                     // every scaffolding block that is new around the tree, also those BuildTools' recorder did not see
                     markNew(in, level, box, before);
-                    t.blocks.removeIf(b -> !tree(level, b));
+                    t.blocks.removeIf(b -> level.hasChunkAt(b) && !tree(level, b));
                     zone.current = false;
                     // pillars stay up for the next tree; only taken down when blocks run low or too many stand
                     List<Tree> openTrees = new ArrayList<>();
@@ -702,7 +719,7 @@ final class TreeClear {
                 r.tidy(level, List.of(), true);
                 int open = 0;
                 for (Tree t : found) {
-                    t.blocks.removeIf(bb -> !level.hasChunkAt(bb) || !tree(level, bb));
+                    t.blocks.removeIf(bb -> level.hasChunkAt(bb) && !tree(level, bb));
                     if (!t.blocks.isEmpty()) open++;
                 }
                 if (node != null) Jobs.set(node, open == 0 ? Ledger.State.DONE : Ledger.State.DEFERRED, 1, open, open == 0 ? null : open + " out of reach", signature);
@@ -782,7 +799,7 @@ final class TreeClear {
             }
             int left = 0;
             for (Tree t : trees) {
-                t.blocks.removeIf(b -> !level.hasChunkAt(b) || !tree(level, b));
+                t.blocks.removeIf(b -> level.hasChunkAt(b) && !tree(level, b));
                 if (!t.blocks.isEmpty()) left++;
             }
             lastRemainingTrees = left;

@@ -72,6 +72,7 @@ public class ProjectQueueTest {
         testSchedulerPartialPolicies();
         testSchedulerErrorPolicies();
         testSchedulerLiveControlsAndTelemetry();
+        testSchedulerSuspendsBeforeStartingPreemption();
 
         System.out.println("ProjectQueueTest: " + passes + " passed, " + fails + " failed.");
         if (fails > 0) System.exit(1);
@@ -857,6 +858,66 @@ public class ProjectQueueTest {
         eq("t2 completed after skipCurrent", sched.queue().stateOf("t_002"), TaskQueue.TaskLedger.State.DONE);
     }
 
+    private static void testSchedulerSuspendsBeforeStartingPreemption() {
+        List<String> events = new ArrayList<>();
+        Project p = baseProjectWithPlaces();
+        p.tasks.add(new ProjectTask("t_001", "Work", ProjectTask.Kind.CLEAR_TREES));
+
+        MockEnv env = new MockEnv();
+        FakeHandle work = new FakeHandle("work", 10) {
+            @Override public void suspend() { super.suspend(); events.add("work:suspend"); }
+            @Override public void resume() { super.resume(); events.add("work:resume"); }
+        };
+        FakeHandle sleep = new FakeHandle("sleep", 5) {
+            @Override public void suspend() { super.suspend(); events.add("sleep:suspend"); }
+            @Override public void resume() { super.resume(); events.add("sleep:resume"); }
+        };
+        FakeHandle defend = new FakeHandle("defend", 2);
+        env.taskFactory = (t, ov) -> work;
+        env.sleepFactory = () -> { events.add("env:startSleep"); return sleep; };
+        env.defendFactory = () -> { events.add("env:startDefend"); return defend; };
+
+        PriorityScheduler sched = new PriorityScheduler(env);
+        sched.start(p, new TaskQueue.InMemoryTaskLedger());
+        sched.tick(); // starts P4_WORK
+
+        // Preempt P4_WORK with P2_VITALS (sleep): work must suspend BEFORE startSleep() runs
+        env.bedTime = true;
+        sched.tick();
+        eq("work suspended before startSleep", events.subList(0, 2), List.of("work:suspend", "env:startSleep"));
+
+        // Preempt P2_VITALS (sleep) with P1_COMBAT (defend): sleep must suspend BEFORE startDefend() runs
+        events.clear();
+        env.threats = 1;
+        sched.tick();
+        eq("sleep suspended before startDefend", events.subList(0, 2), List.of("sleep:suspend", "env:startDefend"));
+
+        // If canStartBaseTrip() is false, P4_WORK must NOT be suspended
+        Project p2 = baseProjectWithPlaces();
+        p2.tasks.add(new ProjectTask("t_001", "Work", ProjectTask.Kind.CLEAR_AREA));
+        List<String> events2 = new ArrayList<>();
+        MockEnv env2 = new MockEnv();
+        env2.inventory = new FakeInventory(0, true, false, Map.of());
+        env2.canStartBaseTrip = false;
+        FakeHandle work2 = new FakeHandle("work2", 5) {
+            @Override public void suspend() { super.suspend(); events2.add("work2:suspend"); }
+            @Override public void resume() { super.resume(); events2.add("work2:resume"); }
+        };
+        env2.taskFactory = (t, ov) -> work2;
+        PriorityScheduler sched2 = new PriorityScheduler(env2);
+        sched2.start(p2, new TaskQueue.InMemoryTaskLedger());
+        sched2.tick();
+        eq("canStartBaseTrip=false leaves work unsuspended", work2.suspendCount, 0);
+
+        // If preemption starter returns null after suspend, work is resumed immediately
+        env2.canStartBaseTrip = true;
+        env2.baseTripFactory = plan -> null;
+        sched2.tick();
+        eq("null preemption starter suspends and immediately resumes work",
+                events2, List.of("work2:suspend", "work2:resume"));
+        eq("lane stays P4_WORK after null starter", sched2.currentLane(), PriorityScheduler.Lane.P4_WORK);
+    }
+
     // ------------------------------------------------------------------ Helpers & Mocks
 
     private static Project baseProjectWithPlaces() {
@@ -913,7 +974,7 @@ public class ProjectQueueTest {
         @Override public boolean isRestockExhausted(String item) { return exhausted.contains(item); }
     }
 
-    private static final class FakeHandle implements PriorityScheduler.ActionHandle {
+    private static class FakeHandle implements PriorityScheduler.ActionHandle {
         final String name;
         final int ticksToFinish;
         int ticks;
@@ -947,6 +1008,7 @@ public class ProjectQueueTest {
         int food = 20;
         boolean bedTime = false;
         int ticksUntilDusk = 10000;
+        boolean canStartBaseTrip = true;
         LogisticsPlanner.InventoryView inventory = new FakeInventory(20, false, false, Map.of());
 
         java.util.function.Supplier<PriorityScheduler.ActionHandle> emergencyFactory = () -> new FakeHandle("emergency", 1);
@@ -973,6 +1035,7 @@ public class ProjectQueueTest {
         @Override public boolean isBedTime() { return bedTime; }
         @Override public int ticksUntilDusk() { return ticksUntilDusk; }
         @Override public LogisticsPlanner.InventoryView inventoryView() { return inventory; }
+        @Override public boolean canStartBaseTrip() { return canStartBaseTrip; }
 
         @Override public PriorityScheduler.ActionHandle startEmergency() { return emergencyFactory.get(); }
         @Override public PriorityScheduler.ActionHandle startDefend() { return defendFactory.get(); }

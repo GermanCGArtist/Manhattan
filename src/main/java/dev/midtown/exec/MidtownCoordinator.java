@@ -166,7 +166,10 @@ public final class MidtownCoordinator {
      * @return the pushed {@link InterruptFrame}, or empty if no active goal is running
      */
     public Optional<InterruptFrame> pause() {
-        if (activeGoal == null || paused) {
+        if (activeGoal == null || paused
+                || status == EngineStatus.IDLE
+                || status == EngineStatus.DONE
+                || status == EngineStatus.FAILED) {
             return Optional.empty();
         }
         BlockPos to = (pathIndex >= 0 && pathIndex < path.size()) ? path.get(pathIndex).pos() : null;

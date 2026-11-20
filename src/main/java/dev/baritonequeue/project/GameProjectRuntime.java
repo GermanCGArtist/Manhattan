@@ -468,6 +468,24 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
     }
 
     @Override
+    public boolean canEatNow() {
+        if (eatCooldownTicks > 0) return false;
+        Minecraft mc = Minecraft.getInstance();
+        LocalPlayer p = mc == null ? null : mc.player;
+        return p != null && p.getFoodData().needsFood() && hasEdibleFood(p);
+    }
+
+    @Override
+    public boolean canSleepNow() {
+        return sleepCooldownTicks <= 0;
+    }
+
+    @Override
+    public boolean canStartBaseTrip() {
+        return baseTripCooldownTicks <= 0;
+    }
+
+    @Override
     public PriorityScheduler.ActionHandle startEat() {
         if (eatCooldownTicks > 0) return null;
         Minecraft mc = Minecraft.getInstance();

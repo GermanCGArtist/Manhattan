@@ -92,6 +92,12 @@ public final class PriorityScheduler {
 
         LogisticsPlanner.InventoryView inventoryView();
 
+        default boolean canEatNow() { return true; }
+
+        default boolean canSleepNow() { return true; }
+
+        default boolean canStartBaseTrip() { return true; }
+
         ActionHandle startEmergency();
 
         ActionHandle startDefend();
@@ -351,12 +357,9 @@ public final class PriorityScheduler {
         if (topPriority() < Lane.P0_EMERGENCY.priority()) {
             boolean suppressed = overrides != null
                     && (overrides.isSuppressed("escape") || overrides.isSuppressed("emergency"));
-            if (survival.escapeEnabled && !suppressed && env.isEmergencyNeeded()) {
-                ActionHandle h = env.startEmergency();
-                if (h != null) {
-                    pushFrame(new Frame(Lane.P0_EMERGENCY, "emergency", h, null, null, false, "Emergency escape"));
-                    return;
-                }
+            if (survival.escapeEnabled && !suppressed && env.isEmergencyNeeded()
+                    && preemptWith(Lane.P0_EMERGENCY, "emergency", "Emergency escape", env::startEmergency)) {
+                return;
             }
         }
 
@@ -367,12 +370,9 @@ public final class PriorityScheduler {
             if (survival.defendEnabled
                     && !suppressed
                     && env.health() >= survival.defendMinHealth
-                    && env.threats(survival.defendRange) > 0) {
-                ActionHandle h = env.startDefend();
-                if (h != null) {
-                    pushFrame(new Frame(Lane.P1_COMBAT, "defend", h, null, null, false, "Defending against threats"));
-                    return;
-                }
+                    && env.threats(survival.defendRange) > 0
+                    && preemptWith(Lane.P1_COMBAT, "defend", "Defending against threats", env::startDefend)) {
+                return;
             }
         }
 
@@ -381,36 +381,28 @@ public final class PriorityScheduler {
             boolean eatSuppressed = overrides != null && overrides.isSuppressed("eat");
             if (survival.eatEnabled
                     && !eatSuppressed
-                    && (env.food() < survival.eatFoodBelow || env.health() < survival.eatHealHealthBelow)) {
-                ActionHandle h = env.startEat();
-                if (h != null) {
-                    pushFrame(new Frame(Lane.P2_VITALS, "eat", h, null, null, false, "Eating"));
-                    return;
-                }
+                    && (env.food() < survival.eatFoodBelow || env.health() < survival.eatHealHealthBelow)
+                    && env.canEatNow()
+                    && preemptWith(Lane.P2_VITALS, "eat", "Eating", env::startEat)) {
+                return;
             }
 
             boolean sleepSuppressed = overrides != null && overrides.isSuppressed("sleep");
-            if (survival.sleepEnabled && !sleepSuppressed && places.bed != null && env.isBedTime()) {
-                ActionHandle h = env.startSleep();
-                if (h != null) {
-                    pushFrame(new Frame(Lane.P2_VITALS, "sleep", h, null, null, false, "Sleeping"));
-                    return;
-                }
+            if (survival.sleepEnabled && !sleepSuppressed && places.bed != null
+                    && env.isBedTime() && env.canSleepNow()
+                    && preemptWith(Lane.P2_VITALS, "sleep", "Sleeping", env::startSleep)) {
+                return;
             }
         }
 
         // P3: Batched base logistics (return worn tools, dump, restock, fetch materials)
-        if (topPriority() < Lane.P3_LOGISTICS.priority()) {
+        if (topPriority() < Lane.P3_LOGISTICS.priority() && env.canStartBaseTrip()) {
             LogisticsPlanner.InventoryView inv = env.inventoryView();
             Map<String, Integer> deficit = activeWorkMaterialDeficit();
             LogisticsPlanner.BaseTripPlan plan = LogisticsPlanner.planBaseTrip(project, overrides, inv, deficit);
-            if (!plan.isEmpty()) {
-                ActionHandle h = env.startBaseTrip(plan);
-                if (h != null) {
-                    pushFrame(new Frame(Lane.P3_LOGISTICS, "base_trip", h, null, null, false,
-                            "Base trip " + plan.steps()));
-                    return;
-                }
+            if (!plan.isEmpty()
+                    && preemptWith(Lane.P3_LOGISTICS, "base_trip", "Base trip " + plan.steps(), () -> env.startBaseTrip(plan))) {
+                return;
             }
         }
 
@@ -424,7 +416,8 @@ public final class PriorityScheduler {
 
             // Pre-dusk gate: sleep before starting a new task if dusk is imminent
             boolean nextSleepSuppressed = next.overrides != null && next.overrides.isSuppressed("sleep");
-            if (survival.sleepEnabled && survival.preDuskGate && places.bed != null && !nextSleepSuppressed) {
+            if (survival.sleepEnabled && survival.preDuskGate && places.bed != null
+                    && !nextSleepSuppressed && env.canSleepNow()) {
                 int ticksToDusk = env.ticksUntilDusk();
                 if (ticksToDusk >= 0 && ticksToDusk <= survival.preDuskMarginTicks) {
                     ActionHandle sleepHandle = env.startSleep();
@@ -596,6 +589,31 @@ public final class PriorityScheduler {
     }
 
     // ------------------------------------------------------------------ stack helpers
+
+    private boolean preemptWith(
+            Lane lane,
+            String kind,
+            String detail,
+            java.util.function.Supplier<ActionHandle> starter
+    ) {
+        Frame prevTop = stack.peek();
+        boolean suspendedPrev = false;
+        if (prevTop != null && !prevTop.suspended) {
+            prevTop.suspended = true;
+            prevTop.handle.suspend();
+            suspendedPrev = true;
+        }
+        ActionHandle h = starter.get();
+        if (h == null) {
+            if (suspendedPrev) {
+                prevTop.suspended = false;
+                prevTop.handle.resume();
+            }
+            return false;
+        }
+        stack.push(new Frame(lane, kind, h, null, null, false, detail));
+        return true;
+    }
 
     private void pushFrame(Frame frame) {
         Frame currentTop = stack.peek();

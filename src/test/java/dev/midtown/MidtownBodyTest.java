@@ -40,6 +40,7 @@ public class MidtownBodyTest {
         testCoordinatorLookaheadReplan();
         testCoordinatorAsyncResumeDrift();
         testMidtownEngineAsyncModeDefault();
+        testCoordinatorAndEnginePauseState();
 
         System.out.println("\nMidtownBodyTest summary: " + passes + " passed, " + fails + " failed.");
         if (fails > 0) {
@@ -392,6 +393,28 @@ public class MidtownBodyTest {
 
         MidtownEngine customEngine = new MidtownEngine(new Planner.DirectStepPlanner());
         assertFalse("custom-planner MidtownEngine keeps sync mode", customEngine.coordinator().isAsyncReplanMode());
+    }
+
+    private static void testCoordinatorAndEnginePauseState() {
+        System.out.println("Checking MidtownCoordinator.pause() terminal guards and MidtownEngine.isBusy() while paused...");
+        MidtownCoordinator coord = new MidtownCoordinator();
+        assertTrue("pause when IDLE returns empty", coord.pause().isEmpty());
+
+        BlockPos start = new BlockPos(0, 64, 0);
+        GoalSpec goal = GoalSpec.exact(new BlockPos(2, 64, 0));
+        coord.startGoal(goal, BlockPos.containing(2.5, 64.0, 0.5));
+        same("goal already reached -> DONE", coord.status(), EngineStatus.DONE);
+        assertTrue("pause when DONE returns empty", coord.pause().isEmpty());
+
+        MidtownEngine engine = new MidtownEngine(new Planner.DirectStepPlanner());
+        engine.coordinator().startGoal(GoalSpec.exact(new BlockPos(10, 64, 0)), start);
+        assertTrue("engine busy while MOVING", engine.isBusy());
+        engine.coordinator().pause();
+        assertFalse("engine not busy while paused", engine.isBusy());
+        engine.coordinator().resume(start);
+        assertTrue("engine busy again after resume", engine.isBusy());
+        engine.coordinator().cancel();
+        assertFalse("engine not busy after cancel", engine.isBusy());
     }
 
     // ------------------------------------------------------------------ Assertion Helpers

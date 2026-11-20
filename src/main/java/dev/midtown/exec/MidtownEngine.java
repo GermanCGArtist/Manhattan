@@ -242,7 +242,8 @@ public final class MidtownEngine implements PathEngine {
 
     @Override
     public boolean isBusy() {
-        return PathEngine.super.isBusy() || (mineController.isActive() && !coordinator.isPaused());
+        if (coordinator.isPaused()) return false;
+        return PathEngine.super.isBusy() || mineController.isActive();
     }
 
     @Override
@@ -267,6 +268,18 @@ public final class MidtownEngine implements PathEngine {
             }
             this.inFlightPlan = null;
             handleAsyncPlanResult(mc, future, futureGen);
+        }
+
+        if (coordinator.status() == EngineStatus.PLANNING && !coordinator.isPaused() && this.inFlightPlan == null) {
+            GoalSpec orphanGoal = coordinator.activeGoal();
+            if (orphanGoal != null && !useCustomPlanner && mc.level != null) {
+                BlockPos start = groundedStart(mc, player, player.blockPosition());
+                launchAsyncReplan(mc, player, orphanGoal, start, "orphaned PLANNING state");
+            } else {
+                coordinator.markFailed("Orphaned PLANNING state with no active future");
+            }
+            checkStatusTransition();
+            return;
         }
 
         if (coordinator.status() == EngineStatus.MOVING

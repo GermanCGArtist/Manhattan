@@ -109,15 +109,21 @@ final class Actions {
 
     /** A Baritone command; done when Baritone has been idle for 2 seconds. Stuck tasks are restarted, then skipped. */
     static class BaritoneCommand extends Action {
-        private static final int START_WAIT = 10;
+        private static final int START_WAIT = 2;
         private static final int KICK_TICKS = 20 * 60 * 3;
         private static final int MAX_KICKS = 3;
-        private static final int IDLE_DONE = 40;
+        private static final int IDLE_DONE = 6;
 
         final String command;
         private int sinceStart, idle, noProgress, still, kicks;
         private double ax, ay, az;
         private boolean anchored;
+        private boolean wasBusyOnSuspend;
+
+        /** How many idle ticks to wait after Midtown reaches DONE/FAILED before finishing. */
+        protected int terminalSettleTicks() {
+            return 2;
+        }
 
         /** Whether this came from a literal "#cmd" line in a script (the only case that is deprecated). */
         private final boolean legacy;
@@ -160,6 +166,7 @@ final class Actions {
             noProgress = 0;
             still = 0;
             anchored = false;
+            wasBusyOnSuspend = false;
             if (!dispatch(legacy)) fail("Baritone did not accept " + displayName() + " (check the spelling).");
         }
 
@@ -295,7 +302,11 @@ final class Actions {
                 return;
             }
             noProgress = 0;
-            if (++idle >= IDLE_DONE) finish(true);
+            var st = dev.midtown.api.EngineSelector.current().status();
+            int needIdle = (st == dev.midtown.api.EngineStatus.DONE || st == dev.midtown.api.EngineStatus.FAILED)
+                    ? terminalSettleTicks()
+                    : IDLE_DONE;
+            if (++idle >= needIdle) finish(true);
         }
 
         @Override
@@ -337,12 +348,22 @@ final class Actions {
 
         @Override
         void suspend() {
-            dev.midtown.api.EngineSelector.current().pause();
+            wasBusyOnSuspend = Util.baritoneBusy() && !QueueMod.clear.working();
+            if (wasBusyOnSuspend) {
+                dev.midtown.api.EngineSelector.current().cancel();
+            } else {
+                dev.midtown.api.EngineSelector.current().pause();
+            }
         }
 
         @Override
         void resume() {
-            dev.midtown.api.EngineSelector.current().resume();
+            if (!done && wasBusyOnSuspend) {
+                wasBusyOnSuspend = false;
+                start();
+            } else {
+                dev.midtown.api.EngineSelector.current().resume();
+            }
         }
     }
 
@@ -355,6 +376,11 @@ final class Actions {
             super(label == null || label.isBlank() ? "mine" : label, new Estimate());
             this.filter = filter;
             this.box = box;
+        }
+
+        @Override
+        protected int terminalSettleTicks() {
+            return 4;
         }
 
         @Override
