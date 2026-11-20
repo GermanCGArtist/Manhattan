@@ -63,6 +63,7 @@ public class QueueMod implements ClientModInitializer {
     public void onInitializeClient() {
         dev.midtown.api.EngineSelector.register("midtown", dev.midtown.exec.MidtownEngine::new);
         Config.load();
+        dev.midtown.exec.MidtownEngine.configureDeathStorage(projectConfigDir().resolve("manhattan-deaths"), QueueMod::projectWorld);
         LevelRenderEvents.BEFORE_GIZMOS.register(ctx -> {
             Areas.renderWireframe();
             PathRender.render();
@@ -326,6 +327,13 @@ public class QueueMod implements ClientModInitializer {
                                     mc.execute(ImGuiManager::closeShell);
                                     return 1;
                                 })))
+                        .then(ClientCommands.literal("deaths")
+                                .executes(ctx -> listDeaths())
+                                .then(ClientCommands.literal("clear").executes(ctx -> {
+                                    dev.midtown.exec.MidtownEngine.clearDeaths();
+                                    Util.msg("Cleared remembered death hazards for this world.");
+                                    return 1;
+                                })))
                         .then(ClientCommands.literal("clear").executes(ctx -> {
                             cfg.script.clear();
                             Config.save();
@@ -382,6 +390,23 @@ public class QueueMod implements ClientModInitializer {
         if (cfg.script.isEmpty()) Util.msg("The script is empty. Open the editor (key J).");
         for (int i = 0; i < cfg.script.size(); i++) Util.msg((i + 1) + ". " + cfg.script.get(i));
         Util.msg(runner.status());
+        return 1;
+    }
+
+    private static int listDeaths() {
+        Minecraft mc = Minecraft.getInstance();
+        String dim = (mc != null && mc.level != null) ? mc.level.dimension().identifier().toString() : null;
+        var sites = dev.midtown.exec.MidtownEngine.recentDeathSites(dim);
+        if (sites.isEmpty()) {
+            Util.msg("No recent death hazards remembered.");
+            return 1;
+        }
+        long now = System.currentTimeMillis();
+        Util.msg("Remembered death hazards (" + sites.size() + "):");
+        for (var r : sites) {
+            long ageMin = Math.max(0L, (now - r.timestampMs) / 60_000L);
+            Util.msg("  (" + r.x + ", " + r.y + ", " + r.z + ") " + ageMin + "m ago (avoidance r=" + r.radiusXZ + ")");
+        }
         return 1;
     }
 

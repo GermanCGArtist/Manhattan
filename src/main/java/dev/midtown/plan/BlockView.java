@@ -68,4 +68,14 @@ public interface BlockView {
     default boolean isFallingBlock(int x, int y, int z) {
         return isLoaded(x, y, z) && kindAt(x, y, z) == BlockKind.GRAVEL_OR_SAND;
     }
+
+    /** True if a solid non-foliage roof sits overhead within {@code maxScan} blocks starting at {@code fromY}. */
+    default boolean isCaveCovered(int x, int fromY, int z, int maxScan) {
+        int top = Math.min(maxY(), fromY + maxScan);
+        for (int cy = fromY; cy < top; cy++) {
+            if (!isLoaded(x, cy, z)) return false;
+            if (hasSolidCollision(x, cy, z)) return true;
+        }
+        return false;
+    }
 }

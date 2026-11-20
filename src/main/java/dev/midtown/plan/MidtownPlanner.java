@@ -255,8 +255,10 @@ public final class MidtownPlanner {
         state.push(startId);
 
         int bestNodeId = startId;
-        double bestH = state.hScore(startId);
-        double bestG = 0.0;
+        double bestScore = state.hScore(startId);
+        int bestProgressId = startId;
+        double bestProgressH = state.hScore(startId);
+        double bestProgressG = 0.0;
 
         int expanded = 0;
         int maxNodes = ctx.maxNodesExpanded();
@@ -296,10 +298,17 @@ public final class MidtownPlanner {
             }
 
             double curH = state.hScore(curId);
-            if (curH < bestH - 1e-6 || (Math.abs(curH - bestH) <= 1e-6 && curG < bestG)) {
-                bestH = curH;
-                bestG = curG;
-                bestNodeId = curId;
+            if (curId != startId) {
+                double curScore = curH + 0.15 * curG;
+                if (curScore < bestScore - 1e-6) {
+                    bestScore = curScore;
+                    bestNodeId = curId;
+                }
+                if (curH < bestProgressH - 1e-6 || (Math.abs(curH - bestProgressH) <= 1e-6 && curG < bestProgressG)) {
+                    bestProgressH = curH;
+                    bestProgressG = curG;
+                    bestProgressId = curId;
+                }
             }
 
             nb.clear(curPlaced);
@@ -329,12 +338,6 @@ public final class MidtownPlanner {
                             edgeCost,
                             nb.nextPlaced[i]);
                     state.push(nextId);
-
-                    if (h < bestH - 1e-6 || (Math.abs(h - bestH) <= 1e-6 && tentativeG < bestG)) {
-                        bestH = h;
-                        bestG = tentativeG;
-                        bestNodeId = nextId;
-                    }
                 } else if (!state.isClosed(existingId) && tentativeG < state.gScore(existingId) - 1e-6) {
                     state.updateNode(
                             existingId,
@@ -352,11 +355,12 @@ public final class MidtownPlanner {
         }
 
         long elapsed = (System.nanoTime() - startNanos) / 1_000_000L;
+        int chosenBest = bestNodeId != startId ? bestNodeId : bestProgressId;
         if (timedOut) {
-            return reconstruct(PlanResult.Status.PARTIAL, start, state, bestNodeId, expanded, elapsed);
+            return reconstruct(PlanResult.Status.PARTIAL, start, state, chosenBest, expanded, elapsed);
         }
-        if (bestNodeId != startId && touchesUnloadedTowardGoal(world, ctx, state.packedPos(bestNodeId), goal)) {
-            return reconstruct(PlanResult.Status.PARTIAL, start, state, bestNodeId, expanded, elapsed);
+        if (chosenBest != startId && touchesUnloadedTowardGoal(world, ctx, state.packedPos(chosenBest), goal)) {
+            return reconstruct(PlanResult.Status.PARTIAL, start, state, chosenBest, expanded, elapsed);
         }
         return new PlanResult(PlanResult.Status.NO_PATH, start, List.of(), List.of(start), 0.0, expanded, elapsed);
     }

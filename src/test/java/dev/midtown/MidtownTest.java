@@ -21,6 +21,7 @@ import dev.midtown.plan.AStarStorage;
 import dev.midtown.plan.BlockKind;
 import dev.midtown.plan.CalculationContext;
 import dev.midtown.plan.CalculationContext.ProtectedRegion;
+import dev.midtown.plan.DeathMemory;
 import dev.midtown.plan.EdgeGenerator;
 import dev.midtown.plan.GoalAdapters;
 import dev.midtown.plan.GridWorldSnapshot;
@@ -31,6 +32,8 @@ import dev.midtown.plan.PlanResult;
 import dev.midtown.plan.WorldSnapshot;
 import net.minecraft.core.BlockPos;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
@@ -69,6 +72,7 @@ public class MidtownTest {
         testGoalChunkRadius();
         testPlannerComponentsParity();
         testMineController();
+        testCaveAndDeathMemory();
 
         System.out.println("\nMidtownTest summary: " + passes + " passed, " + fails + " failed.");
         if (fails > 0) {
@@ -1145,6 +1149,129 @@ public class MidtownTest {
         same("box null after clear", mcCtrl.box(), null);
         assertTrue("blacklist empty after clear", mcCtrl.blacklist().isEmpty());
         assertFalse("isBlacklisted false for null", mcCtrl.isBlacklisted(null));
+    }
+
+    private static void testCaveAndDeathMemory() {
+        System.out.println("Checking deep cave cover detection (64 blocks) and DeathMemory avoidance...");
+        MidtownPlanner planner = new MidtownPlanner();
+        try {
+            CalculationContext defaultCtx = CalculationContext.defaults();
+            // 1. Overhead roof 24 blocks above feet is detected as cave cover, while open sky is 0 penalty
+            GridWorldSnapshot tallCaveWorld = GridWorldSnapshot.builder(0, 0, 0, 16, 30, 8)
+                    .fillFloor(0, BlockKind.SOLID)
+                    .fillBox(2, 25, 0, 14, 25, 2, BlockKind.SOLID)
+                    .build();
+            double cavePen = HazardCost.DEFAULT.nodePenalty(tallCaveWorld, defaultCtx, 8, 1, 1);
+            assertTrue("24-block-high cave roof penalized (>= 20)", cavePen >= 20.0);
+            same("open sky cell has 0 hazard penalty", HazardCost.DEFAULT.nodePenalty(tallCaveWorld, defaultCtx, 8, 1, 5), 0.0);
+
+            PlanResult surfaceDetour = planner.planSync(
+                    tallCaveWorld,
+                    CalculationContext.builder().allowBreak(false).allowPlace(false).build(),
+                    new BlockPos(0, 1, 1),
+                    GoalSpec.exact(new BlockPos(16, 1, 1)));
+            assertTrue("cave detour path complete", surfaceDetour.isComplete());
+            assertTrue("detours into open sky instead of walking straight under cave roof",
+                    surfaceDetour.waypoints().stream().anyMatch(p -> p.getZ() >= 3));
+
+            // 2. DeathMemory: approach trail, jump reset, dimension isolation, escalation, decay, expiration, persistence
+            DeathMemory mem = new DeathMemory();
+            long t0 = 1_700_000_000_000L;
+            String overworld = "minecraft:overworld";
+            String nether = "minecraft:the_nether";
+
+            for (int x = 0; x <= 36; x += 6) {
+                mem.recordTrailPosition(overworld, x, 64, 0);
+            }
+            DeathMemory.RecordSummary first = mem.recordDeath(overworld, 42, 64, 0, t0);
+            same("first death nearby count", first.nearbyDeaths(), 1);
+            assertTrue("approach breadcrumbs recorded", first.breadcrumbs() >= 5);
+
+            DeathMemory.DeathField f1 = mem.snapshot(overworld, t0);
+            assertFalse("death field non-empty", f1.isEmpty());
+            assertTrue("death site core penalized (>= 50)", f1.penaltyAt(42, 64, 0) >= 50.0);
+            assertTrue("approach breadcrumb penalized", f1.penaltyAt(18, 64, 0) > 0.0);
+            same("far outside radius has 0 penalty", f1.penaltyAt(150, 64, 150), 0.0);
+            assertTrue("other dimension unaffected", mem.snapshot(nether, t0).isEmpty());
+
+            // Respawn jump reset: moving 200+ blocks clears prior trail (only post-jump points remain)
+            mem.recordTrailPosition(overworld, 300, 64, 300);
+            mem.recordTrailPosition(overworld, 306, 64, 300);
+            DeathMemory.RecordSummary jumped = mem.recordDeath(overworld, 312, 64, 300, t0 + 1000);
+            same("jump-reset death only links post-jump breadcrumbs", jumped.breadcrumbs(), 2);
+
+            // Second death at same location stacks super-linearly; verify isolated 1->2 death escalation too
+            DeathMemory.RecordSummary second = mem.recordDeath(overworld, 42, 64, 0, t0 + 60_000L);
+            same("second death nearby count", second.nearbyDeaths(), 2);
+            DeathMemory.DeathField f2 = mem.snapshot(overworld, t0 + 60_000L);
+            assertTrue("second death increases corridor penalty strongly",
+                    f2.penaltyAt(42, 64, 0) > f1.penaltyAt(42, 64, 0) * 1.8);
+
+            // Decay (45-min half-life), expiration (3h), and pure 1->2 death super-linear stacking (> 2.5x)
+            DeathMemory decayMem = new DeathMemory();
+            decayMem.recordDeath(overworld, 10, 64, 10, t0);
+            double pStart = decayMem.snapshot(overworld, t0).penaltyAt(10, 64, 10);
+            double pHalf = decayMem.snapshot(overworld, t0 + DeathMemory.HALF_LIFE_MS).penaltyAt(10, 64, 10);
+            assertTrue("half-life decay ~50%", pHalf >= pStart * 0.45 && pHalf <= pStart * 0.55);
+            assertTrue("expired after MAX_AGE_MS", decayMem.snapshot(overworld, t0 + DeathMemory.MAX_AGE_MS + 1).isEmpty());
+            decayMem.recordDeath(overworld, 10, 64, 10, t0 + 1000L);
+            double pStacked = decayMem.snapshot(overworld, t0 + 1000L).penaltyAt(10, 64, 10);
+            assertTrue("repeated death escalates super-linearly (> 2.5x single)", pStacked > pStart * 2.5);
+
+            // Save / load JSON persistence round-trip
+            try {
+                Path tmpDir = Files.createTempDirectory("manhattan-deathmem-test");
+                Path file = tmpDir.resolve("world.json");
+                mem.save(file);
+                DeathMemory reloaded = new DeathMemory();
+                reloaded.load(file);
+                DeathMemory.DeathField rf = reloaded.snapshot(overworld, t0 + 60_000L);
+                same("reloaded death site penalty matches", rf.penaltyAt(42, 64, 0), f2.penaltyAt(42, 64, 0));
+                Files.deleteIfExists(file);
+                Files.deleteIfExists(tmpDir);
+            } catch (Exception e) {
+                fails++;
+                System.out.println("FAIL DeathMemory save/load threw: " + e.getMessage());
+            }
+
+            // 3. A* routes AROUND remembered death corridor, yet still reaches goal inside it if required
+            GridWorldSnapshot arena = GridWorldSnapshot.builder(0, 0, 0, 50, 4, 34)
+                    .fillFloor(0, BlockKind.SOLID)
+                    .build();
+            DeathMemory routeMem = new DeathMemory();
+            routeMem.recordTrailPosition(overworld, 10, 1, 4);
+            routeMem.recordTrailPosition(overworld, 18, 1, 4);
+            routeMem.recordDeath(overworld, 25, 1, 4, t0);
+            CalculationContext deathCtx = CalculationContext.builder()
+                    .allowBreak(false)
+                    .allowPlace(false)
+                    .deathField(routeMem.snapshot(overworld, t0))
+                    .build();
+
+            PlanResult avoidPath = planner.planSync(arena, deathCtx, new BlockPos(0, 1, 4), GoalSpec.exact(new BlockPos(50, 1, 4)));
+            assertTrue("death detour path complete", avoidPath.isComplete());
+            assertTrue("routes around death site instead of walking through (25, 1, 4)",
+                    avoidPath.waypoints().stream().noneMatch(wp -> wp.getX() == 25 && wp.getZ() == 4));
+            assertTrue("swings wide to avoid high death heat",
+                    avoidPath.waypoints().stream().anyMatch(wp -> wp.getZ() >= 18));
+
+            PlanResult reachInside = planner.planSync(arena, deathCtx, new BlockPos(0, 1, 4), GoalSpec.exact(new BlockPos(25, 1, 4)));
+            assertTrue("goal inside death zone remains reachable (soft cost, not hard block)", reachInside.isComplete());
+
+            CalculationContext partialDeathCtx = CalculationContext.builder()
+                    .allowBreak(false)
+                    .allowPlace(false)
+                    .deathField(routeMem.snapshot(overworld, t0))
+                    .maxNodesExpanded(600)
+                    .build();
+            PlanResult partialAvoid = planner.planSync(arena, partialDeathCtx, new BlockPos(0, 1, 4), GoalSpec.xz(200, 4));
+            assertTrue("partial path is PARTIAL and has nodes", partialAvoid.isPartial() && partialAvoid.hasPath());
+            assertTrue("partial plan steers outward instead of straight into death core",
+                    partialAvoid.waypoints().stream().anyMatch(wp -> wp.getZ() >= 6)
+                            && partialAvoid.waypoints().stream().noneMatch(wp -> wp.getX() == 25 && wp.getZ() == 4));
+        } finally {
+            planner.shutdown();
+        }
     }
 
     // ------------------------------------------------------------------ Assertion Helpers

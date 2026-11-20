@@ -222,6 +222,16 @@ public class SurvivalKitMod implements ClientModInitializer {
         }
         if (deadTicks++ == 0) {
             recovery.onDeath();
+            if (lastAlivePos != null && mc.level != null) {
+                String dim = mc.level.dimension().identifier().toString();
+                var summary = dev.midtown.exec.MidtownEngine.recordDeath(dim, lastAlivePos);
+                if (summary != null) {
+                    Util.msg("Remembered death at " + lastAlivePos.toShortString()
+                            + " (+" + summary.breadcrumbs() + " path markers, "
+                            + summary.nearbyDeaths() + " recent death" + (summary.nearbyDeaths() == 1 ? "" : "s")
+                            + " nearby) - future paths will avoid this route.");
+                }
+            }
             String where = lastAlivePos == null ? "" : " at " + lastAlivePos.toShortString();
             Session.count("deaths");
             Util.warn("died", "You died" + where + ". " + (cfg.respawn

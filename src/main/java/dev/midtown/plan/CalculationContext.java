@@ -130,6 +130,7 @@ public final class CalculationContext {
     private final Set<Long> blacklistedEdges;
     private final EdgeBlacklistPredicate dynamicEdgeBlacklist;
     private final EnumMap<BlockKind, Integer> defaultBreakTicksByKind;
+    private final DeathMemory.DeathField deathField;
 
     private final List<ToolEntry> tools;
     private final float digSpeedMultiplier;
@@ -161,6 +162,7 @@ public final class CalculationContext {
                 ? Set.of() : Collections.unmodifiableSet(new HashSet<>(b.blacklistedEdges));
         this.dynamicEdgeBlacklist = b.dynamicEdgeBlacklist;
         this.defaultBreakTicksByKind = new EnumMap<>(b.defaultBreakTicksByKind);
+        this.deathField = b.deathField;
         this.tools = List.copyOf(b.tools);
         this.digSpeedMultiplier = b.digSpeedMultiplier;
     }
@@ -305,6 +307,10 @@ public final class CalculationContext {
 
     public HazardCost hazardCost() {
         return hazardCost;
+    }
+
+    public DeathMemory.DeathField deathField() {
+        return deathField;
     }
 
     public double horizontalTicksPerBlock() {
@@ -472,6 +478,7 @@ public final class CalculationContext {
         private double placeCostTicks = 6.0;
         private double parkourCostPenalty = 2.0;  // distance and gap * 1.5 are paid on top; 6 made a fall + pillar out cheaper
         private HazardCost hazardCost = HazardCost.DEFAULT;
+        private DeathMemory.DeathField deathField = DeathMemory.DeathField.EMPTY;
         private final List<ProtectedRegion> protectedRegions = new ArrayList<>();
         private final Set<Block> disallowedBreakBlocks = new HashSet<>();
         private final Set<BlockKind> disallowedBreakKinds = new HashSet<>();
@@ -541,6 +548,10 @@ public final class CalculationContext {
         public Builder parkourCostPenalty(double v) { this.parkourCostPenalty = v; return this; }
         public Builder hazardCost(HazardCost v) {
             this.hazardCost = Objects.requireNonNull(v, "hazardCost");
+            return this;
+        }
+        public Builder deathField(DeathMemory.DeathField v) {
+            this.deathField = v != null ? v : DeathMemory.DeathField.EMPTY;
             return this;
         }
         public Builder addProtectedRegion(ProtectedRegion region) {

@@ -37,6 +37,7 @@ public final class WorldSnapshot implements BlockView {
     public static final int DEFAULT_CHUNK_RADIUS = 12;
 
     private static final Map<BlockState, BlockKind> KIND_CACHE = new ConcurrentHashMap<>(1024);
+    private static final Map<BlockState, Boolean> CAVE_ROOF_CACHE = new ConcurrentHashMap<>(1024);
 
     private final int minY;
     private final int maxY;
@@ -203,6 +204,44 @@ public final class WorldSnapshot implements BlockView {
         if (container == null) return BlockKind.AIR;
         BlockState state = container.get(x & 15, y & 15, z & 15);
         return classify(state);
+    }
+
+    @Override
+    public boolean isCaveCovered(int x, int fromY, int z, int maxScan) {
+        if (maxScan <= 0 || fromY >= maxY) return false;
+        PalettedContainer<BlockState>[] sections = chunks.get(ChunkPos.pack(x >> 4, z >> 4));
+        if (sections == null) return false;
+        int top = Math.min(maxY, fromY + maxScan);
+        int cy = Math.max(minY, fromY);
+        int lx = x & 15;
+        int lz = z & 15;
+        while (cy < top) {
+            int secIdx = (cy >> 4) - minSectionY;
+            if (secIdx < 0 || secIdx >= sectionsCount) break;
+            PalettedContainer<BlockState> container = sections[secIdx];
+            if (container == null) {
+                cy = ((cy >> 4) + 1) << 4;
+                continue;
+            }
+            int secTop = Math.min(top, ((cy >> 4) + 1) << 4);
+            while (cy < secTop) {
+                if (isCaveRoof(container.get(lx, cy & 15, lz))) {
+                    return true;
+                }
+                cy++;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isCaveRoof(BlockState state) {
+        Boolean cached = CAVE_ROOF_CACHE.get(state);
+        if (cached != null) return cached;
+        boolean roof = !state.isAir()
+                && !state.is(BlockTags.LEAVES)
+                && !state.getCollisionShape(EmptyBlockGetter.INSTANCE, BlockPos.ZERO).isEmpty();
+        CAVE_ROOF_CACHE.putIfAbsent(state, roof);
+        return roof;
     }
 
     @Override

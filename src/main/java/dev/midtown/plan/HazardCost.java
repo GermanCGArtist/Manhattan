@@ -9,7 +9,7 @@ package dev.midtown.plan;
  */
 public final class HazardCost {
 
-    private static final int COVER_SCAN = 12;
+    private static final int COVER_SCAN = 64;
 
     public static final HazardCost DEFAULT = new Builder().build();
 
@@ -74,16 +74,21 @@ public final class HazardCost {
             cost += cactusCost;
         }
 
-        // Open space with solid cover overhead (a cave): dark, mobs spawn, lava and drops hide in it. Walking
-        // there is costed up so the planner takes the surface when it is a fair detour. Cells still full of
-        // stone (about to be dug) are not open, so a fresh tunnel is not charged.
-        if (caveNodePenalty > 0.0 && feet.isPassable() && head.isPassable() && isCovered(world, x, y + 2, z)) {
+        // Open space with solid non-leaf roof overhead (a cave): dark, mobs spawn, lava and drops hide in it.
+        // Walking there is costed up so the planner takes the surface when it is a fair detour.
+        if (caveNodePenalty > 0.0 && feet.isPassable() && head.isPassable()
+                && world.isCaveCovered(x, y + 2, z, COVER_SCAN)) {
             cost += caveNodePenalty;
         }
 
         // Unprotected cliff / lava-rim edge penalty.
         if (cliffEdgePenalty > 0.0 && below.canStandOn()) {
             cost += cliffEdgePenalty(world, ctx, x, y, z);
+        }
+
+        DeathMemory.DeathField deathField = ctx.deathField();
+        if (deathField != null && !deathField.isEmpty()) {
+            cost += deathField.penaltyAt(x, y, z);
         }
 
         return cost;
@@ -168,16 +173,6 @@ public final class HazardCost {
         };
     }
 
-    /** True if a solid block sits within {@link #COVER_SCAN} blocks above {@code (x, fromY, z)}: no open sky. */
-    private static boolean isCovered(BlockView world, int x, int fromY, int z) {
-        int top = Math.min(world.maxY(), fromY + COVER_SCAN);
-        for (int cy = fromY; cy < top; cy++) {
-            if (!world.isLoaded(x, cy, z)) return false;
-            if (world.hasSolidCollision(x, cy, z)) return true;
-        }
-        return false;
-    }
-
     private static boolean isCactusNear(BlockView world, int x, int y, int z) {
         return world.kindAt(x + 1, y, z) == BlockKind.CACTUS
                 || world.kindAt(x - 1, y, z) == BlockKind.CACTUS
@@ -234,6 +229,10 @@ public final class HazardCost {
         return cliffEdgePenalty;
     }
 
+    public double caveNodePenalty() {
+        return caveNodePenalty;
+    }
+
     public static final class Builder {
         private double lavaCost = Double.POSITIVE_INFINITY;
         private double fireCost = Double.POSITIVE_INFINITY;
@@ -249,7 +248,7 @@ public final class HazardCost {
         private double lavaAdjacentBreakPenalty = Double.POSITIVE_INFINITY;
         private double waterAdjacentBreakPenalty = 100.0;
         private double fallingAboveBreakPenalty = 25.0;
-        private double caveNodePenalty = 6.0;  // a walked block costs ~4.6 ticks, so a cave block costs about 2.3x
+        private double caveNodePenalty = 20.0;  // avoid unlit covered caves in favor of surface detours
 
         public Builder lavaCost(double v) { this.lavaCost = v; return this; }
         public Builder fireCost(double v) { this.fireCost = v; return this; }

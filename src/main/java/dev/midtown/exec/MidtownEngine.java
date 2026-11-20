@@ -10,6 +10,7 @@ import dev.midtown.exec.MidtownCoordinator.ResumeOutcome;
 import dev.midtown.exec.MidtownCoordinator.TickAction;
 import dev.midtown.plan.BlockKind;
 import dev.midtown.plan.CalculationContext;
+import dev.midtown.plan.DeathMemory;
 import dev.midtown.plan.MidtownPlanner;
 import dev.midtown.plan.MoveEdge;
 import dev.midtown.plan.PlanResult;
@@ -21,6 +22,7 @@ import net.minecraft.world.level.block.Block;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -32,6 +34,7 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Supplier;
 
 /**
  * {@link PathEngine} implementation for Midtown.
@@ -45,6 +48,11 @@ public final class MidtownEngine implements PathEngine {
     private static final Logger LOGGER = LoggerFactory.getLogger(MidtownEngine.class);
     /** {@code -Dmanhattan.midtownTrace=true}: one log line per moving tick (node, player, keys) for debugging. */
     private static final boolean TRACE = Boolean.getBoolean("manhattan.midtownTrace");
+
+    private static final DeathMemory DEATH_MEMORY = new DeathMemory();
+    private static volatile Path deathStorageDir;
+    private static volatile Supplier<String> deathWorldSupplier;
+    private static String loadedDeathWorld;
 
     private final MidtownCoordinator coordinator;
     private final MidtownExecutor executor;
@@ -256,6 +264,14 @@ public final class MidtownEngine implements PathEngine {
             executor.releaseAllInputs(mc);
             checkStatusTransition();
             return;
+        }
+        if (mc.level != null && !player.isDeadOrDying()) {
+            ensureDeathMemoryLoaded();
+            DEATH_MEMORY.recordTrailPosition(
+                    mc.level.dimension().identifier().toString(),
+                    player.getBlockX(),
+                    player.getBlockY(),
+                    player.getBlockZ());
         }
 
         CompletableFuture<PlanResult> future = this.inFlightPlan;
@@ -585,6 +601,7 @@ public final class MidtownEngine implements PathEngine {
                 .allowBreak(allowBreak)
                 .allowPlace(allowPlace)
                 .allowParkourPlace(allowParkourPlace)
+                .deathField(currentDeathField())
                 .dynamicEdgeBlacklist((fx, fy, fz, tx, ty, tz) ->
                         coordinator.edgeTracker().isBlacklisted(
                                 new BlockPos(fx, fy, fz),
@@ -841,5 +858,76 @@ public final class MidtownEngine implements PathEngine {
             case "itemSaverThreshold" -> Integer.toString(itemSaverThreshold);
             default -> null;
         };
+    }
+
+    // ------------------------------------------------------------------ Death Memory Integration
+
+    public static synchronized void configureDeathStorage(Path dir, Supplier<String> worldSupplier) {
+        deathStorageDir = dir;
+        deathWorldSupplier = worldSupplier;
+        loadedDeathWorld = null;
+        ensureDeathMemoryLoaded();
+    }
+
+    public static synchronized DeathMemory.RecordSummary recordDeath(String dimension, BlockPos pos) {
+        if (pos == null) return null;
+        ensureDeathMemoryLoaded();
+        DeathMemory.RecordSummary summary = DEATH_MEMORY.recordDeath(
+                dimension, pos.getX(), pos.getY(), pos.getZ(), System.currentTimeMillis());
+        saveDeathMemory();
+        LOGGER.info("[MidtownEngine] Recorded death at {} (+{} breadcrumbs, {} nearby) in {}",
+                pos.toShortString(), summary.breadcrumbs(), summary.nearbyDeaths(), dimension);
+        return summary;
+    }
+
+    public static synchronized List<DeathMemory.Record> recentDeathSites(String dimension) {
+        ensureDeathMemoryLoaded();
+        return DEATH_MEMORY.recentDeathSites(dimension, System.currentTimeMillis());
+    }
+
+    public static synchronized void clearDeaths() {
+        ensureDeathMemoryLoaded();
+        DEATH_MEMORY.clearAll();
+        saveDeathMemory();
+    }
+
+    private static synchronized DeathMemory.DeathField currentDeathField() {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc == null || mc.level == null) return DeathMemory.DeathField.EMPTY;
+        ensureDeathMemoryLoaded();
+        return DEATH_MEMORY.snapshot(mc.level.dimension().identifier().toString(), System.currentTimeMillis());
+    }
+
+    private static synchronized void ensureDeathMemoryLoaded() {
+        Path dir = deathStorageDir;
+        if (dir == null) return;
+        String world = resolveDeathWorld();
+        if (world.equals(loadedDeathWorld)) return;
+        loadedDeathWorld = world;
+        DEATH_MEMORY.load(dir.resolve(world + ".json"));
+    }
+
+    private static synchronized void saveDeathMemory() {
+        Path dir = deathStorageDir;
+        if (dir == null) return;
+        String world = loadedDeathWorld != null ? loadedDeathWorld : resolveDeathWorld();
+        loadedDeathWorld = world;
+        DEATH_MEMORY.save(dir.resolve(world + ".json"));
+    }
+
+    private static String resolveDeathWorld() {
+        Supplier<String> sup = deathWorldSupplier;
+        String raw = null;
+        if (sup != null) {
+            try {
+                raw = sup.get();
+            } catch (Throwable ignored) {
+            }
+        }
+        if (raw == null || raw.isBlank()) return "default";
+        String stem = raw.trim().replaceAll("[^A-Za-z0-9._-]+", "_");
+        while (stem.startsWith(".")) stem = stem.substring(1);
+        stem = stem.replaceAll("^_+|_+$", "");
+        return stem.isEmpty() ? "default" : stem;
     }
 }
