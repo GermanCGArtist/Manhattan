@@ -50,6 +50,13 @@ final class Alerts {
         if (PlayerView.get().freeSlots() == 0) {
             out.add(new Alert(Level.INFO, "Inventory full", "", -6));
         }
+        var tel = dev.midtown.api.RuntimeBus.telemetrySnapshot();
+        if (!tel.bottlenecks().isEmpty()) {
+            var top = tel.bottlenecks().get(0);
+            Level lvl = "ERROR".equals(top.severity()) ? Level.ERROR
+                    : "WARN".equals(top.severity()) ? Level.WARN : Level.INFO;
+            out.add(new Alert(lvl, top.title(), top.detail(), -7));
+        }
         return out;
     }
 

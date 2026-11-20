@@ -327,7 +327,11 @@ final class Shell {
             float w = ImGui.getContentRegionAvailX();
             float h = ImGui.getContentRegionAvailY();
             float half = (w - gap) / 2f;
-            if (Widgets.beginTile("##alertsM", half, h)) { Widgets.label("Alerts"); Widgets.alerts(snap, 4); }
+            if (Widgets.beginTile("##alertsM", half, h)) {
+                Widgets.alertsHeader();
+                Widgets.bottlenecksBar();
+                Widgets.alerts(snap, 3);
+            }
             Widgets.endTile();
             ImGui.sameLine(0f, gap);
             if (Widgets.beginTile("##logM", half, h)) Widgets.logTile();

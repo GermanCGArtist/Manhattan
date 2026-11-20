@@ -771,6 +771,14 @@ public class QueueMod implements ClientModInitializer {
         }
     }
 
+    public static Path projectGameDir() {
+        try {
+            return FabricLoader.getInstance().getGameDir();
+        } catch (Throwable ignored) {
+            return Path.of(".");
+        }
+    }
+
     public static String projectCaptureText() {
         try {
             Path f = Capture.file();

@@ -2,6 +2,7 @@ package dev.baritonequeue;
 
 import dev.baritonequeue.project.GameProjectRuntime;
 import dev.midtown.api.RuntimeBus;
+import dev.midtown.api.RuntimeEvent;
 import net.minecraft.client.Minecraft;
 
 import java.util.ArrayList;
@@ -290,6 +291,12 @@ public final class Runner {
         if (!subScript) {
             String resume = Jobs.startRun(scriptName);   // the saved ledger of this world: what an earlier run finished
             if (resume != null) Util.msg(resume);
+            java.nio.file.Path telDir = (mc != null) ? QueueMod.projectGameDir().resolve("manhattan-telemetry") : null;
+            RuntimeBus.startRunTelemetry(
+                    telDir,
+                    "script-" + (scriptName == null || scriptName.isBlank() ? "main" : scriptName) + "-" + System.currentTimeMillis());
+            RuntimeBus.emit(RuntimeEvent.Type.RUN_START, RuntimeEvent.Category.SYSTEM,
+                    "Runner", "Started script " + (scriptName == null ? "main" : scriptName));
         }
         globals = new Ast.Env(Builtins.root());
         globals.define("chunk_needs", Values.newMap());
@@ -345,9 +352,16 @@ public final class Runner {
         long elapsedMs = System.currentTimeMillis() - startedAt;
         boolean wasSub = projectSubScript;
         lastFailure = why;
+        if (!wasSub && why != null && !why.toLowerCase(java.util.Locale.ROOT).contains("stopped")) {
+            IncidentBundle.captureAndWrite("script_halted", why);
+        }
         running = false;
         externallySuspended = false;
         endAll();
+        if (!wasSub) {
+            RuntimeBus.emit(RuntimeEvent.Type.RUN_END, RuntimeEvent.Category.SYSTEM, "Runner", why == null ? "Halted" : why);
+            RuntimeBus.stopRunTelemetry();
+        }
         Util.warn("queue", why);
         if (!wasSub) emitBenchmark(false, elapsedMs);
     }
@@ -408,6 +422,16 @@ public final class Runner {
             Fiber f = active();
             if (f != null && f.actionText != null && f.action != null) RuntimeBus.setCurrentStep(f.actionText);   // BuildTools tells scaffolding from real blocks with it
             else RuntimeBus.setCurrentStep(null);
+            if (!projectSubScript) {
+                RuntimeEvent.Category cat = !stack.isEmpty()
+                        ? RuntimeEvent.Category.SURVIVAL
+                        : dev.midtown.api.EngineSelector.current().status() == dev.midtown.api.EngineStatus.STUCK
+                        ? RuntimeEvent.Category.STUCK
+                        : dev.midtown.api.EngineSelector.current().status() == dev.midtown.api.EngineStatus.PLANNING
+                        ? RuntimeEvent.Category.REPLAN
+                        : RuntimeEvent.Category.WORK;
+                RuntimeBus.sampleCategory(cat);
+            }
         } else if (!projectRunning) {
             RuntimeBus.setScriptActive(false);
             RuntimeBus.setCurrentStep(null);
@@ -554,9 +578,16 @@ public final class Runner {
         if (!(t instanceof Values.ScriptError)) t.printStackTrace();
         boolean wasSub = projectSubScript;
         lastFailure = "Line " + line + ": " + text;
+        if (!wasSub) {
+            IncidentBundle.captureAndWrite("script_error", lastFailure);
+        }
         running = false;
         externallySuspended = false;
         endAll();
+        if (!wasSub) {
+            RuntimeBus.emit(RuntimeEvent.Type.RUN_END, RuntimeEvent.Category.SYSTEM, "Runner", "ERROR: " + lastFailure);
+            RuntimeBus.stopRunTelemetry();
+        }
         Util.msg("PROBLEM in line " + line + (line > 0 && line <= lines.length ? " (" + lineText(line) + ")" : "") + ": " + text);
         Util.msg("The script stopped. Fix it and press Run again.");
         if (!wasSub && Config.cfg.logoffOnError) {
@@ -616,6 +647,8 @@ public final class Runner {
         Fiber f = new Fiber("queue-on-" + h.on.line, () -> Ast.run(h.on.body, holder[0], env));
         holder[0] = new Interp(this, f);
         stack.push(new Frame(h, f, holder[0]));
+        RuntimeBus.emit(RuntimeEvent.Type.INTERRUPT_ENTER, RuntimeEvent.Category.SURVIVAL,
+                "Runner", "on " + lineText(h.on.line));
         Util.msg("'on' in line " + h.on.line + " (" + lineText(h.on.line) + ") fired.");
     }
 

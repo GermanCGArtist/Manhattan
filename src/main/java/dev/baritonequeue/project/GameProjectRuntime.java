@@ -1,9 +1,11 @@
 package dev.baritonequeue.project;
 
 import dev.baritonequeue.Areas;
+import dev.baritonequeue.IncidentBundle;
 import dev.baritonequeue.QueueMod;
 import dev.midtown.api.EngineSelector;
 import dev.midtown.api.RuntimeBus;
+import dev.midtown.api.RuntimeEvent;
 import dev.midtown.body.BodyController;
 import dev.midtown.body.HotbarController;
 import net.minecraft.client.Minecraft;
@@ -82,6 +84,17 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
         if (scheduler.isRunning()) {
             PriorityScheduler.Telemetry tel = scheduler.telemetry();
             RuntimeBus.setCurrentStep(tel.detail());
+            RuntimeEvent.Category cat = switch (tel.lane()) {
+                case P0_EMERGENCY, P1_COMBAT, P2_VITALS -> RuntimeEvent.Category.SURVIVAL;
+                case P3_LOGISTICS -> RuntimeEvent.Category.LOGISTICS;
+                case P4_WORK -> EngineSelector.current().status() == dev.midtown.api.EngineStatus.STUCK
+                        ? RuntimeEvent.Category.STUCK
+                        : EngineSelector.current().status() == dev.midtown.api.EngineStatus.PLANNING
+                        ? RuntimeEvent.Category.REPLAN
+                        : RuntimeEvent.Category.WORK;
+                default -> isRecovering() ? RuntimeEvent.Category.WAIT : RuntimeEvent.Category.WORK;
+            };
+            RuntimeBus.sampleCategory(cat);
         }
     }
 
@@ -203,6 +216,11 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
         RuntimeBus.setPaused(false);
         RuntimeBus.setScriptActive(true);
         RuntimeBus.setRecoveryGaveUpReason(null);
+        RuntimeBus.startRunTelemetry(
+                QueueMod.projectGameDir().resolve("manhattan-telemetry"),
+                "project-" + project.id + "-" + System.currentTimeMillis());
+        RuntimeBus.emit(RuntimeEvent.Type.RUN_START, RuntimeEvent.Category.SYSTEM,
+                "GameProjectRuntime", "Started project " + project.id + " (" + project.tasks.size() + " tasks)");
         dev.survivalkit.Api.onBeforeDisconnect = () -> {
             if (running()) stopQueue("Disconnected.");
         };
@@ -212,7 +230,14 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
     }
 
     public void stopQueue(String reason) {
+        boolean abnormal = reason != null && !reason.toLowerCase(Locale.ROOT).contains("stopped by user");
+        if (abnormal && scheduler.isRunning()) {
+            IncidentBundle.captureAndWrite("queue_halted", reason);
+        }
         scheduler.stop(reason);
+        RuntimeBus.emit(RuntimeEvent.Type.RUN_END, RuntimeEvent.Category.SYSTEM,
+                "GameProjectRuntime", reason == null ? "Stopped" : reason);
+        RuntimeBus.stopRunTelemetry();
         cleanupAfterQueueEnd();
     }
 
@@ -645,6 +670,9 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
             } else {
                 baseTripFailStreak = Math.min(6, baseTripFailStreak + 1);
                 baseTripCooldownTicks = Math.min(20 * 300, 20 * 30 * (1 << (baseTripFailStreak - 1)));
+                RuntimeBus.emit(RuntimeEvent.Type.RESTOCK_EXHAUSTED, RuntimeEvent.Category.LOGISTICS,
+                        "GameProjectRuntime",
+                        "Base trip incomplete (streak " + baseTripFailStreak + ", backoff " + (baseTripCooldownTicks / 20) + "s)");
                 QueueMod.projectLog("Base trip did not clear all needs; backing off "
                         + (baseTripCooldownTicks / 20) + "s.");
             }
@@ -657,6 +685,8 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
         task.ensureInitialized();
         Project proj = activeProject;
         if (proj == null) return null;
+        RuntimeBus.emit(RuntimeEvent.Type.TASK_START, RuntimeEvent.Category.WORK,
+                "GameProjectRuntime", task.kind + ": " + task.displayLabel());
 
         return switch (task.kind) {
             case FILL_WATER -> startFillWaterTask(proj, task);
@@ -743,6 +773,12 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
 
     @Override
     public void onQueueComplete(boolean success, String summary, boolean logoff) {
+        if (!success) {
+            IncidentBundle.captureAndWrite("queue_failed", summary);
+        }
+        RuntimeBus.emit(RuntimeEvent.Type.RUN_END, RuntimeEvent.Category.SYSTEM,
+                "GameProjectRuntime", (success ? "SUCCESS: " : "FAILED: ") + summary);
+        RuntimeBus.stopRunTelemetry();
         cleanupAfterQueueEnd();
         String stamped = summary + "|" + System.currentTimeMillis();
         RuntimeBus.setFinishedSummary(stamped);

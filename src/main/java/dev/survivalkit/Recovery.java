@@ -106,6 +106,25 @@ final class Recovery {
         }
         deaths.removeIf(t -> now - t > DEATH_WINDOW);
         deaths.add(now);
+        try {
+            var mc = net.minecraft.client.Minecraft.getInstance();
+            if (mc != null && mc.player != null) {
+                var bp = mc.player.blockPosition();
+                dev.midtown.api.RuntimeBus.emitAt(
+                        dev.midtown.api.RuntimeEvent.Type.DEATH,
+                        dev.midtown.api.RuntimeEvent.Category.SURVIVAL,
+                        "Recovery",
+                        "death #" + deaths.size() + " in 10m",
+                        bp.getX(), bp.getY(), bp.getZ());
+            } else {
+                dev.midtown.api.RuntimeBus.emit(
+                        dev.midtown.api.RuntimeEvent.Type.DEATH,
+                        dev.midtown.api.RuntimeEvent.Category.SURVIVAL,
+                        "Recovery",
+                        "death #" + deaths.size() + " in 10m");
+            }
+        } catch (Throwable ignored) {
+        }
         if (cfg.maxDeaths > 0 && deaths.size() > cfg.maxDeaths) {   // cfg.maxDeaths 0: never stop
             if (queueMode) dev.midtown.api.RuntimeBus.setRecoveryGaveUpReason("you died " + deaths.size() + " times within 10 minutes - have a look at what is killing you.");
             Util.warn("deathloop", "You died " + deaths.size() + " times within 10 minutes, so I will not resume the task by itself. "

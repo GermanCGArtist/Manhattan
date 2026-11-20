@@ -466,6 +466,88 @@ final class Widgets {
         return 0x808080 | (h & 0x3f3f3f);
     }
 
+    private static long incidentCopiedAtMs = 0L;
+
+    static void alertsHeader() {
+        float s = s();
+        label("Alerts & Telemetry");
+        boolean hasIncident = IncidentBundle.lastIncidentJson() != null;
+        boolean justCopied = System.currentTimeMillis() - incidentCopiedAtMs < 2500L;
+        String btnText = justCopied ? "Copied!" : (hasIncident ? "Copy Incident" : "Snapshot");
+        float bw = ImGui.calcTextSizeX(btnText) + 2f * ImGui.getStyle().getFramePaddingX();
+        ImGui.sameLine(ImGui.getContentRegionMaxX() - bw);
+        ImGui.setCursorPosY(ImGui.getCursorPosY() - 4f * s);
+        if (button(btnText + "##copyIncident", 3)) {
+            if (!hasIncident) {
+                IncidentBundle.captureAndWrite("manual_snapshot", "User requested snapshot from Monitor");
+            }
+            String json = IncidentBundle.lastIncidentJson();
+            if (json != null) {
+                ImGui.setClipboardText(json);
+                incidentCopiedAtMs = System.currentTimeMillis();
+            }
+        }
+        if (ImGui.isItemHovered()) {
+            var path = IncidentBundle.lastIncidentPath();
+            ImGui.setTooltip(path != null
+                    ? "Copy latest incident bundle JSON to clipboard\n(" + path.getFileName() + ")"
+                    : "Capture a diagnostic incident bundle JSON and copy to clipboard");
+        }
+    }
+
+    /** Compact live time-budget bar (Work / Logistics / Survival / Stuck-Replan) + event counters. */
+    static void bottlenecksBar() {
+        var snap = dev.midtown.api.RuntimeBus.telemetrySnapshot();
+        long total = snap.totalMs();
+        boolean hasEvents = snap.replanCount() > 0 || snap.stuckCount() > 0 || snap.deathCount() > 0 || snap.interruptCount() > 0;
+        if (total <= 0L && !hasEvents) return;
+
+        float s = s();
+        float w = ImGui.getContentRegionAvailX();
+        float barH = 7f * s;
+        float x = ImGui.getCursorScreenPosX();
+        float y = ImGui.getCursorScreenPosY();
+        ImDrawList dl = ImGui.getWindowDrawList();
+
+        if (total > 0L) {
+            double work = snap.share(dev.midtown.api.RuntimeEvent.Category.WORK)
+                    + snap.share(dev.midtown.api.RuntimeEvent.Category.WALK);
+            double logi = snap.share(dev.midtown.api.RuntimeEvent.Category.LOGISTICS);
+            double surv = snap.share(dev.midtown.api.RuntimeEvent.Category.SURVIVAL);
+            double stuck = snap.share(dev.midtown.api.RuntimeEvent.Category.STUCK)
+                    + snap.share(dev.midtown.api.RuntimeEvent.Category.REPLAN);
+
+            dl.addRectFilled(x, y, x + w, y + barH, u32(SLOT), 3f);
+            float cx = x;
+            cx = drawSeg(dl, cx, y, barH, (float) (w * work), OK);
+            cx = drawSeg(dl, cx, y, barH, (float) (w * logi), ACCENT);
+            cx = drawSeg(dl, cx, y, barH, (float) (w * surv), WARN);
+            drawSeg(dl, cx, y, barH, (float) (w * stuck), ERR);
+            ImGui.dummy(w, barH + 3f * s);
+
+            UiTheme.push(UiTheme.small);
+            String legend = "Work " + Math.round(work * 100) + "%  ·  Base " + Math.round(logi * 100)
+                    + "%  ·  Surv " + Math.round(surv * 100) + "%  ·  Stuck " + Math.round(stuck * 100) + "%";
+            UiTheme.textColored(DIM, fit(legend, w));
+            ImGui.popFont();
+        }
+        if (hasEvents) {
+            UiTheme.push(UiTheme.small);
+            String counts = "replans " + snap.replanCount() + " · stuck " + snap.stuckCount()
+                    + " · interrupts " + snap.interruptCount()
+                    + (snap.deathCount() > 0 ? " · deaths " + snap.deathCount() : "");
+            UiTheme.textColored(snap.stuckCount() >= 4 || snap.deathCount() > 0 ? WARN : DIM, fit(counts, w));
+            ImGui.popFont();
+        }
+        ImGui.dummy(1f, 3f * s);
+    }
+
+    private static float drawSeg(ImDrawList dl, float x, float y, float h, float segW, int col) {
+        if (segW < 1f) return x;
+        dl.addRectFilled(x, y, x + segW, y + h, u32(col), 2f);
+        return x + segW;
+    }
+
     static void alerts(ProgressModel.Snapshot snap, int max) {
         List<Alerts.Alert> list = Alerts.list(snap);
         if (list.isEmpty()) {

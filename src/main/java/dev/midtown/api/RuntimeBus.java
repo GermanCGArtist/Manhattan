@@ -1,11 +1,22 @@
 package dev.midtown.api;
 
+import java.io.BufferedWriter;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -36,6 +47,15 @@ public final class RuntimeBus {
     private static volatile boolean survivalKitBusy;
     private static volatile boolean buildToolsBusy;
     private static volatile boolean loadChestBusy;
+
+    private static final int MAX_EVENTS = 512;
+    private static final Object TELEMETRY_LOCK = new Object();
+    private static final ArrayDeque<RuntimeEvent> EVENT_RING = new ArrayDeque<>(MAX_EVENTS);
+    private static final AtomicLong EVENT_SEQ = new AtomicLong(0L);
+    private static final TelemetryProfiler PROFILER = new TelemetryProfiler();
+    private static volatile String activeRunId;
+    private static volatile Path activeTelemetryFile;
+    private static BufferedWriter telemetryWriter;
 
     // ------------------------------------------------------------------ script & step state
 
@@ -162,6 +182,7 @@ public final class RuntimeBus {
     public static void requestHalt(String reason) {
         if (reason != null && !reason.isBlank()) {
             HALT_REASON.set(reason);
+            emit(RuntimeEvent.Type.HALT, RuntimeEvent.Category.SYSTEM, "RuntimeBus", reason);
         }
     }
 
@@ -244,6 +265,185 @@ public final class RuntimeBus {
         loadChestBusy = busy;
     }
 
+    // ------------------------------------------------------------------ structured telemetry & JSONL stream
+
+    /**
+     * Begins a new telemetry run: clears prior run profiler counters, sets {@code runId}, and opens
+     * {@code <telemetryDir>/<sanitizedRunId>.jsonl} if {@code telemetryDir} is non-null.
+     */
+    public static Path startRunTelemetry(Path telemetryDir, String runId) {
+        synchronized (TELEMETRY_LOCK) {
+            closeTelemetryWriterLocked();
+            PROFILER.reset();
+            String cleanId = sanitizeRunId(runId);
+            activeRunId = cleanId;
+            activeTelemetryFile = null;
+            if (telemetryDir != null) {
+                try {
+                    Files.createDirectories(telemetryDir);
+                    Path file = telemetryDir.resolve(cleanId + ".jsonl");
+                    telemetryWriter = Files.newBufferedWriter(
+                            file, StandardCharsets.UTF_8,
+                            StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+                    activeTelemetryFile = file;
+                } catch (IOException ignored) {
+                    activeTelemetryFile = null;
+                    telemetryWriter = null;
+                }
+            }
+            return activeTelemetryFile;
+        }
+    }
+
+    /** Flushes and closes the active JSONL telemetry stream, if any. */
+    public static void stopRunTelemetry() {
+        synchronized (TELEMETRY_LOCK) {
+            closeTelemetryWriterLocked();
+        }
+    }
+
+    public static String activeRunId() {
+        return activeRunId;
+    }
+
+    public static Path activeTelemetryFile() {
+        return activeTelemetryFile;
+    }
+
+    public static RuntimeEvent emit(RuntimeEvent.Type type, String source, String message) {
+        return emit(type, RuntimeEvent.defaultCategory(type), source, message, 0, 0, 0, false, 0L, null);
+    }
+
+    public static RuntimeEvent emit(RuntimeEvent.Type type, RuntimeEvent.Category category, String source, String message) {
+        return emit(type, category, source, message, 0, 0, 0, false, 0L, null);
+    }
+
+    public static RuntimeEvent emitAt(
+            RuntimeEvent.Type type,
+            RuntimeEvent.Category category,
+            String source,
+            String message,
+            int x,
+            int y,
+            int z) {
+        return emit(type, category, source, message, x, y, z, true, 0L, null);
+    }
+
+    public static RuntimeEvent emit(
+            RuntimeEvent.Type type,
+            RuntimeEvent.Category category,
+            String source,
+            String message,
+            int x,
+            int y,
+            int z,
+            boolean hasPos,
+            long durationMs,
+            Map<String, String> meta) {
+        long seq = EVENT_SEQ.incrementAndGet();
+        long ts = System.currentTimeMillis();
+        RuntimeEvent event = new RuntimeEvent(seq, ts, type, category, source, message, x, y, z, hasPos, durationMs, meta);
+        synchronized (TELEMETRY_LOCK) {
+            if (EVENT_RING.size() >= MAX_EVENTS) {
+                EVENT_RING.removeFirst();
+            }
+            EVENT_RING.addLast(event);
+            if (durationMs > 0L) {
+                PROFILER.addDuration(event.category(), durationMs);
+            }
+            if (telemetryWriter != null) {
+                try {
+                    telemetryWriter.write(event.toJsonLine());
+                    telemetryWriter.newLine();
+                    if (type == RuntimeEvent.Type.HALT
+                            || type == RuntimeEvent.Type.DEATH
+                            || type == RuntimeEvent.Type.RUN_END
+                            || type == RuntimeEvent.Type.INCIDENT_DUMP
+                            || type == RuntimeEvent.Type.RESTOCK_EXHAUSTED) {
+                        telemetryWriter.flush();
+                    }
+                } catch (IOException ignored) {
+                    closeTelemetryWriterLocked();
+                }
+            }
+        }
+        return event;
+    }
+
+    /** Samples the current tick's dominant work category into the live time-budget profiler. */
+    public static void sampleCategory(RuntimeEvent.Category category) {
+        PROFILER.sample(category, System.currentTimeMillis());
+    }
+
+    /** Deterministic overload for unit tests. */
+    public static void sampleCategoryAt(RuntimeEvent.Category category, long nowMs) {
+        PROFILER.sample(category, nowMs);
+    }
+
+    /** Returns up to {@code limit} most recent events in chronological order (oldest first). */
+    public static List<RuntimeEvent> recentEvents(int limit) {
+        if (limit <= 0) return List.of();
+        synchronized (TELEMETRY_LOCK) {
+            int size = EVENT_RING.size();
+            if (size == 0) return List.of();
+            int skip = Math.max(0, size - limit);
+            List<RuntimeEvent> out = new ArrayList<>(Math.min(size, limit));
+            int i = 0;
+            for (RuntimeEvent e : EVENT_RING) {
+                if (i++ >= skip) out.add(e);
+            }
+            return Collections.unmodifiableList(out);
+        }
+    }
+
+    /** Returns all buffered events with {@code seq > afterSeq} in chronological order. */
+    public static List<RuntimeEvent> eventsSince(long afterSeq) {
+        synchronized (TELEMETRY_LOCK) {
+            if (EVENT_RING.isEmpty()) return List.of();
+            List<RuntimeEvent> out = new ArrayList<>();
+            for (RuntimeEvent e : EVENT_RING) {
+                if (e.seq() > afterSeq) out.add(e);
+            }
+            return Collections.unmodifiableList(out);
+        }
+    }
+
+    /** Computes a live time-budget, bottleneck, and spatial hotspot snapshot from the current run. */
+    public static TelemetryProfiler.Snapshot telemetrySnapshot() {
+        List<RuntimeEvent> events;
+        synchronized (TELEMETRY_LOCK) {
+            events = new ArrayList<>(EVENT_RING);
+        }
+        return PROFILER.snapshot(events);
+    }
+
+    public static void clearEvents() {
+        synchronized (TELEMETRY_LOCK) {
+            EVENT_RING.clear();
+            PROFILER.reset();
+        }
+    }
+
+    private static void closeTelemetryWriterLocked() {
+        if (telemetryWriter != null) {
+            try {
+                telemetryWriter.flush();
+                telemetryWriter.close();
+            } catch (IOException ignored) {
+            } finally {
+                telemetryWriter = null;
+            }
+        }
+    }
+
+    private static String sanitizeRunId(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return "run-" + System.currentTimeMillis();
+        }
+        String s = raw.trim().replaceAll("[^A-Za-z0-9._-]+", "_");
+        return s.isEmpty() ? ("run-" + System.currentTimeMillis()) : s;
+    }
+
     // ------------------------------------------------------------------ reset
 
     /** Resets all runtime state to clean initial defaults. */
@@ -261,6 +461,13 @@ public final class RuntimeBus {
         survivalKitBusy = false;
         buildToolsBusy = false;
         loadChestBusy = false;
+        synchronized (TELEMETRY_LOCK) {
+            closeTelemetryWriterLocked();
+            EVENT_RING.clear();
+            PROFILER.reset();
+            activeRunId = null;
+            activeTelemetryFile = null;
+        }
     }
 
     private static Set<String> normalizeSet(Collection<String> raw) {

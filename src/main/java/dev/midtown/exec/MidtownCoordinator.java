@@ -2,6 +2,8 @@ package dev.midtown.exec;
 
 import dev.midtown.api.EngineStatus;
 import dev.midtown.api.GoalSpec;
+import dev.midtown.api.RuntimeBus;
+import dev.midtown.api.RuntimeEvent;
 import dev.midtown.exec.EdgeTracker.EdgeCheckResult;
 import dev.midtown.exec.PathNode.EdgeKey;
 import net.minecraft.core.BlockPos;
@@ -323,6 +325,13 @@ public final class MidtownCoordinator {
                     ? "Stuck on edge " + from.toShortString() + " -> " + target.pos().toShortString()
                     : "Timed out on edge " + from.toShortString() + " -> " + target.pos().toShortString();
 
+            RuntimeBus.emitAt(
+                    check == EdgeCheckResult.STUCK ? RuntimeEvent.Type.STUCK : RuntimeEvent.Type.EDGE_BLACKLIST,
+                    RuntimeEvent.Category.STUCK,
+                    "MidtownCoordinator",
+                    reason,
+                    from.getX(), from.getY(), from.getZ());
+
             TickAction replanAction = triggerReplan(playerX, playerY, playerZ, reason);
             if (replanAction instanceof TickAction.MoveTo m) {
                 return new TickAction.MoveTo(m.node(), true);
@@ -337,6 +346,12 @@ public final class MidtownCoordinator {
         replanCount++;
         LOGGER.info("[MidtownCoordinator] replan #{}: {} (player {} {} {})", replanCount, reason,
                 String.format("%.2f", playerX), String.format("%.2f", playerY), String.format("%.2f", playerZ));
+        RuntimeBus.emitAt(
+                RuntimeEvent.Type.PATH_REPLAN,
+                RuntimeEvent.Category.REPLAN,
+                "MidtownCoordinator",
+                "replan #" + replanCount + ": " + reason,
+                (int) Math.floor(playerX), (int) Math.floor(playerY), (int) Math.floor(playerZ));
         if (replanCount > maxReplans) {
             status = EngineStatus.FAILED;
             lastFailureReason = "Exceeded max replans (" + maxReplans + "): " + reason;

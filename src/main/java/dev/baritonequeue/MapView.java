@@ -149,6 +149,25 @@ final class MapView {
                 hover = p.name() + " (" + p.kind() + ")  " + p.x() + " " + p.z();
             }
         }
+        // telemetry hotspots: stuck / edge-blacklist / death markers from RuntimeBus
+        for (var hs : dev.midtown.api.RuntimeBus.telemetrySnapshot().hotspots()) {
+            if (!near(hs.x(), hs.z(), px, pz)) continue;
+            float hx = ox + (float) (hs.x() + 0.5 - cx) * scale, hz = oz + (float) (hs.z() + 0.5 - cz) * scale;
+            boolean isDeath = hs.type() == dev.midtown.api.RuntimeEvent.Type.DEATH;
+            int col = isDeath ? ERR : WARN;
+            float r = Math.min(10f, 4f + hs.count());
+            dl.addCircleFilled(hx, hz, r, u32(col, 0.25f));
+            dl.addCircle(hx, hz, r, u32(col, 0.9f), 12, 1.5f);
+            if (isDeath) {
+                dl.addLine(hx - 4f, hz - 4f, hx + 4f, hz + 4f, u32(ERR), 1.8f);
+                dl.addLine(hx + 4f, hz - 4f, hx - 4f, hz + 4f, u32(ERR), 1.8f);
+            }
+            if (Math.hypot(mx - hx, my - hz) <= r + 3f) {
+                hover = hs.type().name().toLowerCase() + " ×" + hs.count()
+                        + "  (" + hs.x() + ", " + hs.y() + ", " + hs.z() + ")"
+                        + (hs.lastMessage().isEmpty() ? "" : "\n" + hs.lastMessage());
+            }
+        }
         // player arrow: yaw 0 = south (+z), 90 = west (-x)
         float sx = ox + (float) (px - cx) * scale, sz = oz + (float) (pz - cz) * scale;
         double a = Math.toRadians(yaw);
