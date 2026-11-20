@@ -2,15 +2,39 @@ package dev.baritonequeue;
 
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
+import dev.baritonequeue.project.GameProjectRuntime;
+import dev.baritonequeue.project.PriorityScheduler;
+import dev.baritonequeue.project.Project;
+import dev.baritonequeue.project.ProjectTask;
+import dev.baritonequeue.project.TaskQueue;
+import dev.midtown.api.Area;
+import dev.midtown.api.BlockFilter;
+import dev.midtown.api.EngineSelector;
+import dev.midtown.api.EngineStatus;
+import dev.midtown.api.RuntimeBus;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommands;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
+import net.minecraft.core.BlockPos;
 import net.minecraft.resources.Identifier;
+import net.minecraft.world.item.Item;
+
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.function.IntSupplier;
+import java.util.function.Supplier;
 
 import static dev.baritonequeue.Config.cfg;
 
@@ -31,6 +55,10 @@ public class QueueMod implements ClientModInitializer {
     /** "Pick block" from the editor: the editor is closed until the player presses the key while looking at a block. */
     static boolean picking;
 
+    public static GameProjectRuntime projects() {
+        return GameProjectRuntime.instance();
+    }
+
     @Override
     public void onInitializeClient() {
         dev.midtown.api.EngineSelector.register("midtown", dev.midtown.exec.MidtownEngine::new);
@@ -44,6 +72,7 @@ public class QueueMod implements ClientModInitializer {
         capture = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.baritonequeue.capture", 75 /* GLFW_KEY_K */, category));
 
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> SchemCmd.register(dispatcher));
+        ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> registerProjectCommands(dispatcher));
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
                 dispatcher.register(ClientCommands.literal("queue")
                         .executes(ctx -> list())
@@ -383,8 +412,11 @@ public class QueueMod implements ClientModInitializer {
             if (Shell.isOpen()) ImGuiManager.closeShell();   // left the world: the title screen gets the whole window
             Capture.tick(mc);   // ends aiming
             // a dropped connection that the reconnect helper brings back: keep the script and carry on afterwards
-            if (runner.running() && (System.getProperty("survivalkit.recovering") != null || ++noPlayer < 60)) runner.holdForReconnect();
+            if (runner.running() && (RuntimeBus.isRecovering() || ++noPlayer < 60)) runner.holdForReconnect();
             else runner.reset();
+            if (GameProjectRuntime.instance().running() && !RuntimeBus.isRecovering() && noPlayer >= 60) {
+                GameProjectRuntime.instance().stopQueue("Disconnected.");
+            }
             return;
         }
         noPlayer = 0;
@@ -434,7 +466,7 @@ public class QueueMod implements ClientModInitializer {
         clear.tick();
         schem.tick();
         dev.midtown.api.EngineSelector.current().tick();
-        if (PauseWatch.paused) return;   // #pause: the script holds still
+        if (PauseWatch.isPaused()) return;   // #pause: the script and project scheduler hold still
         try {
             runner.tick();
         } catch (Throwable t) {
@@ -442,5 +474,826 @@ public class QueueMod implements ClientModInitializer {
             Util.warn("tick-error", "The script runner hit an error (" + t + "). Details are in the game log.");
             runner.reset();
         }
+        try {
+            GameProjectRuntime.instance().tick(mc);
+        } catch (Throwable t) {
+            t.printStackTrace();
+            Util.warn("project-tick-error", "The project scheduler hit an error (" + t + "). Details are in the game log.");
+            GameProjectRuntime.instance().stopQueue("Tick error: " + t);
+        }
+    }
+
+    // ------------------------------------------------------------------ /project command tree
+
+    private static void registerProjectCommands(
+            com.mojang.brigadier.CommandDispatcher<net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource> dispatcher) {
+        dispatcher.register(ClientCommands.literal("project")
+                .executes(ctx -> projectInfo())
+                .then(ClientCommands.literal("info").executes(ctx -> projectInfo()))
+                .then(ClientCommands.literal("list").executes(ctx -> {
+                    GameProjectRuntime rt = GameProjectRuntime.instance();
+                    List<String> ids = rt.projectIds();
+                    Project active = rt.activeProject();
+                    String activeId = active != null ? active.id : null;
+                    if (ids.isEmpty()) {
+                        Util.msg("No projects saved yet.");
+                        return 1;
+                    }
+                    Util.msg("Projects (" + ids.size() + "):");
+                    for (String id : ids) {
+                        Util.msg((id.equals(activeId) ? "  * " : "    ") + id);
+                    }
+                    return 1;
+                }))
+                .then(ClientCommands.literal("select")
+                        .then(ClientCommands.argument("id", StringArgumentType.word()).executes(ctx -> {
+                            String id = StringArgumentType.getString(ctx, "id");
+                            GameProjectRuntime rt = GameProjectRuntime.instance();
+                            rt.selectProject(id);
+                            Project p = rt.activeProject();
+                            Util.msg("Active project: " + (p != null ? p.name + " (" + p.id + ")" : id));
+                            return 1;
+                        })))
+                .then(ClientCommands.literal("create")
+                        .then(ClientCommands.argument("id", StringArgumentType.word())
+                                .executes(ctx -> {
+                                    String id = StringArgumentType.getString(ctx, "id");
+                                    Project p = GameProjectRuntime.instance().createProject(id, id);
+                                    Util.msg("Created project '" + p.name + "' (" + p.id + ").");
+                                    return 1;
+                                })
+                                .then(ClientCommands.argument("name", StringArgumentType.greedyString()).executes(ctx -> {
+                                    String id = StringArgumentType.getString(ctx, "id");
+                                    String name = StringArgumentType.getString(ctx, "name");
+                                    Project p = GameProjectRuntime.instance().createProject(id, name);
+                                    Util.msg("Created project '" + p.name + "' (" + p.id + ").");
+                                    return 1;
+                                }))))
+                .then(ClientCommands.literal("delete")
+                        .then(ClientCommands.argument("id", StringArgumentType.word()).executes(ctx -> {
+                            String id = StringArgumentType.getString(ctx, "id");
+                            boolean ok = GameProjectRuntime.instance().deleteProject(id);
+                            Util.msg(ok ? "Deleted project '" + id + "'." : "Could not delete project '" + id + "'.");
+                            return ok ? 1 : 0;
+                        })))
+                .then(ClientCommands.literal("set")
+                        .then(projectSetCmd("bed"))
+                        .then(projectSetCmd("tool"))
+                        .then(projectSetCmd("return"))
+                        .then(projectSetCmd("dump"))
+                        .then(projectSetCmd("scaffold")))
+                .then(ClientCommands.literal("queue")
+                        .executes(ctx -> projectQueueList())
+                        .then(ClientCommands.literal("list").executes(ctx -> projectQueueList()))
+                        .then(ClientCommands.literal("add")
+                                .then(ClientCommands.argument("kind", StringArgumentType.word())
+                                        .executes(ctx -> projectQueueAdd(StringArgumentType.getString(ctx, "kind"), null))
+                                        .then(ClientCommands.argument("target", StringArgumentType.greedyString())
+                                                .executes(ctx -> projectQueueAdd(
+                                                        StringArgumentType.getString(ctx, "kind"),
+                                                        StringArgumentType.getString(ctx, "target"))))))
+                        .then(ClientCommands.literal("move")
+                                .then(ClientCommands.argument("from", IntegerArgumentType.integer(1))
+                                        .then(ClientCommands.argument("to", IntegerArgumentType.integer(1)).executes(ctx -> {
+                                            int from = IntegerArgumentType.getInteger(ctx, "from") - 1;
+                                            int to = IntegerArgumentType.getInteger(ctx, "to") - 1;
+                                            GameProjectRuntime.instance().moveTask(from, to);
+                                            Util.msg("Moved task #" + (from + 1) + " to #" + (to + 1) + ".");
+                                            return 1;
+                                        }))))
+                        .then(ClientCommands.literal("remove")
+                                .then(ClientCommands.argument("taskId", StringArgumentType.word()).executes(ctx -> {
+                                    String id = StringArgumentType.getString(ctx, "taskId");
+                                    GameProjectRuntime.instance().removeTask(id);
+                                    Util.msg("Removed task '" + id + "'.");
+                                    return 1;
+                                })))
+                        .then(ClientCommands.literal("reset")
+                                .executes(ctx -> {
+                                    GameProjectRuntime.instance().resetQueue(null);
+                                    Util.msg("Project queue ledger reset.");
+                                    return 1;
+                                })
+                                .then(ClientCommands.argument("taskId", StringArgumentType.word()).executes(ctx -> {
+                                    String id = StringArgumentType.getString(ctx, "taskId");
+                                    GameProjectRuntime.instance().resetQueue(id);
+                                    Util.msg("Reset task '" + id + "'.");
+                                    return 1;
+                                })))
+                        .then(ClientCommands.literal("retry")
+                                .executes(ctx -> {
+                                    GameProjectRuntime.instance().retryTask(null);
+                                    Util.msg("Retried all deferred/failed project tasks.");
+                                    return 1;
+                                })
+                                .then(ClientCommands.argument("taskId", StringArgumentType.word()).executes(ctx -> {
+                                    String id = StringArgumentType.getString(ctx, "taskId");
+                                    GameProjectRuntime.instance().retryTask(id);
+                                    Util.msg("Retried task '" + id + "'.");
+                                    return 1;
+                                })))
+                        .then(ClientCommands.literal("skip")
+                                .executes(ctx -> {
+                                    GameProjectRuntime.instance().skipCurrent();
+                                    return 1;
+                                })
+                                .then(ClientCommands.argument("taskId", StringArgumentType.word()).executes(ctx -> {
+                                    String id = StringArgumentType.getString(ctx, "taskId");
+                                    GameProjectRuntime.instance().skipTask(id);
+                                    Util.msg("Skipped task '" + id + "'.");
+                                    return 1;
+                                })))
+                        .then(ClientCommands.literal("run").executes(ctx -> {
+                            String err = GameProjectRuntime.instance().startQueue();
+                            if (err != null) {
+                                Util.msg(err);
+                                return 0;
+                            }
+                            return 1;
+                        }))
+                        .then(ClientCommands.literal("stop").executes(ctx -> {
+                            GameProjectRuntime.instance().stopQueue("Stopped via /project queue stop.");
+                            return 1;
+                        }))));
+    }
+
+    private static com.mojang.brigadier.builder.LiteralArgumentBuilder<net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource> projectSetCmd(String place) {
+        return ClientCommands.literal(place)
+                .executes(ctx -> {
+                    Places.Target t = Places.target();
+                    if (t == null) {
+                        Util.msg("Look at a block first, or pass coordinates: /project set " + place + " <x> <y> <z>.");
+                        return 0;
+                    }
+                    return setProjectPlace(place, new int[]{t.pos().x(), t.pos().y(), t.pos().z()});
+                })
+                .then(ClientCommands.argument("x", IntegerArgumentType.integer())
+                        .then(ClientCommands.argument("y", IntegerArgumentType.integer())
+                                .then(ClientCommands.argument("z", IntegerArgumentType.integer()).executes(ctx ->
+                                        setProjectPlace(place, new int[]{
+                                                IntegerArgumentType.getInteger(ctx, "x"),
+                                                IntegerArgumentType.getInteger(ctx, "y"),
+                                                IntegerArgumentType.getInteger(ctx, "z")})))));
+    }
+
+    private static int setProjectPlace(String place, int[] coords) {
+        GameProjectRuntime rt = GameProjectRuntime.instance();
+        Project p = rt.activeProject();
+        if (p == null) {
+            Util.msg("No active project.");
+            return 0;
+        }
+        p.ensureInitialized();
+        switch (place) {
+            case "bed" -> p.places.bed = coords;
+            case "tool" -> p.places.toolChest = coords;
+            case "return" -> p.places.returnChest = coords;
+            case "dump" -> p.places.dumpChest = coords;
+            case "scaffold" -> p.places.scaffoldChest = coords;
+            default -> {
+                Util.msg("Unknown place '" + place + "'.");
+                return 0;
+            }
+        }
+        rt.saveActive();
+        Util.msg("Project '" + p.id + "' " + place + " set to " + coords[0] + " " + coords[1] + " " + coords[2] + ".");
+        return 1;
+    }
+
+    private static int projectInfo() {
+        GameProjectRuntime rt = GameProjectRuntime.instance();
+        Project p = rt.activeProject();
+        if (p == null) {
+            Util.msg("No active project.");
+            return 1;
+        }
+        PriorityScheduler.Telemetry tel = rt.telemetry();
+        Util.msg("Project: " + p.name + " (" + p.id + ") | " + (tel.running() ? "RUNNING [" + tel.lane() + "] " + tel.detail() : "IDLE"));
+        Util.msg("  bed=" + fmtPos(p.places.bed)
+                + ", tool=" + fmtPos(p.places.toolChest)
+                + ", return=" + fmtPos(p.places.returnChest)
+                + ", dump=" + fmtPos(p.places.dumpChest)
+                + ", scaffold=" + fmtPos(p.places.scaffoldChest)
+                + ", materials=" + p.places.materialChests.size());
+        Util.msg("  tasks: " + p.tasks.size() + " (" + tel.doneTasks() + "/" + tel.totalTasks() + " done)");
+        return 1;
+    }
+
+    private static String fmtPos(int[] p) {
+        return p == null || p.length < 3 ? "unset" : p[0] + " " + p[1] + " " + p[2];
+    }
+
+    private static int projectQueueList() {
+        GameProjectRuntime rt = GameProjectRuntime.instance();
+        Project p = rt.activeProject();
+        if (p == null || p.tasks.isEmpty()) {
+            Util.msg("Project queue is empty.");
+            return 1;
+        }
+        Util.msg("Project '" + p.id + "' queue (" + p.tasks.size() + " tasks):");
+        for (int i = 0; i < p.tasks.size(); i++) {
+            ProjectTask t = p.tasks.get(i);
+            TaskQueue.TaskLedger.State st = rt.taskState(t.id);
+            Util.msg("  " + (i + 1) + ". [" + st + "] " + t.id + " " + t.displayLabel()
+                    + (t.enabled ? "" : " (disabled)"));
+        }
+        return 1;
+    }
+
+    private static int projectQueueAdd(String rawKind, String target) {
+        ProjectTask.Kind kind;
+        try {
+            kind = ProjectTask.Kind.valueOf(rawKind.trim().toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            Util.msg("Unknown task kind '" + rawKind + "'. Expected: fill_water, clear_area, clear_trees, schem_build, flood, drain, mine, dump, restock, script.");
+            return 0;
+        }
+        ProjectTask task = new ProjectTask(null, null, kind);
+        if (target != null && !target.isBlank()) {
+            String t = target.trim();
+            switch (kind) {
+                case SCHEM_BUILD -> task.placement = t;
+                case SCRIPT -> task.scriptPath = t;
+                case MINE -> {
+                    for (String part : t.split("\\s+")) {
+                        if (!part.isBlank()) task.mineBlocks.add(part);
+                    }
+                }
+                default -> task.areaName = t;
+            }
+        }
+        GameProjectRuntime.instance().enqueueTask(task);
+        Util.msg("Enqueued " + task.id + ": " + task.displayLabel());
+        return 1;
+    }
+
+    // ------------------------------------------------------------------ package-private bridge for GameProjectRuntime
+
+    public static String projectWorld() {
+        try {
+            return Capture.world();
+        } catch (Throwable ignored) {
+            return "default";
+        }
+    }
+
+    public static Path projectConfigDir() {
+        try {
+            return FabricLoader.getInstance().getConfigDir();
+        } catch (Throwable ignored) {
+            return Path.of("config");
+        }
+    }
+
+    public static String projectCaptureText() {
+        try {
+            Path f = Capture.file();
+            if (Files.isRegularFile(f)) {
+                return Files.readString(f, StandardCharsets.UTF_8);
+            }
+        } catch (Throwable ignored) {
+        }
+        return "";
+    }
+
+    public static void projectLog(String message) {
+        try {
+            Util.msg(message);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    public static Object projectGetOption(String key) {
+        try {
+            return Modules.get(key, 0);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    public static void projectSetOption(String key, Object value) {
+        try {
+            Modules.set(key, value, 0);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    public static void projectSetPosOption(String key, int[] coords) {
+        try {
+            Object val = (coords == null || coords.length < 3) ? null : new Values.Pos(coords[0], coords[1], coords[2]);
+            Modules.set(key, val, 0);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    public static Map<Integer, String> projectSnapshotHotbarPins() {
+        return new java.util.LinkedHashMap<>(HotbarTools.pinned);
+    }
+
+    public static void projectRestoreHotbarPins(Map<Integer, String> pins) {
+        HotbarTools.pinned.clear();
+        if (pins != null) HotbarTools.pinned.putAll(pins);
+    }
+
+    public static void projectPinHotbar(int zeroBasedSlot, String item) {
+        if (zeroBasedSlot >= 0 && zeroBasedSlot < 9 && item != null && !item.isBlank()) {
+            HotbarTools.pinned.put(zeroBasedSlot, item.toLowerCase(Locale.ROOT));
+        }
+    }
+
+    public static boolean projectRunnerRunning() {
+        return runner.running();
+    }
+
+    public static String projectRunnerStart(
+            List<String> lines,
+            String scriptName,
+            Map<String, Object> params,
+            Map<String, Object> places) {
+        return runner.startWithParams(lines, scriptName, params, places);
+    }
+
+    public static String projectRunnerLastFailure() {
+        return runner.lastFailure();
+    }
+
+    public static void projectRunnerSuspend() {
+        runner.suspendExternal();
+    }
+
+    public static void projectRunnerResume() {
+        runner.resumeExternal();
+    }
+
+    public static void projectRunnerCancel() {
+        runner.reset();
+    }
+
+    public static List<String> projectReadScript(String scriptPath) {
+        if (scriptPath == null || scriptPath.isBlank()) return null;
+        Path p = Path.of(scriptPath.trim());
+        List<Path> candidates = new ArrayList<>();
+        if (p.isAbsolute()) {
+            candidates.add(p);
+        } else {
+            Path configDir = projectConfigDir();
+            candidates.add(configDir.resolve("manhattan-scripts").resolve(scriptPath));
+            candidates.add(configDir.resolve("manhattan-scripts").resolve(scriptPath + ".txt"));
+            candidates.add(Path.of("scripts").resolve(scriptPath));
+            candidates.add(Path.of("scripts").resolve(scriptPath + ".txt"));
+            try {
+                Path gameDir = Minecraft.getInstance().gameDirectory.toPath();
+                candidates.add(gameDir.resolve("scripts").resolve(scriptPath));
+                candidates.add(gameDir.resolve("scripts").resolve(scriptPath + ".txt"));
+            } catch (Throwable ignored) {
+            }
+            candidates.add(p);
+        }
+        for (Path cand : candidates) {
+            try {
+                if (Files.isRegularFile(cand)) {
+                    return Files.readAllLines(cand, StandardCharsets.UTF_8);
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        return null;
+    }
+
+    /** Opens and activates the project's persistent Ledger under config/manhattan-jobs/<world>_project_<projectId>.json. */
+    public static TaskQueue.TaskLedger projectOpenLedger(String world, String projectId) {
+        String safeWorld = world == null || world.isBlank() ? "default" : world.replaceAll("[^A-Za-z0-9._-]+", "_");
+        String safeId = projectId == null || projectId.isBlank() ? "default" : projectId.replaceAll("[^A-Za-z0-9_.-]+", "_");
+        Path file = Ledger.fileFor(projectConfigDir(), safeWorld, "project_" + safeId);
+        Ledger backing = Ledger.load(file);
+        Jobs.useLedger(backing);
+        return new ProjectLedgerAdapter(backing);
+    }
+
+    private static final class ProjectLedgerAdapter implements TaskQueue.TaskLedger {
+        private final Ledger backing;
+
+        ProjectLedgerAdapter(Ledger backing) {
+            this.backing = backing;
+        }
+
+        private static State toTaskState(Ledger.State s) {
+            if (s == null) return State.PENDING;
+            return switch (s) {
+                case PENDING -> State.PENDING;
+                case RUNNING -> State.RUNNING;
+                case DONE -> State.DONE;
+                case DEFERRED -> State.DEFERRED;
+                case FAILED -> State.FAILED;
+            };
+        }
+
+        private static Ledger.State toLedgerState(State s) {
+            if (s == null) return Ledger.State.PENDING;
+            return switch (s) {
+                case PENDING -> Ledger.State.PENDING;
+                case RUNNING -> Ledger.State.RUNNING;
+                case DONE -> Ledger.State.DONE;
+                case DEFERRED -> Ledger.State.DEFERRED;
+                case FAILED -> Ledger.State.FAILED;
+            };
+        }
+
+        @Override
+        public EntryView get(String id) {
+            if (id == null) return null;
+            Ledger.Entry e = backing.get(id);
+            if (e == null) return null;
+            return new EntryView(id, toTaskState(e.state), e.tries, e.left, e.reason, e.time);
+        }
+
+        @Override
+        public EntryView set(String id, State state, int tries, int left, String reason) {
+            Ledger.Entry e = backing.set(id, toLedgerState(state), tries, left, reason, null);
+            return new EntryView(id, toTaskState(e.state), e.tries, e.left, e.reason, e.time);
+        }
+
+        @Override
+        public int reset(String idOrNull) {
+            return backing.reset(idOrNull);
+        }
+
+        @Override
+        public int retry(String idOrNull) {
+            if (idOrNull == null) {
+                int total = 0;
+                for (String id : backing.ids(null, null)) {
+                    Ledger.Entry e = backing.get(id);
+                    if (e != null && (e.state == Ledger.State.DEFERRED || e.state == Ledger.State.FAILED || e.state == Ledger.State.RUNNING)) {
+                        backing.set(id, Ledger.State.PENDING, 0, e.left, null, null);
+                        total++;
+                    }
+                }
+                return total;
+            }
+            return backing.retry(idOrNull);
+        }
+
+        @Override
+        public List<String> ids(State stateOrNull) {
+            return backing.ids(null, stateOrNull == null ? null : toLedgerState(stateOrNull));
+        }
+    }
+
+    /** Wraps a dev.baritonequeue.Actions.Action as a PriorityScheduler.ActionHandle. */
+    private static PriorityScheduler.ActionHandle wrapAction(
+            Actions.Action action,
+            IntSupplier remainingSupplier,
+            Supplier<Map<String, Integer>> deficitSupplier) {
+        if (action == null) return null;
+        return new PriorityScheduler.ActionHandle() {
+            private boolean started;
+
+            private void ensureStarted() {
+                if (!started) {
+                    started = true;
+                    if (!action.done) {
+                        action.start();
+                    }
+                }
+            }
+
+            @Override
+            public boolean isDone() {
+                ensureStarted();
+                return action.done;
+            }
+
+            @Override
+            public String error() {
+                return action.error;
+            }
+
+            @Override
+            public int remainingWork() {
+                if (remainingSupplier != null) {
+                    return Math.max(0, remainingSupplier.getAsInt());
+                }
+                if (action instanceof ChunkRunner cr) {
+                    return cr.remainingWork();
+                }
+                if (action.result instanceof Double d) {
+                    return Math.max(0, (int) Math.round(d));
+                }
+                return 0;
+            }
+
+            @Override
+            public void cancel() {
+                action.cancel();
+                action.done = true;
+            }
+
+            @Override
+            public void suspend() {
+                action.suspend();
+            }
+
+            @Override
+            public void resume() {
+                action.resume();
+            }
+
+            @Override
+            public void tick() {
+                ensureStarted();
+                if (!action.done) {
+                    action.ticks++;
+                    action.tick();
+                }
+            }
+
+            @Override
+            public Map<String, Integer> materialDeficit() {
+                if (deficitSupplier != null) {
+                    Map<String, Integer> d = deficitSupplier.get();
+                    return d != null ? d : Map.of();
+                }
+                if (action instanceof ChunkRunner cr) {
+                    return cr.latestDeficit();
+                }
+                return Map.of();
+            }
+        };
+    }
+
+    public static PriorityScheduler.ActionHandle projectCreateClearAreaHandle(
+            int layers, List<int[]> boxes, String taskId) {
+        Shaft.current = Shaft.find(boxes);
+        if (Shaft.current != null) {
+            Util.msg("Stair shaft '" + Shaft.current.name() + "' stays standing; its steps are carved as the hole gets deeper.");
+        }
+        Actions.Action act;
+        if (ChunkGrid.shouldChunk(boxes, cfg.chunkSize, cfg.chunkSizeY, cfg.chunkGap, cfg.chunkEnabled)) {
+            act = new ChunkRunner(new ChunkRunner.ChunkWorkload() {
+                @Override public String actionKind() { return "clear_area"; }
+                @Override public boolean usesSelectionNarrowing() { return false; }
+                @Override public boolean skipWhenEmpty() { return true; }
+                @Override public List<int[]> fullBounds() { return boxes; }
+                @Override public Actions.Action createChunkAction(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
+                    return GameBuiltins.clearFeature(layers, clippedBoxes);
+                }
+                @Override public int countRemaining(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
+                    Minecraft mc = Minecraft.getInstance();
+                    return mc == null || mc.level == null ? 0 : ClearProcess.countSolid(mc.level, clippedBoxes);
+                }
+            }).withGeometry(cfg.chunkSizeY, cfg.chunkGap).withTaskPrefix(taskId);
+        } else {
+            act = GameBuiltins.clearFeature(layers, boxes);
+        }
+        return wrapAction(act, () -> {
+            Minecraft mc = Minecraft.getInstance();
+            return mc == null || mc.level == null ? 0 : ClearProcess.countSolid(mc.level, boxes);
+        }, null);
+    }
+
+    public static PriorityScheduler.ActionHandle projectCreateFillWaterHandle(
+            String blockName, List<int[]> boxes, BlockPos materialChestPos, String taskId) {
+        Item it = (blockName == null || blockName.isBlank()) ? null : ChestOp.itemOf(blockName);
+        if (blockName != null && !blockName.isBlank() && it == null) {
+            Actions.Action failAct = new Actions.Wait(0.05);
+            failAct.fail("Unknown block item '" + blockName + "' for fill_water task.");
+            return wrapAction(failAct, () -> 0, null);
+        }
+        String resolvedName = it == null ? null : ChestOp.name(it);
+        String chestLabel = materialChestPos == null ? null : "at " + materialChestPos.toShortString();
+        Actions.Action act;
+        if (ChunkGrid.shouldChunk(boxes, cfg.chunkSize, cfg.chunkEnabled)) {
+            act = new ChunkRunner(new ChunkRunner.ChunkWorkload() {
+                @Override public String actionKind() { return "fill_water"; }
+                @Override public boolean usesSelectionNarrowing() { return false; }
+                @Override public List<int[]> fullBounds() { return boxes; }
+                @Override public Actions.Action createChunkAction(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
+                    Minecraft mc = Minecraft.getInstance();
+                    if (mc != null && mc.level != null && dev.buildtools.TerminatorProcess.countWater(mc.level, clippedBoxes) == 0) {
+                        return new Actions.Now(() -> 0.0);
+                    }
+                    return GameBuiltins.fillWaterChunkAction(it, resolvedName, materialChestPos, chestLabel, 512, clippedBoxes);
+                }
+                @Override public int countRemaining(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
+                    Minecraft mc = Minecraft.getInstance();
+                    return mc == null || mc.level == null ? 0 : dev.buildtools.TerminatorProcess.countWater(mc.level, clippedBoxes);
+                }
+                @Override public Map<String, Integer> requiredItems(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
+                    if (resolvedName == null) return Map.of();
+                    Minecraft mc = Minecraft.getInstance();
+                    int waterCount = mc == null || mc.level == null ? 0 : dev.buildtools.TerminatorProcess.countWater(mc.level, clippedBoxes);
+                    return waterCount > 0 ? Map.of(resolvedName, waterCount) : Map.of();
+                }
+            }).withTaskPrefix(taskId);
+        } else {
+            act = GameBuiltins.fillWaterChunkAction(it, resolvedName, materialChestPos, chestLabel, 512, boxes);
+        }
+        return wrapAction(act, () -> {
+            Minecraft mc = Minecraft.getInstance();
+            return mc == null || mc.level == null ? 0 : dev.buildtools.TerminatorProcess.countWater(mc.level, boxes);
+        }, () -> {
+            if (act instanceof ChunkRunner cr) return cr.latestDeficit();
+            if (resolvedName != null && dev.buildtools.Api.fillRanOut()) {
+                Minecraft mc = Minecraft.getInstance();
+                int left = mc == null || mc.level == null ? 0 : dev.buildtools.TerminatorProcess.countWater(mc.level, boxes);
+                if (left > 0) return Map.of(resolvedName, Math.min(left, 512));
+            }
+            return Map.of();
+        });
+    }
+
+    public static PriorityScheduler.ActionHandle projectCreateDrainHandle(List<int[]> boxes, String taskId) {
+        Actions.Action act;
+        if (ChunkGrid.shouldChunk(boxes, cfg.chunkSize, cfg.chunkEnabled)) {
+            act = new ChunkRunner(new ChunkRunner.ChunkWorkload() {
+                @Override public String actionKind() { return "drain"; }
+                @Override public boolean usesSelectionNarrowing() { return false; }
+                @Override public List<int[]> fullBounds() { return boxes; }
+                @Override public Actions.Action createChunkAction(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
+                    return GameBuiltins.drainFeature(clippedBoxes);
+                }
+                @Override public int countRemaining(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
+                    Minecraft mc = Minecraft.getInstance();
+                    return mc == null || mc.level == null ? 0 : dev.buildtools.DrainProcess.countFluid(mc.level, clippedBoxes);
+                }
+            }).withTaskPrefix(taskId);
+        } else {
+            act = GameBuiltins.drainFeature(boxes);
+        }
+        return wrapAction(act, () -> {
+            Minecraft mc = Minecraft.getInstance();
+            return mc == null || mc.level == null ? 0 : dev.buildtools.DrainProcess.countFluid(mc.level, boxes);
+        }, null);
+    }
+
+    public static PriorityScheduler.ActionHandle projectCreateFloodHandle(List<int[]> boxes) {
+        return wrapAction(GameBuiltins.floodFeature(boxes), () -> 0, null);
+    }
+
+    public static PriorityScheduler.ActionHandle projectCreateSchemBuildHandle(
+            String placement, String modeRaw, String missingRaw, String taskId) {
+        Schem.Mode mode = Schem.Mode.of(modeRaw);
+        if (mode == null) mode = Schem.Mode.ADD;
+        schem.skipMissing(!"strict".equalsIgnoreCase(missingRaw));
+        String[] err = new String[1];
+        List<SchemSource.Placement> pls = SchemCmd.select(placement == null || placement.isBlank() ? null : placement, err);
+        if (pls == null || pls.isEmpty()) {
+            Actions.Action failAct = new Actions.Wait(0.05);
+            failAct.fail(err[0] != null ? err[0] : "No Litematica placement found for '" + placement + "'.");
+            return wrapAction(failAct, () -> 0, null);
+        }
+        Schem.Mode finalMode = mode;
+        SchemProcess.prepare(pls, finalMode);
+        List<int[]> bounds = SchemProcess.placementBounds(pls);
+        Actions.Action act;
+        if (ChunkGrid.shouldChunk(bounds, cfg.chunkSize, cfg.chunkEnabled)) {
+            act = new ChunkRunner(new ChunkRunner.ChunkWorkload() {
+                @Override public String actionKind() { return "schem_build"; }
+                @Override public boolean usesSelectionNarrowing() { return false; }
+                @Override public List<int[]> fullBounds() { return bounds; }
+                @Override public void onChunkStart(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
+                    schem.setChunkBounds(chunk);
+                }
+                @Override public void onChunkEnd(ChunkGrid.ColumnBox chunk) {
+                    schem.setChunkBounds(null);
+                }
+                @Override public Actions.Action createChunkAction(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
+                    return GameBuiltins.schemFeature(pls, finalMode, chunk);
+                }
+                @Override public int countRemaining(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
+                    Minecraft mc = Minecraft.getInstance();
+                    return mc == null || mc.level == null ? 0 : SchemProcess.countRemainingIn(mc.level, chunk);
+                }
+                @Override public Map<String, Integer> requiredItems(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
+                    Minecraft mc = Minecraft.getInstance();
+                    return mc == null || mc.level == null ? Map.of() : SchemProcess.requiredItemsIn(mc.level, chunk);
+                }
+            }).withTaskPrefix(taskId);
+        } else {
+            schem.setChunkBounds(null);
+            act = GameBuiltins.schemFeature(pls, finalMode, null);
+        }
+        return wrapAction(act, () -> {
+            if (act instanceof ChunkRunner cr) return cr.remainingWork();
+            return (int) Math.round(Math.max(0.0, schem.result()));
+        }, null);
+    }
+
+    public static PriorityScheduler.ActionHandle projectCreateMineHandle(List<String> mineBlocks, List<int[]> boxes) {
+        if (mineBlocks == null || mineBlocks.isEmpty()) {
+            Actions.Action failAct = new Actions.Wait(0.05);
+            failAct.fail("MINE task requires at least one block in mineBlocks.");
+            return wrapAction(failAct, () -> 0, null);
+        }
+        BlockFilter filter = BlockFilter.ofNames(mineBlocks.toArray(new String[0]));
+        Area area = null;
+        if (boxes != null && !boxes.isEmpty()) {
+            int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
+            int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
+            for (int[] b : boxes) {
+                minX = Math.min(minX, Math.min(b[0], b[3]));
+                minY = Math.min(minY, Math.min(b[1], b[4]));
+                minZ = Math.min(minZ, Math.min(b[2], b[5]));
+                maxX = Math.max(maxX, Math.max(b[0], b[3]));
+                maxY = Math.max(maxY, Math.max(b[1], b[4]));
+                maxZ = Math.max(maxZ, Math.max(b[2], b[5]));
+            }
+            area = new Area(minX, minY, minZ, maxX, maxY, maxZ);
+        }
+        Area finalArea = area;
+        return new PriorityScheduler.ActionHandle() {
+            private boolean started, done;
+            private String error;
+            private int idleTicks;
+
+            private void startMine() {
+                if (finalArea != null) EngineSelector.current().mine(filter, finalArea);
+                else EngineSelector.current().mine(filter);
+                started = true;
+                idleTicks = 0;
+            }
+
+            @Override public boolean isDone() { return done; }
+            @Override public String error() { return error; }
+            @Override public int remainingWork() { return 0; }
+            @Override public void cancel() { EngineSelector.current().cancel(); done = true; }
+            @Override public void suspend() { EngineSelector.current().cancel(); }
+            @Override public void resume() { if (!done) startMine(); }
+
+            @Override
+            public void tick() {
+                if (done) return;
+                if (!started) {
+                    startMine();
+                    return;
+                }
+                EngineStatus st = EngineSelector.current().status();
+                if (st == EngineStatus.DONE) {
+                    done = true;
+                } else if (st == EngineStatus.FAILED) {
+                    done = true;
+                } else if (!EngineSelector.current().isBusy()) {
+                    if (++idleTicks > 20) done = true;
+                } else {
+                    idleTicks = 0;
+                }
+            }
+        };
+    }
+
+    public static PriorityScheduler.ActionHandle projectCreateDumpHandle(BlockPos chestPos) {
+        if (chestPos == null) {
+            Actions.Action failAct = new Actions.Wait(0.05);
+            failAct.fail("No dump chest configured on project.");
+            return wrapAction(failAct, () -> 0, null);
+        }
+        ChestOp op = new ChestOp("at " + chestPos.toShortString(), ChestOp.Kind.DUMP, null, -1, false);
+        return wrapAction(new Actions.Chest(op, chestPos), () -> 0, null);
+    }
+
+    public static PriorityScheduler.ActionHandle projectCreateChestPutHandle(BlockPos chestPos, Item item, int count, boolean soft) {
+        ChestOp op = new ChestOp("at " + chestPos.toShortString(), ChestOp.Kind.PUT, item, count, false, soft);
+        return wrapAction(new Actions.Chest(op, chestPos), () -> 0, null);
+    }
+
+    public static PriorityScheduler.ActionHandle projectCreateChestGetHandle(BlockPos chestPos, Item item, int count, boolean upto, boolean soft) {
+        ChestOp op = new ChestOp("at " + chestPos.toShortString(), ChestOp.Kind.GET, item, count, upto, soft);
+        return wrapAction(new Actions.Chest(op, chestPos), () -> 0, null);
+    }
+
+    public static Item projectResolveItem(String name) {
+        return name == null ? null : ChestOp.itemOf(name);
+    }
+
+    public static PriorityScheduler.ActionHandle projectCreateCollectScaffoldHandle() {
+        Actions.Action act = new Actions.Feature(
+                dev.buildtools.Api::collectScaffoldNow,
+                dev.buildtools.Api::collectingScaffold,
+                dev.buildtools.Api::stopCollectingScaffold,
+                () -> true);
+        return wrapAction(act, () -> 0, null);
+    }
+
+    public static PriorityScheduler.ActionHandle projectCreatePickupHandle() {
+        Actions.Action act = new Actions.Feature(
+                () -> { dev.loadchest.LoadChestMod.pickupNow(); return null; },
+                dev.loadchest.LoadChestMod::pickingUp,
+                null,
+                () -> true);
+        return wrapAction(act, () -> 0, null);
+    }
+
+    public static PriorityScheduler.ActionHandle projectCreateFeatureHandle(
+            Supplier<String> startFn,
+            java.util.function.BooleanSupplier busyFn,
+            Runnable stopFn) {
+        Actions.Action act = new Actions.Feature(startFn, busyFn, stopFn, () -> true);
+        return wrapAction(act, () -> 0, null);
+    }
+
+    public static void projectApplySelection(List<int[]> boxes) {
+        if (boxes == null || boxes.isEmpty()) Areas.clearSelection();
+        else Areas.apply(boxes);
     }
 }

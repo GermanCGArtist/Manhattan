@@ -559,15 +559,18 @@ public final class SchemProcess {
         }
     }
 
+    private static final String MOTOR_OWNER = "schem";
+
     private void mtStop() {
         if (mtMoving || isMidtown()) {
             EngineSelector.current().cancel();
             mtMoving = false;
         }
         Minecraft mc = Minecraft.getInstance();
-        if (mtBreaking && mc.gameMode != null) {
-            mc.gameMode.stopDestroyBlock();
+        if (mtBreaking) {
+            dev.midtown.body.BodyController.INSTANCE.stopBreaking(mc);
         }
+        dev.midtown.body.BodyController.INSTANCE.releaseIfOwner(mc, MOTOR_OWNER);
         mtBreaking = false;
         mtBreakPos = null;
         mtCur = null;
@@ -1046,39 +1049,17 @@ public final class SchemProcess {
 
     private static boolean mtEquip(Minecraft mc, LocalPlayer p, Item item) {
         if (item == null || item == Items.AIR) return false;
-        var inv = p.getInventory();
-        for (int i = 0; i < 9; i++) {
-            if (inv.getItem(i).is(item)) {
-                inv.setSelectedSlot(i);
-                return true;
-            }
-        }
-        for (int i = 9; i < 36; i++) {
-            if (inv.getItem(i).is(item)) {
-                int hotbar = inv.getSelectedSlot();
-                for (int h = 0; h < 9; h++) {
-                    if (inv.getItem(h).isEmpty()) {
-                        hotbar = h;
-                        break;
-                    }
-                }
-                mc.gameMode.handleContainerInput(p.inventoryMenu.containerId, i, hotbar, ContainerInput.SWAP, p);
-                inv.setSelectedSlot(hotbar);
-                return true;
-            }
-        }
-        return false;
+        return dev.midtown.body.HotbarController.selectItem(mc, p, st -> !st.isEmpty() && st.is(item));
     }
 
     private static boolean mtAim(LocalPlayer p, Vec3 at) {
         Vec3 eye = p.getEyePosition();
         double dx = at.x - eye.x, dy = at.y - eye.y, dz = at.z - eye.z;
-        float yaw = (float) (Math.toDegrees(Math.atan2(dz, dx)) - 90.0);
-        float pitch = (float) -Math.toDegrees(Math.atan2(dy, Math.sqrt(dx * dx + dz * dz)));
+        float yaw = dev.midtown.body.BodyController.yawTo(dx, dz);
+        float pitch = dev.midtown.body.BodyController.pitchTo(dx, dy, dz);
         float dYaw = Mth.wrapDegrees(yaw - p.getYRot());
         float dPitch = pitch - p.getXRot();
-        p.setYRot(p.getYRot() + Mth.clamp(dYaw, -60f, 60f));
-        p.setXRot(Mth.clamp(p.getXRot() + Mth.clamp(dPitch, -45f, 45f), -90f, 90f));
+        dev.midtown.body.BodyController.INSTANCE.aimSmooth(p, yaw, pitch, 60f, 45f);
         return Math.abs(dYaw) < 12f && Math.abs(dPitch) < 12f;
     }
 }

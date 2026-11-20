@@ -96,11 +96,22 @@ final class SleepProcess extends Feature {
     }
 
     void startNow() {
+        startNow(false);
+    }
+
+    /** Starts walking to the saved bed; when {@code allowPreDusk} is true, walks and waits for nightfall even before departureDue(). */
+    void startNow(boolean allowPreDusk) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.level == null) return;
         if (cfg.bed == null) { Util.msg("No bed saved. Look at a bed and run /survival bed set"); return; }
         if (state != State.IDLE) { Util.msg("Already on the way to bed."); return; }
-        if (!isNight(mc) && !departureDue(mc, mc.player)) { Util.msg("It is not night yet (or you are not in the overworld)."); return; }
+        if (!allowPreDusk && !isNight(mc) && !departureDue(mc, mc.player)) {
+            Util.msg("It is not night yet (or you are not in the overworld).");
+            return;
+        }
+        if (allowPreDusk && mc.level.dimension() != Level.OVERWORLD) {
+            return;
+        }
         start(mc);
     }
 

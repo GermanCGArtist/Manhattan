@@ -1,14 +1,18 @@
 package dev.buildtools;
 
+import dev.midtown.api.RuntimeBus;
+
 /**
- * Tracks pause state for buildtools helpers.
+ * Tracks pause state for buildtools helpers, delegated to {@link RuntimeBus}.
  */
 final class PauseWatch {
     private PauseWatch() {}
 
-    static volatile boolean paused = false;
+    static boolean isPaused() {
+        return RuntimeBus.isPaused();
+    }
 
     static void setPaused(boolean p) {
-        paused = p;
+        RuntimeBus.setPaused(p);
     }
 }

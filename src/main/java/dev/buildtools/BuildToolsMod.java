@@ -279,7 +279,7 @@ public class BuildToolsMod implements ClientModInitializer {
 
     private void tick(Minecraft mc) {
         if (mc.player == null) { RegionRules.release(); return; }
-        if (PauseWatch.paused) return;   // #pause: nothing starts or continues
+        if (PauseWatch.isPaused()) return;   // #pause: nothing starts or continues
         try {
             drain.tick();
             fill.tick();
@@ -287,8 +287,9 @@ public class BuildToolsMod implements ClientModInitializer {
             scaffold.tick();
             terminator.tick();
             // a queue line like "/buildtools terminator" waits while this is set
-            if (scaffold.busy() || terminator.busy()) { System.setProperty("buildtools.busy", "1"); busyMarked = true; }
-            else if (busyMarked) { System.clearProperty("buildtools.busy"); busyMarked = false; }
+            boolean btBusy = scaffold.busy() || terminator.busy();
+            if (btBusy) { dev.midtown.api.RuntimeBus.setBuildToolsBusy(true); busyMarked = true; }
+            else if (busyMarked) { dev.midtown.api.RuntimeBus.setBuildToolsBusy(false); busyMarked = false; }
             RegionRules.tick(mc.player);   // every tick: a path planned in between could already go through a safe area
             if (++syncTick % 20 == 0) {
                 Avoid.sync();

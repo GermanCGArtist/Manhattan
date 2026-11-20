@@ -1,9 +1,12 @@
 package dev.baritonequeue;
 
+import dev.baritonequeue.project.GameProjectRuntime;
+import dev.midtown.api.RuntimeBus;
 import net.minecraft.client.Minecraft;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import static dev.baritonequeue.Config.cfg;
 
@@ -40,6 +43,9 @@ public final class Runner {
     private int deaths;
     private double lastX, lastY, lastZ;
     private boolean hasLastPos;
+    private boolean projectSubScript;
+    private boolean externallySuspended;
+    private String lastFailure;
 
     static final class Handler {
         final Ast.On on;
@@ -179,10 +185,8 @@ public final class Runner {
     }
 
     private void publish() {
-        if (switchedOff.isEmpty()) System.clearProperty("baritonequeue.addons.off");
-        else System.setProperty("baritonequeue.addons.off", String.join(",", switchedOff));
-        if (switchedOn.isEmpty()) System.clearProperty("baritonequeue.helpers.on");
-        else System.setProperty("baritonequeue.helpers.on", String.join(",", switchedOn));
+        RuntimeBus.setAddonsOff(switchedOff);
+        RuntimeBus.setHelpersOn(switchedOn);
     }
 
     void addHandler(Ast.On on, Ast.Env env) {
@@ -199,9 +203,53 @@ public final class Runner {
 
     /** As start, for the script of this name (the editor tab; its ledger file is per world and name). */
     String start(List<String> script, String scriptName) {
+        return startInternal(script, scriptName, null, null, false);
+    }
+
+    /**
+     * Starts a project {@code SCRIPT} task with injected {@code projectPlaces} and {@code params}.
+     * Suppresses benchmark emission and automatic disconnect so {@link GameProjectRuntime} owns lifecycle.
+     */
+    public String startWithParams(
+            List<String> script,
+            String scriptName,
+            Map<String, Object> params,
+            Map<String, Object> projectPlaces) {
+        return startInternal(script, scriptName, params, projectPlaces, true);
+    }
+
+    public String lastFailure() {
+        return lastFailure;
+    }
+
+    public void suspendExternal() {
+        if (!running || externallySuspended) return;
+        externallySuspended = true;
+        suspendCurrent();
+    }
+
+    public void resumeExternal() {
+        if (!running || !externallySuspended) return;
+        externallySuspended = false;
+        Fiber f = active();
+        if (f != null && f.action != null && !f.action.done) {
+            try {
+                f.action.resume();
+            } catch (Throwable t) {
+                f.action.fail("Could not resume '" + f.actionText + "' (" + t + ").");
+            }
+        }
+    }
+
+    private String startInternal(
+            List<String> script,
+            String scriptName,
+            Map<String, Object> params,
+            Map<String, Object> projectPlaces,
+            boolean subScript) {
         if (running) return "Already running (" + current() + ").";
         dev.survivalkit.Api.resetIndexRefresh();   // index_refresh() lasts for one run
-        System.clearProperty("survivalkit.gaveup");
+        RuntimeBus.setRecoveryGaveUpReason(null);
         String text = String.join("\n", script);
         List<Ast.Stmt> program;
         try {
@@ -214,8 +262,7 @@ public final class Runner {
         handlers.clear();
         switchedOff.clear();
         switchedOn.clear();
-        System.clearProperty("baritonequeue.addons.off");
-        System.clearProperty("baritonequeue.helpers.on");
+        RuntimeBus.clearHelpers();
         stepTimeout = 0;
         actions = 0;
         blocksMoved = 0;
@@ -223,6 +270,9 @@ public final class Runner {
         interruptsHandled = 0;
         deaths = 0;
         hasLastPos = false;
+        projectSubScript = subScript;
+        externallySuspended = false;
+        lastFailure = null;
         var mc = net.minecraft.client.Minecraft.getInstance();
         var p = mc != null ? mc.player : null;
         if (p != null) {
@@ -232,36 +282,79 @@ public final class Runner {
             hasLastPos = true;
         }
         awaitRecovery = false;
-        dev.survivalkit.Api.onBeforeDisconnect = () -> { if (running) halt("Disconnected."); };
+        if (!subScript) {
+            dev.survivalkit.Api.onBeforeDisconnect = () -> { if (running) halt("Disconnected."); };
+        }
         Areas.scripted.clear();
         Areas.restoreIfNeeded(text);
-        String resume = Jobs.startRun(scriptName);   // the saved ledger of this world: what an earlier run finished
-        if (resume != null) Util.msg(resume);
+        if (!subScript) {
+            String resume = Jobs.startRun(scriptName);   // the saved ledger of this world: what an earlier run finished
+            if (resume != null) Util.msg(resume);
+        }
         globals = new Ast.Env(Builtins.root());
         globals.define("chunk_needs", Values.newMap());
         globals.define("chunk_id", -1.0);
+        if (projectPlaces != null) {
+            for (var entry : projectPlaces.entrySet()) {
+                if (entry.getKey() != null && !entry.getKey().isBlank()) {
+                    globals.define(entry.getKey(), toScriptValue(entry.getValue()));
+                }
+            }
+        }
+        if (params != null) {
+            for (var entry : params.entrySet()) {
+                if (entry.getKey() != null && !entry.getKey().isBlank()) {
+                    globals.define(entry.getKey(), toScriptValue(entry.getValue()));
+                }
+            }
+        }
         main = new Fiber("queue-script", () -> Ast.run(program, mainIn, globals));
         mainIn = new Interp(this, main);
         condIn = new Interp(this, null);
         stack.clear();
         startedAt = System.currentTimeMillis();
         running = true;
-        Util.msg("Script started.");
+        Util.msg(subScript ? "Project script started: " + scriptName : "Script started.");
         return null;
+    }
+
+    private static Object toScriptValue(Object v) {
+        if (v == null || v instanceof Boolean || v instanceof String || v instanceof Values.Pos) return v;
+        if (v instanceof Number n) return n.doubleValue();
+        if (v instanceof int[] arr && arr.length == 3) {
+            return new Values.Pos(arr[0], arr[1], arr[2]);
+        }
+        if (v instanceof List<?> list) {
+            List<Object> out = new ArrayList<>(list.size());
+            for (Object item : list) out.add(toScriptValue(item));
+            return out;
+        }
+        if (v instanceof Map<?, ?> map) {
+            Map<Object, Object> out = Values.newMap();
+            for (var e : map.entrySet()) {
+                out.put(toScriptValue(e.getKey()), toScriptValue(e.getValue()));
+            }
+            return out;
+        }
+        return String.valueOf(v);
     }
 
     /** Stops running; the script text itself is untouched. */
     void halt(String why) {
         if (!running) return;
         long elapsedMs = System.currentTimeMillis() - startedAt;
+        boolean wasSub = projectSubScript;
+        lastFailure = why;
         running = false;
+        externallySuspended = false;
         endAll();
         Util.warn("queue", why);
-        emitBenchmark(false, elapsedMs);
+        if (!wasSub) emitBenchmark(false, elapsedMs);
     }
 
     void reset() {
         running = false;
+        externallySuspended = false;
         endAll();
     }
 
@@ -285,10 +378,9 @@ public final class Runner {
         handlers.clear();
         switchedOff.clear();
         switchedOn.clear();
-        System.clearProperty("baritonequeue.addons.off");
-        System.clearProperty("baritonequeue.helpers.on");
-        System.clearProperty("baritonequeue.active");
-        System.clearProperty("baritonequeue.step");
+        RuntimeBus.clearHelpers();
+        RuntimeBus.setScriptActive(GameProjectRuntime.instance().running());
+        RuntimeBus.setCurrentStep(null);
     }
 
     /** Ends the action that runs now (as if it had finished) and goes on with the script. */
@@ -310,21 +402,22 @@ public final class Runner {
 
     void tick() {
         tickCounter++;
+        boolean projectRunning = GameProjectRuntime.instance().running();
         if (running) {
-            System.setProperty("baritonequeue.active", "1");
+            RuntimeBus.setScriptActive(true);
             Fiber f = active();
-            if (f != null && f.actionText != null && f.action != null) System.setProperty("baritonequeue.step", f.actionText);   // BuildTools tells scaffolding from real blocks with it
-            else System.clearProperty("baritonequeue.step");
-        } else {
-            System.clearProperty("baritonequeue.active");
-            System.clearProperty("baritonequeue.step");
+            if (f != null && f.actionText != null && f.action != null) RuntimeBus.setCurrentStep(f.actionText);   // BuildTools tells scaffolding from real blocks with it
+            else RuntimeBus.setCurrentStep(null);
+        } else if (!projectRunning) {
+            RuntimeBus.setScriptActive(false);
+            RuntimeBus.setCurrentStep(null);
         }
-        String reason = System.getProperty("baritonequeue.halt");   // safe-area stop, water loop ...
+        String reason = RuntimeBus.consumeHaltReason();   // safe-area stop, water loop ...
         if (reason != null) {
-            System.clearProperty("baritonequeue.halt");
-            halt(reason);
+            if (running) halt(reason);
+            else if (projectRunning) GameProjectRuntime.instance().stopQueue(reason);
         }
-        if (!running) return;
+        if (!running || externallySuspended) return;
         if (recovering()) return;
         if (Shaft.climbing()) return;   // on the way out of the hole by the stairs: the script waits
 
@@ -415,16 +508,22 @@ public final class Runner {
                 }
                 return;
             }
+            boolean wasSub = projectSubScript;
             running = false;
+            externallySuspended = false;
             long elapsedMs = System.currentTimeMillis() - startedAt;
             long secs = elapsedMs / 1000;
             String summary = actions + " action" + (actions == 1 ? "" : "s") + ", " + Estimate.duration(secs * 20);
             endAll();
-            Util.msg("Script finished (" + summary + ").");
-            System.setProperty("baritonequeue.finished", summary + "|" + System.currentTimeMillis());
-            emitBenchmark(true, elapsedMs);
-            if (Config.cfg.logoffOnDone) {
-                dev.survivalkit.Api.disconnect("Script complete.");
+            Util.msg((wasSub ? "Project script finished (" : "Script finished (") + summary + ").");
+            if (!wasSub) {
+                String stamped = summary + "|" + System.currentTimeMillis();
+                RuntimeBus.setFinishedSummary(stamped);
+                System.setProperty("baritonequeue.finished", stamped);
+                emitBenchmark(true, elapsedMs);
+                if (Config.cfg.logoffOnDone) {
+                    dev.survivalkit.Api.disconnect("Script complete.");
+                }
             }
             return;
         }
@@ -453,11 +552,14 @@ public final class Runner {
         int line = t instanceof Values.ScriptError se ? se.line : activeIn().line;
         String text = t instanceof Values.ScriptError ? t.getMessage() : "Internal error: " + t;
         if (!(t instanceof Values.ScriptError)) t.printStackTrace();
+        boolean wasSub = projectSubScript;
+        lastFailure = "Line " + line + ": " + text;
         running = false;
+        externallySuspended = false;
         endAll();
         Util.msg("PROBLEM in line " + line + (line > 0 && line <= lines.length ? " (" + lineText(line) + ")" : "") + ": " + text);
         Util.msg("The script stopped. Fix it and press Run again.");
-        if (Config.cfg.logoffOnError) {
+        if (!wasSub && Config.cfg.logoffOnError) {
             dev.survivalkit.Api.disconnect("Script stopped: " + text);
         }
     }
@@ -477,10 +579,13 @@ public final class Runner {
             try {
                 now = Values.truthy(h.on.cond.eval(condIn, h.env));
             } catch (Values.ScriptError e) {
+                boolean wasSub = projectSubScript;
+                lastFailure = "Line " + h.on.line + ": " + e.getMessage();
                 running = false;
+                externallySuspended = false;
                 endAll();
                 Util.msg("PROBLEM in the 'on' condition of line " + h.on.line + ": " + e.getMessage());
-                if (Config.cfg.logoffOnError) {
+                if (!wasSub && Config.cfg.logoffOnError) {
                     dev.survivalkit.Api.disconnect("Script stopped: " + e.getMessage());
                 }
                 return;
@@ -537,10 +642,13 @@ public final class Runner {
             try {
                 matches = Values.truthy(h.on.cond.eval(condIn, h.env));
             } catch (Values.ScriptError e) {
+                boolean wasSub = projectSubScript;
+                lastFailure = "Line " + h.on.line + ": " + e.getMessage();
                 running = false;
+                externallySuspended = false;
                 endAll();
                 Util.msg("PROBLEM in the 'on' condition of line " + h.on.line + ": " + e.getMessage());
-                if (Config.cfg.logoffOnError) {
+                if (!wasSub && Config.cfg.logoffOnError) {
                     dev.survivalkit.Api.disconnect("Script stopped: " + e.getMessage());
                 }
                 return false;
@@ -617,8 +725,7 @@ public final class Runner {
             return true;
         }
         if (!awaitRecovery) return false;
-        if (System.getProperty("survivalkit.safe") != null) {
-            System.clearProperty("survivalkit.safe");
+        if (RuntimeBus.consumeSafeAfterRespawn()) {
             awaitRecovery = false;
             Fiber f = active();
             if (f != null && f.action != null && !f.action.done) {
@@ -631,12 +738,11 @@ public final class Runner {
             }
             return false;
         }
-        if (System.getProperty("survivalkit.recovering") != null) {
+        if (RuntimeBus.isRecovering()) {
             recoveryWait = 0;
         } else if (++recoveryWait > 100) {   // nobody is bringing us back
             awaitRecovery = false;
-            String why = System.getProperty("survivalkit.gaveup");   // SurvivalKit tried to bring us back and gave up
-            System.clearProperty("survivalkit.gaveup");
+            String why = RuntimeBus.consumeRecoveryGaveUpReason();   // SurvivalKit tried to bring us back and gave up
             halt(why != null ? "The script stopped after dying: " + why
                     : "The script stopped (you died or the connection dropped, and auto-respawn/resume is off).");
         }

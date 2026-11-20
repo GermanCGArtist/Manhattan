@@ -27,6 +27,7 @@ public final class DrainProcess extends Feature {
     private static final int MAX_ROUNDS = 3;
 
     private boolean working;
+    private List<int[]> explicitBoxes;
     private final List<Task> tasks = new ArrayList<>();
     private final Set<BlockPos> failed = new HashSet<>();
     private Task current;
@@ -61,14 +62,35 @@ public final class DrainProcess extends Feature {
 
     /** /buildtools drain now */
     void startNow() {
+        startNow(null);
+    }
+
+    /** Starts draining within {@code explicitBoxes} (or the current selection when null/empty). */
+    public void startNow(List<int[]> explicitBoxes) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.level == null) return;
         if (working) { Util.msg("Already draining."); return; }
+        this.explicitBoxes = copyBoxes(explicitBoxes);
         start(mc, mc.player, false);
+    }
+
+    private static List<int[]> copyBoxes(List<int[]> raw) {
+        if (raw == null || raw.isEmpty()) return null;
+        List<int[]> out = new ArrayList<>(raw.size());
+        for (int[] b : raw) {
+            if (b != null && b.length >= 6) {
+                out.add(new int[]{
+                        Math.min(b[0], b[3]), Math.min(b[1], b[4]), Math.min(b[2], b[5]),
+                        Math.max(b[0], b[3]), Math.max(b[1], b[4]), Math.max(b[2], b[5])
+                });
+            }
+        }
+        return out.isEmpty() ? null : out;
     }
 
     void cancel() {
         working = false;
+        explicitBoxes = null;
         tasks.clear();
         current = null;
         EngineSelector.current().cancel();
@@ -99,6 +121,9 @@ public final class DrainProcess extends Feature {
     }
 
     private List<int[]> boxes(LocalPlayer p) {
+        if (explicitBoxes != null && !explicitBoxes.isEmpty()) {
+            return explicitBoxes;
+        }
         List<int[]> boxes = new ArrayList<>(dev.baritonequeue.Areas.read());
         if (boxes.isEmpty() && cfg.corner1 != null && cfg.corner2 != null) {
             boxes.add(new int[]{
@@ -115,7 +140,9 @@ public final class DrainProcess extends Feature {
     private List<Task> scan(Minecraft mc, LocalPlayer p) {
         Level level = mc.level;
         List<int[]> boxes = boxes(p);
-        boolean hasSelection = dev.baritonequeue.Areas.any() || (cfg.corner1 != null && cfg.corner2 != null);
+        boolean hasSelection = (explicitBoxes != null && !explicitBoxes.isEmpty())
+                || dev.baritonequeue.Areas.any()
+                || (cfg.corner1 != null && cfg.corner2 != null);
         List<Task> dams = new ArrayList<>();
         List<Task> plugs = new ArrayList<>();
         List<Task> buckets = new ArrayList<>();
@@ -253,6 +280,7 @@ public final class DrainProcess extends Feature {
 
     private void finish() {
         working = false;
+        explicitBoxes = null;
         tasks.clear();
         current = null;
         cooldown = 20 * 10;
@@ -265,6 +293,7 @@ public final class DrainProcess extends Feature {
     public void onLostControl() {
         if (working) {
             working = false;
+            explicitBoxes = null;
             tasks.clear();
             current = null;
             EngineSelector.current().cancel();

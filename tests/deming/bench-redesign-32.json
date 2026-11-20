@@ -1,0 +1,871 @@
+{
+  "name": "midtown-redesign-32",
+  "instances": [
+    {
+      "id": "redesign-01-project-queue-pipeline",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/manhattan-2.12.5.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+      ],
+      "account": { "offline": { "username": "BenchR01" } },
+      "ram_mb": 2048,
+      "cpu_cores": 1,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=project_queue_pipeline",
+        "-Dmanhattan.testbridge.port=25560"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=project_queue_pipeline pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=project_queue_pipeline pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "redesign-02-project-script-params",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/manhattan-2.12.5.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+      ],
+      "account": { "offline": { "username": "BenchR02" } },
+      "ram_mb": 2048,
+      "cpu_cores": 1,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=project_script_params",
+        "-Dmanhattan.testbridge.port=25561"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=project_script_params pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=project_script_params pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "redesign-03-project-batched-logistics",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/manhattan-2.12.5.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+      ],
+      "account": { "offline": { "username": "BenchR03" } },
+      "ram_mb": 2048,
+      "cpu_cores": 1,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=project_batched_logistics",
+        "-Dmanhattan.testbridge.port=25562"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=project_batched_logistics pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=project_batched_logistics pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "redesign-04-project-pre-dusk-gate",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/manhattan-2.12.5.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+      ],
+      "account": { "offline": { "username": "BenchR04" } },
+      "ram_mb": 2048,
+      "cpu_cores": 1,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=project_pre_dusk_gate",
+        "-Dmanhattan.testbridge.port=25563"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=project_pre_dusk_gate pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=project_pre_dusk_gate pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "redesign-05-project-partial-stop-gate",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/manhattan-2.12.5.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+      ],
+      "account": { "offline": { "username": "BenchR05" } },
+      "ram_mb": 2048,
+      "cpu_cores": 1,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=project_partial_stop_gate",
+        "-Dmanhattan.testbridge.port=25564"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=project_partial_stop_gate pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=project_partial_stop_gate pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "redesign-06-midtown-async-replan",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/manhattan-2.12.5.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+      ],
+      "account": { "offline": { "username": "BenchR06" } },
+      "ram_mb": 2048,
+      "cpu_cores": 1,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=midtown_async_replan",
+        "-Dmanhattan.testbridge.port=25565"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=midtown_async_replan pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=midtown_async_replan pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "redesign-07-midtown-body-interrupt",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/manhattan-2.12.5.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+      ],
+      "account": { "offline": { "username": "BenchR07" } },
+      "ram_mb": 2048,
+      "cpu_cores": 1,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=midtown_body_interrupt",
+        "-Dmanhattan.testbridge.port=25566"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=midtown_body_interrupt pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=midtown_body_interrupt pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "redesign-08-chunk-no-selection-clobber",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/manhattan-2.12.5.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+      ],
+      "account": { "offline": { "username": "BenchR08" } },
+      "ram_mb": 2048,
+      "cpu_cores": 1,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=chunk_no_selection_clobber",
+        "-Dmanhattan.testbridge.port=25567"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_no_selection_clobber pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_no_selection_clobber pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "core-09-nav-flat-obstacle",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/manhattan-2.12.5.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+      ],
+      "account": { "offline": { "username": "BenchR09" } },
+      "ram_mb": 2048,
+      "cpu_cores": 1,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=nav_flat_obstacle",
+        "-Dmanhattan.testbridge.port=25568"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=nav_flat_obstacle pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=nav_flat_obstacle pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "core-10-nav-bridge-off-pillar",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/manhattan-2.12.5.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+      ],
+      "account": { "offline": { "username": "BenchR10" } },
+      "ram_mb": 2048,
+      "cpu_cores": 1,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=nav_bridge_off_pillar",
+        "-Dmanhattan.testbridge.port=25569"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=nav_bridge_off_pillar pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=nav_bridge_off_pillar pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "core-11-nav-pillar-up",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/manhattan-2.12.5.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+      ],
+      "account": { "offline": { "username": "BenchR11" } },
+      "ram_mb": 2048,
+      "cpu_cores": 1,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=nav_pillar_up",
+        "-Dmanhattan.testbridge.port=25570"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=nav_pillar_up pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=nav_pillar_up pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "core-12-nav-parkour-wall",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/manhattan-2.12.5.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+      ],
+      "account": { "offline": { "username": "BenchR12" } },
+      "ram_mb": 2048,
+      "cpu_cores": 1,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=nav_parkour_wall",
+        "-Dmanhattan.testbridge.port=25571"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=nav_parkour_wall pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=nav_parkour_wall pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "core-13-nav-pillar-bridge",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/manhattan-2.12.5.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+      ],
+      "account": { "offline": { "username": "BenchR13" } },
+      "ram_mb": 2048,
+      "cpu_cores": 1,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=nav_pillar_bridge",
+        "-Dmanhattan.testbridge.port=25572"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=nav_pillar_bridge pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=nav_pillar_bridge pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "core-14-mine-pillars-floating",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/manhattan-2.12.5.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+      ],
+      "account": { "offline": { "username": "BenchR14" } },
+      "ram_mb": 2048,
+      "cpu_cores": 1,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=mine_pillars_floating",
+        "-Dmanhattan.testbridge.port=25573"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=mine_pillars_floating pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=mine_pillars_floating pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "core-15-clear-pillars-floating",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/manhattan-2.12.5.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+      ],
+      "account": { "offline": { "username": "BenchR15" } },
+      "ram_mb": 2048,
+      "cpu_cores": 1,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=clear_pillars_floating",
+        "-Dmanhattan.testbridge.port=25574"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=clear_pillars_floating pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=clear_pillars_floating pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "core-16-mine-parkour-wall",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/manhattan-2.12.5.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+      ],
+      "account": { "offline": { "username": "BenchR16" } },
+      "ram_mb": 2048,
+      "cpu_cores": 1,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=mine_parkour_wall",
+        "-Dmanhattan.testbridge.port=25575"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=mine_parkour_wall pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=mine_parkour_wall pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "core-17-eat-offhand",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/manhattan-2.12.5.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+      ],
+      "account": { "offline": { "username": "BenchR17" } },
+      "ram_mb": 2048,
+      "cpu_cores": 1,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=eat_offhand",
+        "-Dmanhattan.testbridge.port=25576"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=eat_offhand pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=eat_offhand pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "core-18-eat-offhand-full-hotbar",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/manhattan-2.12.5.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+      ],
+      "account": { "offline": { "username": "BenchR18" } },
+      "ram_mb": 2048,
+      "cpu_cores": 1,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=eat_offhand_full_hotbar",
+        "-Dmanhattan.testbridge.port=25577"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=eat_offhand_full_hotbar pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=eat_offhand_full_hotbar pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "core-19-interrupt-mid-action",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/manhattan-2.12.5.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+      ],
+      "account": { "offline": { "username": "BenchR19" } },
+      "ram_mb": 2048,
+      "cpu_cores": 1,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=interrupt_mid_action",
+        "-Dmanhattan.testbridge.port=25578"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=interrupt_mid_action pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=interrupt_mid_action pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "core-20-water-fill-tight",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/manhattan-2.12.5.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+      ],
+      "account": { "offline": { "username": "BenchR20" } },
+      "ram_mb": 2048,
+      "cpu_cores": 1,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=water_fill_tight",
+        "-Dmanhattan.testbridge.port=25579"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=water_fill_tight pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=water_fill_tight pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "core-21-schem-unsupported-reach",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/manhattan-2.12.5.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+      ],
+      "account": { "offline": { "username": "BenchR21" } },
+      "ram_mb": 2048,
+      "cpu_cores": 1,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=schem_unsupported_reach",
+        "-Dmanhattan.testbridge.port=25580"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=schem_unsupported_reach pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=schem_unsupported_reach pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "core-22-survival-marathon",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/manhattan-2.12.5.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+      ],
+      "account": { "offline": { "username": "BenchR22" } },
+      "ram_mb": 2048,
+      "cpu_cores": 1,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=survival_marathon",
+        "-Dmanhattan.testbridge.port=25581"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=survival_marathon pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=survival_marathon pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "chunk-23-clear-2x2-easy",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/manhattan-2.12.5.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+      ],
+      "account": { "offline": { "username": "BenchR23" } },
+      "ram_mb": 2048,
+      "cpu_cores": 1,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=chunk_clear_2x2_easy",
+        "-Dmanhattan.testbridge.port=25582"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_clear_2x2_easy pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_clear_2x2_easy pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "chunk-24-clear-straggler-strip",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/manhattan-2.12.5.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+      ],
+      "account": { "offline": { "username": "BenchR24" } },
+      "ram_mb": 2048,
+      "cpu_cores": 1,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=chunk_clear_straggler_strip",
+        "-Dmanhattan.testbridge.port=25583"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_clear_straggler_strip pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_clear_straggler_strip pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "chunk-25-clear-serpentine-3x3",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/manhattan-2.12.5.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+      ],
+      "account": { "offline": { "username": "BenchR25" } },
+      "ram_mb": 2048,
+      "cpu_cores": 1,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=chunk_clear_serpentine_3x3",
+        "-Dmanhattan.testbridge.port=25584"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_clear_serpentine_3x3 pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_clear_serpentine_3x3 pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "chunk-26-clear-nearest-3x2",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/manhattan-2.12.5.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+      ],
+      "account": { "offline": { "username": "BenchR26" } },
+      "ram_mb": 2048,
+      "cpu_cores": 1,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=chunk_clear_nearest_3x2",
+        "-Dmanhattan.testbridge.port=25585"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_clear_nearest_3x2 pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_clear_nearest_3x2 pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "chunk-27-clear-l-shape",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/manhattan-2.12.5.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+      ],
+      "account": { "offline": { "username": "BenchR27" } },
+      "ram_mb": 2048,
+      "cpu_cores": 1,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=chunk_clear_l_shape",
+        "-Dmanhattan.testbridge.port=25586"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_clear_l_shape pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_clear_l_shape pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "chunk-28-clear-deep-trench",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/manhattan-2.12.5.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+      ],
+      "account": { "offline": { "username": "BenchR28" } },
+      "ram_mb": 2048,
+      "cpu_cores": 1,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=chunk_clear_deep_trench",
+        "-Dmanhattan.testbridge.port=25587"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_clear_deep_trench pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_clear_deep_trench pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "chunk-29-water-fill-2x1",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/manhattan-2.12.5.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+      ],
+      "account": { "offline": { "username": "BenchR29" } },
+      "ram_mb": 2048,
+      "cpu_cores": 1,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=chunk_water_fill_2x1",
+        "-Dmanhattan.testbridge.port=25588"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_water_fill_2x1 pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_water_fill_2x1 pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "chunk-30-flood-2x1",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/manhattan-2.12.5.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+      ],
+      "account": { "offline": { "username": "BenchR30" } },
+      "ram_mb": 2048,
+      "cpu_cores": 1,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=chunk_flood_2x1",
+        "-Dmanhattan.testbridge.port=25589"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_flood_2x1 pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_flood_2x1 pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "chunk-31-drain-2x1",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/manhattan-2.12.5.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+      ],
+      "account": { "offline": { "username": "BenchR31" } },
+      "ram_mb": 2048,
+      "cpu_cores": 1,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=chunk_drain_2x1",
+        "-Dmanhattan.testbridge.port=25590"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_drain_2x1 pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_drain_2x1 pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "chunk-32-job-ledger-resume",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/manhattan-2.12.5.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+      ],
+      "account": { "offline": { "username": "BenchR32" } },
+      "ram_mb": 2048,
+      "cpu_cores": 1,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=chunk_job_ledger_resume",
+        "-Dmanhattan.testbridge.port=25591"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_job_ledger_resume pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_job_ledger_resume pass=false|FATAL"
+        }
+      }
+    }
+  ],
+  "server": null,
+  "timeout_secs": 420
+}

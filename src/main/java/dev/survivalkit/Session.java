@@ -42,10 +42,13 @@ final class Session {
         pz = p.getZ();
         havePos = true;
 
-        String fin = System.getProperty("baritonequeue.finished");
+        String fin = dev.midtown.api.RuntimeBus.finishedSummary();
+        if (fin == null) fin = System.getProperty("baritonequeue.finished");
         if (fin != null && !fin.equals(lastFinished)) {
             lastFinished = fin;
-            Util.msg("The queue finished (" + fin.substring(0, fin.indexOf('|')) + "). Session so far:");
+            int sep = fin.indexOf('|');
+            String label = sep >= 0 ? fin.substring(0, sep) : fin;
+            Util.msg("The queue finished (" + label + "). Session so far:");
             print();
         }
     }

@@ -55,8 +55,13 @@ public final class Api {
     }
 
     public static String sleepNow() {
+        return sleepNow(false);
+    }
+
+    /** Walks to the saved bed and sleeps; when {@code allowPreDusk} is true, walks early and waits for nightfall. */
+    public static String sleepNow(boolean allowPreDusk) {
         if (cfg.bed == null) return "No bed saved. Set it in the script: option(\"survival.bed\", pos(x, y, z)) - or look at the bed and /survival bed set.";
-        SurvivalKitMod.sleep.startNow();
+        SurvivalKitMod.sleep.startNow(allowPreDusk);
         return SurvivalKitMod.sleep.busy() ? null : "";   // not night, or the bed is not loaded: the chat says which
     }
 
@@ -94,6 +99,23 @@ public final class Api {
 
     public static boolean eating() {
         return SurvivalKitMod.eat.busy() || EatProcess.forced;
+    }
+
+    public static void stopEating() {
+        EatProcess.forced = false;
+        SurvivalKitMod.eat.onLostControl();
+    }
+
+    /** True if the player carries any worn-out tool (at the item-saver limit). */
+    public static boolean hasWornTools() {
+        var mc = Minecraft.getInstance();
+        var p = mc == null ? null : mc.player;
+        if (p == null) return false;
+        for (int i = 0; i < 36; i++) {
+            var st = p.getInventory().getItem(i);
+            if (!st.isEmpty() && st.isDamageableItem() && Util.nearlyBroken(st)) return true;
+        }
+        return false;
     }
 
     public static boolean fighting() {

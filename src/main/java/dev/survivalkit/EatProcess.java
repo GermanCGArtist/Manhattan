@@ -216,7 +216,8 @@ final class EatProcess extends Feature {
             reselects++;
             holdFood(mc, p);
         }
-        mc.options.keyUse.setDown(true);
+        dev.midtown.body.BodyController.INSTANCE.acquire(mc, "eat");
+        dev.midtown.body.BodyController.INSTANCE.setUseKey(mc, true);
         if (!started && timer >= 2 && (timer - 2) % 10 == 0) {
             mc.gameMode.useItem(p, hand);
         }
@@ -248,7 +249,8 @@ final class EatProcess extends Feature {
     private void finish(Minecraft mc, LocalPlayer p) {
         forced = false;
         Session.count("meals");
-        mc.options.keyUse.setDown(false);
+        dev.midtown.body.BodyController.INSTANCE.setUseKey(mc, false);
+        dev.midtown.body.BodyController.INSTANCE.releaseIfOwner(mc, "eat");
         if (offFrom >= 0) {
             Util.swapWithOffhand(mc, p, offFrom);
             offFrom = -1;

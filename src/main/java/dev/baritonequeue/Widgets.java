@@ -1,5 +1,7 @@
 package dev.baritonequeue;
 
+import dev.baritonequeue.project.GameProjectRuntime;
+import dev.baritonequeue.project.Project;
 import imgui.ImDrawList;
 import imgui.ImGui;
 import imgui.flag.ImGuiCol;
@@ -197,7 +199,8 @@ final class Widgets {
         ImGui.sameLine(0f, 14f * s());
         ImGui.beginGroup();
         if (snap.running()) {
-            ImGui.textUnformatted("Step " + snap.currentStep() + "/" + snap.totalSteps() + " · line " + snap.line());
+            ImGui.textUnformatted("Step " + snap.currentStep() + "/" + snap.totalSteps()
+                    + (snap.line() > 0 ? " · line " + snap.line() : ""));
             UiTheme.pushText(DIM);
             ImGui.textUnformatted(Alerts.shorten(snap.currentCommand().isEmpty() ? runningStepText(snap) : snap.currentCommand(), 64));
             ImGui.textUnformatted(Alerts.shorten(snap.stepTailText() + "  ·  elapsed " + snap.elapsedText(), 72));
@@ -222,7 +225,7 @@ final class Widgets {
         float y0 = ImGui.getCursorPosY();
 
         ImGui.beginGroup();
-        label("Manhattan · " + DockedPanels.activeTabName());
+        label("Manhattan · " + activeSourceTitle());
         statusPill(snap, failing);
         ImGui.endGroup();
 
@@ -271,11 +274,33 @@ final class Widgets {
         runButtons(snap.running());
     }
 
+    private static boolean projectRunning() {
+        try {
+            GameProjectRuntime rt = GameProjectRuntime.instance();
+            return rt != null && rt.running();
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static String activeSourceTitle() {
+        if (projectRunning()) {
+            Project p = GameProjectRuntime.instance().activeProject();
+            if (p != null) {
+                String name = (p.name != null && !p.name.isBlank()) ? p.name : p.id;
+                if (name != null && !name.isBlank()) return "Project: " + name;
+            }
+            return "Project Queue";
+        }
+        return DockedPanels.activeTabName();
+    }
+
     /** The steps around the running one (or the first ones when idle). */
     static void steps(ProgressModel.Snapshot snap, int maxRows) {
+        boolean projRun = projectRunning();
         List<ProgressModel.Segment> segs = snap.segments();
         if (segs.isEmpty()) {
-            UiTheme.textColored(DIM, "The script is empty.");
+            UiTheme.textColored(DIM, projRun ? "No tasks in project." : "The script is empty.");
             return;
         }
         int run = 0;
@@ -309,7 +334,7 @@ final class Widgets {
             ImGui.popStyleColor();
             ImGui.sameLine(0f, 8f * s);
             UiTheme.textColored(c, fit(seg.text(), textW));
-            if (ImGui.isItemHovered()) ImGui.setTooltip("Line " + seg.line() + ": " + seg.text());
+            if (ImGui.isItemHovered()) ImGui.setTooltip((projRun ? "Task " : "Line ") + seg.line() + ": " + seg.text());
             if (!right.isEmpty()) {
                 ImGui.sameLine(availW - rightW + 8f * s);
                 UiTheme.textColored(ACCENT, right);

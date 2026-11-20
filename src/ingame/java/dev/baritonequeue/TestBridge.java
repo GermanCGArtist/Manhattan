@@ -1,5 +1,12 @@
 package dev.baritonequeue;
 
+import dev.baritonequeue.project.GameProjectRuntime;
+import dev.baritonequeue.project.Project;
+import dev.baritonequeue.project.ProjectTask;
+import dev.baritonequeue.project.TaskQueue;
+import dev.midtown.api.BenchmarkLogger;
+import dev.midtown.api.EngineSelector;
+import dev.midtown.body.BodyController;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.Minecraft;
@@ -11,12 +18,17 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.Difficulty;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.LevelSettings;
 import net.minecraft.world.level.WorldDataConfiguration;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.gamerules.GameRules;
 import net.minecraft.world.level.levelgen.WorldOptions;
 import net.minecraft.world.level.levelgen.presets.WorldPresets;
+import net.minecraft.tags.FluidTags;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -52,6 +64,13 @@ public class TestBridge implements ClientModInitializer {
     private enum BenchState { IDLE, OPENING_WORLD, WAIT_IN_WORLD, SETUP, RUNNING, DONE }
     private static BenchState benchState = BenchState.IDLE;
     private static int benchTicks = 0;
+    private static boolean benchProjectMode = false;
+    private static long benchStartMs = 0L;
+    private static Project benchProject = null;
+    private static boolean benchWallBuilt = false;
+    private static boolean benchSelectionClobbered = false;
+    private static List<int[]> benchKeepBoxes = List.of();
+    private static boolean benchResultEmitted = false;
 
     @Override
     public void onInitializeClient() {
@@ -655,11 +674,32 @@ public class TestBridge implements ClientModInitializer {
             case SETUP -> {
                 String scenario = BENCHMARK.trim();
                 if (benchTicks >= 20 && (setupSynced(mc, scenario) || benchTicks >= 20 * 30)) {
+                    benchResultEmitted = false;
+                    benchStartMs = System.currentTimeMillis();
+                    if (isProjectBenchmark(scenario)) {
+                        benchProjectMode = true;
+                        benchProject = buildProjectBenchmark(mc, scenario);
+                        String err = benchProject == null
+                                ? "Failed to construct project for scenario: " + scenario
+                                : GameProjectRuntime.instance().startQueue(benchProject);
+                        if (err != null) {
+                            System.out.println("[testbridge] benchmark project failed to start: " + err);
+                            emitProjectBenchmark(scenario, false, 0);
+                            benchState = BenchState.DONE;
+                            benchTicks = 0;
+                            return;
+                        }
+                        benchState = BenchState.RUNNING;
+                        benchTicks = 0;
+                        return;
+                    }
+                    benchProjectMode = false;
+                    benchProject = null;
                     List<String> script = benchmarkScript(scenario);
                     if (script == null) {
                         System.out.println("[testbridge] unknown benchmark scenario: " + BENCHMARK);
-                        dev.midtown.api.BenchmarkLogger.emit(
-                                dev.midtown.api.EngineSelector.selectedName(), BENCHMARK, false, 0, 0, 0, 0, 0);
+                        BenchmarkLogger.emit(
+                                EngineSelector.selectedName(), BENCHMARK, false, 0, 0, 0, 0, 0);
                         benchState = BenchState.DONE;
                         benchTicks = 0;
                         return;
@@ -667,8 +707,8 @@ public class TestBridge implements ClientModInitializer {
                     String err = QueueMod.runner.start(script);
                     if (err != null) {
                         System.out.println("[testbridge] benchmark script failed to start: " + err);
-                        dev.midtown.api.BenchmarkLogger.emit(
-                                dev.midtown.api.EngineSelector.selectedName(), BENCHMARK, false, 0, 0, 0, 0, 0);
+                        BenchmarkLogger.emit(
+                                EngineSelector.selectedName(), BENCHMARK, false, 0, 0, 0, 0, 0);
                         benchState = BenchState.DONE;
                         benchTicks = 0;
                         return;
@@ -678,14 +718,39 @@ public class TestBridge implements ClientModInitializer {
                 }
             }
             case RUNNING -> {
-                if (!QueueMod.runner.running()) {
-                    // Runner.emitBenchmark(...) already emitted BENCHMARK_RESULT on script completion/failure
-                    benchState = BenchState.DONE;
-                    benchTicks = 0;
-                } else if (benchTicks >= 20 * 360) {
-                    QueueMod.runner.halt("Benchmark timeout");
-                    benchState = BenchState.DONE;
-                    benchTicks = 0;
+                String scenario = BENCHMARK.trim();
+                if (benchProjectMode) {
+                    if ("chunk_no_selection_clobber".equals(scenario) && !sameBoxes(Areas.read(), benchKeepBoxes)) {
+                        benchSelectionClobbered = true;
+                    }
+                    if (!GameProjectRuntime.instance().running()) {
+                        boolean pass = verifyProjectBenchmark(mc, scenario, benchProject);
+                        long elapsedMs = Math.max(0L, System.currentTimeMillis() - benchStartMs);
+                        emitProjectBenchmark(scenario, pass, elapsedMs);
+                        benchState = BenchState.DONE;
+                        benchTicks = 0;
+                    } else if (benchTicks >= 20 * 360) {
+                        GameProjectRuntime.instance().stopQueue("Benchmark timeout");
+                        long elapsedMs = Math.max(0L, System.currentTimeMillis() - benchStartMs);
+                        emitProjectBenchmark(scenario, false, elapsedMs);
+                        benchState = BenchState.DONE;
+                        benchTicks = 0;
+                    }
+                } else {
+                    if ("midtown_async_replan".equals(scenario) && !benchWallBuilt
+                            && mc.player != null && mc.player.getX() >= 112.0) {
+                        benchWallBuilt = true;
+                        mc.player.connection.sendCommand("fill 118 -60 97 118 -57 103 stone");
+                    }
+                    if (!QueueMod.runner.running()) {
+                        // Runner.emitBenchmark(...) already emitted BENCHMARK_RESULT on script completion/failure
+                        benchState = BenchState.DONE;
+                        benchTicks = 0;
+                    } else if (benchTicks >= 20 * 360) {
+                        QueueMod.runner.halt("Benchmark timeout");
+                        benchState = BenchState.DONE;
+                        benchTicks = 0;
+                    }
                 }
             }
             case DONE -> {
@@ -699,15 +764,20 @@ public class TestBridge implements ClientModInitializer {
 
     private static void setupBenchmarkScenario(Minecraft mc, String scenario) {
         if (mc.player == null) return;
+        benchWallBuilt = false;
+        benchSelectionClobbered = false;
+        benchKeepBoxes = List.of();
+        benchResultEmitted = false;
         var s = mc.getSingleplayerServer();
         if (s != null) {
+            boolean advanceTime = "project_pre_dusk_gate".equals(scenario);
             s.execute(() -> {
                 var gr = s.getGameRules();
-                gr.set(net.minecraft.world.level.gamerules.GameRules.SPAWN_MOBS, false, s);
-                gr.set(net.minecraft.world.level.gamerules.GameRules.SPAWN_MONSTERS, false, s);
-                gr.set(net.minecraft.world.level.gamerules.GameRules.KEEP_INVENTORY, true, s);
-                gr.set(net.minecraft.world.level.gamerules.GameRules.ADVANCE_TIME, false, s);
-                gr.set(net.minecraft.world.level.gamerules.GameRules.ADVANCE_WEATHER, false, s);
+                gr.set(GameRules.SPAWN_MOBS, false, s);
+                gr.set(GameRules.SPAWN_MONSTERS, false, s);
+                gr.set(GameRules.KEEP_INVENTORY, true, s);
+                gr.set(GameRules.ADVANCE_TIME, advanceTime, s);
+                gr.set(GameRules.ADVANCE_WEATHER, false, s);
             });
         }
         List<String> cmds = new ArrayList<>();
@@ -935,6 +1005,81 @@ public class TestBridge implements ClientModInitializer {
                 cmds.add("give @s diamond_pickaxe 1");
                 cmds.add("effect give @s haste 10000 255 true");
             }
+            case "project_queue_pipeline" -> {
+                cmds.add("fill 104 -62 99 108 -61 101 water");
+                cmds.add("setblock 98 -60 100 chest");
+                cmds.add("setblock 98 -60 102 chest");
+                cmds.add("data merge block 98 -60 102 {Items:["
+                        + "{Slot:0b,id:\"minecraft:dirt\",count:64},"
+                        + "{Slot:1b,id:\"minecraft:dirt\",count:64},"
+                        + "{Slot:2b,id:\"minecraft:dirt\",count:64},"
+                        + "{Slot:3b,id:\"minecraft:dirt\",count:64}]}");
+                cmds.add("setblock 98 -60 104 red_bed");
+                cmds.add("give @s diamond_shovel 1");
+                cmds.add("give @s diamond_pickaxe 1");
+                cmds.add("give @s dirt 16");
+            }
+            case "project_script_params" -> {
+                cmds.add("fill 104 -60 96 106 -59 98 dirt");
+                cmds.add("fill 110 -60 96 112 -59 98 dirt");
+                cmds.add("setblock 98 -60 100 chest");
+                cmds.add("give @s diamond_pickaxe 1");
+                cmds.add("give @s diamond_shovel 1");
+            }
+            case "project_batched_logistics" -> {
+                cmds.add("difficulty easy");
+                cmds.add("fill 104 -60 97 109 -59 103 stone");
+                cmds.add("setblock 98 -60 100 chest");
+                cmds.add("setblock 98 -60 102 chest");
+                cmds.add("data merge block 98 -60 102 {Items:["
+                        + "{Slot:0b,id:\"minecraft:diamond_pickaxe\",count:1},"
+                        + "{Slot:1b,id:\"minecraft:diamond_pickaxe\",count:1},"
+                        + "{Slot:2b,id:\"minecraft:bread\",count:32}]}");
+                cmds.add("setblock 98 -60 104 chest");
+                cmds.add("item replace entity @s hotbar.0 with diamond_pickaxe[damage=1550] 1");
+                for (int i = 1; i < 9; i++) {
+                    cmds.add("item replace entity @s hotbar." + i + " with cobblestone 64");
+                }
+                for (int i = 0; i < 25; i++) {
+                    cmds.add("item replace entity @s inventory." + i + " with cobblestone 64");
+                }
+                cmds.add("effect give @s minecraft:hunger 5 60 true");
+            }
+            case "project_pre_dusk_gate" -> {
+                cmds.add("time set 11800");
+                cmds.add("setblock 98 -60 102 red_bed");
+                cmds.add("fill 115 -60 99 117 -60 101 stone");
+                cmds.add("give @s diamond_pickaxe 1");
+            }
+            case "project_partial_stop_gate" -> {
+                cmds.add("fill 105 -62 98 108 -59 101 bedrock");
+                cmds.add("fill 106 -61 99 107 -61 100 water");
+                cmds.add("fill 112 -60 99 112 -60 101 dirt");
+                cmds.add("give @s dirt 64");
+                cmds.add("give @s diamond_shovel 1");
+            }
+            case "midtown_async_replan" -> {
+                // Wall is placed dynamically during RUNNING once player X >= 112.0
+            }
+            case "midtown_body_interrupt" -> {
+                cmds.add("difficulty normal");
+                cmds.add("fill 104 -60 98 107 -59 102 stone");
+                cmds.add("give @s diamond_helmet 1");
+                cmds.add("give @s diamond_chestplate 1");
+                cmds.add("give @s diamond_leggings 1");
+                cmds.add("give @s diamond_boots 1");
+                cmds.add("give @s diamond_sword 1");
+                cmds.add("give @s diamond_pickaxe 1");
+                cmds.add("give @s bread 16");
+                cmds.add("effect give @s minecraft:hunger 8 40 true");
+                cmds.add("summon minecraft:zombie 108 -60 100");
+            }
+            case "chunk_no_selection_clobber" -> {
+                cmds.add("fill 104 -60 92 127 -59 115 stone");
+                cmds.add("give @s diamond_pickaxe[unbreakable={}] 1");
+                cmds.add("give @s diamond_pickaxe 1");
+                cmds.add("effect give @s haste 10000 255 true");
+            }
             default -> { }
         }
         cmds.add("tp @s 100 -60 100 0 0");
@@ -994,7 +1139,36 @@ public class TestBridge implements ClientModInitializer {
             case "chunk_interrupt_survival", "chunk_protected_transit", "chunk_job_ledger_resume", "chunk_disabled_baseline" ->
                     mc.level.getBlockState(new BlockPos(104, -60, 96)).is(net.minecraft.world.level.block.Blocks.STONE);
             case "chunk_colossal_4x4" ->
-                    mc.level.getBlockState(new BlockPos(104, -60, 80)).is(net.minecraft.world.level.block.Blocks.STONE);
+                    mc.level.getBlockState(new BlockPos(104, -60, 80)).is(Blocks.STONE);
+            case "project_queue_pipeline" ->
+                    mc.level.getBlockState(new BlockPos(98, -60, 100)).is(Blocks.CHEST)
+                            && mc.level.getBlockState(new BlockPos(98, -60, 102)).is(Blocks.CHEST)
+                            && mc.level.getBlockState(new BlockPos(98, -60, 104)).is(Blocks.RED_BED)
+                            && mc.level.getFluidState(new BlockPos(104, -62, 99)).is(FluidTags.WATER);
+            case "project_script_params" ->
+                    mc.level.getBlockState(new BlockPos(98, -60, 100)).is(Blocks.CHEST)
+                            && mc.level.getBlockState(new BlockPos(104, -60, 96)).is(Blocks.DIRT)
+                            && mc.level.getBlockState(new BlockPos(110, -60, 96)).is(Blocks.DIRT);
+            case "project_batched_logistics" ->
+                    mc.level.getBlockState(new BlockPos(98, -60, 100)).is(Blocks.CHEST)
+                            && mc.level.getBlockState(new BlockPos(98, -60, 102)).is(Blocks.CHEST)
+                            && mc.level.getBlockState(new BlockPos(98, -60, 104)).is(Blocks.CHEST)
+                            && mc.level.getBlockState(new BlockPos(104, -60, 97)).is(Blocks.STONE)
+                            && mc.player != null && !mc.player.getInventory().getItem(0).isEmpty();
+            case "project_pre_dusk_gate" ->
+                    mc.level.getBlockState(new BlockPos(98, -60, 102)).is(Blocks.RED_BED)
+                            && mc.level.getBlockState(new BlockPos(115, -60, 99)).is(Blocks.STONE)
+                            && (mc.level.getOverworldClockTime() % 24000L) >= 11700L;
+            case "project_partial_stop_gate" ->
+                    mc.level.getBlockState(new BlockPos(105, -59, 98)).is(Blocks.BEDROCK)
+                            && mc.level.getFluidState(new BlockPos(106, -61, 99)).is(FluidTags.WATER)
+                            && mc.level.getBlockState(new BlockPos(112, -60, 99)).is(Blocks.DIRT);
+            case "midtown_async_replan" ->
+                    mc.player != null && mc.player.blockPosition().equals(new BlockPos(100, -60, 100));
+            case "midtown_body_interrupt" ->
+                    mc.level.getBlockState(new BlockPos(104, -60, 98)).is(Blocks.STONE);
+            case "chunk_no_selection_clobber" ->
+                    mc.level.getBlockState(new BlockPos(104, -60, 92)).is(Blocks.STONE);
             default -> true;
         };
     }
@@ -1254,8 +1428,267 @@ public class TestBridge implements ClientModInitializer {
                     "select(pos(104, -60, 80), pos(151, -60, 127))",
                     "clear_area()"
             );
+            case "midtown_async_replan" -> List.of(
+                    "timeout(120)",
+                    "disable()",
+                    "goto(pos(140, -60, 100))"
+            );
             default -> null;
         };
+    }
+
+    private static boolean isProjectBenchmark(String scenario) {
+        return switch (scenario) {
+            case "project_queue_pipeline",
+                 "project_script_params",
+                 "project_batched_logistics",
+                 "project_pre_dusk_gate",
+                 "project_partial_stop_gate",
+                 "midtown_body_interrupt",
+                 "chunk_no_selection_clobber" -> true;
+            default -> false;
+        };
+    }
+
+    private static void saveBenchmarkArea(String name, int x1, int y1, int z1, int x2, int y2, int z2) {
+        Areas.setSingleBox(new BlockPos(x1, y1, z1), new BlockPos(x2, y2, z2));
+        Areas.save(name);
+    }
+
+    private static Project buildProjectBenchmark(Minecraft mc, String scenario) {
+        String id = "bench_" + scenario + "_" + (System.currentTimeMillis() % 100000L);
+        Project p = new Project(id, scenario, "manhattan-benchmark");
+        p.ensureInitialized();
+
+        switch (scenario) {
+            case "project_queue_pipeline" -> {
+                saveBenchmarkArea("pond_test", 104, -62, 99, 108, -61, 101);
+                Areas.clearSelection();
+                p.places.dumpChest = new int[]{98, -60, 100};
+                p.places.scaffoldChest = new int[]{98, -60, 102};
+                p.places.materialChests.add(new int[]{98, -60, 102});
+                p.places.bed = new int[]{98, -60, 104};
+
+                ProjectTask t1 = new ProjectTask("t_fill", "Fill pond", ProjectTask.Kind.FILL_WATER);
+                t1.areaName = "pond_test";
+                t1.expand = 1;
+                t1.block = "dirt";
+                t1.overrides.allowBreak = false;
+                t1.overrides.allowPlace = false;
+
+                ProjectTask t2 = new ProjectTask("t_clear", "Clear pond", ProjectTask.Kind.CLEAR_AREA);
+                t2.areaName = "pond_test";
+                t2.dumpAfter = true;
+
+                ProjectTask t3 = new ProjectTask("t_dump", "Dump items", ProjectTask.Kind.DUMP);
+
+                p.tasks.add(t1);
+                p.tasks.add(t2);
+                p.tasks.add(t3);
+            }
+            case "project_script_params" -> {
+                saveBenchmarkArea("mound_a", 104, -60, 96, 106, -59, 98);
+                saveBenchmarkArea("mound_b", 111, -60, 97, 111, -59, 97);
+                Areas.clearSelection();
+                p.places.dumpChest = new int[]{98, -60, 100};
+
+                String inline = "area(target_area); if expand_by != 0 then expand_selection(expand_by, 0, expand_by) end; clear_area(); dump(dump_chest)";
+
+                ProjectTask t1 = new ProjectTask("t_mound_a", "Clear mound A", ProjectTask.Kind.SCRIPT);
+                t1.inlineScript = inline;
+                t1.params.put("target_area", "mound_a");
+                t1.params.put("expand_by", 0);
+
+                ProjectTask t2 = new ProjectTask("t_mound_b", "Clear mound B", ProjectTask.Kind.SCRIPT);
+                t2.inlineScript = inline;
+                t2.params.put("target_area", "mound_b");
+                t2.params.put("expand_by", 1);
+
+                p.tasks.add(t1);
+                p.tasks.add(t2);
+            }
+            case "project_batched_logistics" -> {
+                saveBenchmarkArea("logistics_stone", 104, -60, 97, 109, -59, 103);
+                Areas.clearSelection();
+                p.places.dumpChest = new int[]{98, -60, 100};
+                p.places.toolChest = new int[]{98, -60, 102};
+                p.places.returnChest = new int[]{98, -60, 104};
+
+                p.survival.batchBaseTrips = true;
+                p.survival.itemSaver = true;
+                p.survival.itemSaverThreshold = 50;
+                p.survival.dumpFreeSlotsBelow = 3;
+                p.survival.want.put("diamond_pickaxe", 1);
+                p.survival.want.put("bread", 8);
+
+                ProjectTask t1 = new ProjectTask("t_clear", "Clear stone", ProjectTask.Kind.CLEAR_AREA);
+                t1.areaName = "logistics_stone";
+                p.tasks.add(t1);
+            }
+            case "project_pre_dusk_gate" -> {
+                saveBenchmarkArea("pre_dusk_stone", 115, -60, 99, 117, -60, 101);
+                Areas.clearSelection();
+                p.places.bed = new int[]{98, -60, 102};
+                p.survival.sleepEnabled = true;
+                p.survival.preDuskGate = true;
+                p.survival.preDuskMarginTicks = 1200;
+
+                ProjectTask t1 = new ProjectTask("t_clear", "Clear stone after sleep", ProjectTask.Kind.CLEAR_AREA);
+                t1.areaName = "pre_dusk_stone";
+                p.tasks.add(t1);
+            }
+            case "project_partial_stop_gate" -> {
+                saveBenchmarkArea("sealed_water", 106, -61, 99, 107, -61, 100);
+                saveBenchmarkArea("untouched_dirt", 112, -60, 99, 112, -60, 101);
+                Areas.clearSelection();
+
+                ProjectTask t1 = new ProjectTask("t_fill", "Sealed water fill", ProjectTask.Kind.FILL_WATER);
+                t1.areaName = "sealed_water";
+                t1.block = "dirt";
+                t1.partialPolicy = ProjectTask.PartialPolicy.STOP;
+                t1.partialThreshold = 0;
+
+                ProjectTask t2 = new ProjectTask("t_clear", "Untouched dirt clear", ProjectTask.Kind.CLEAR_AREA);
+                t2.areaName = "untouched_dirt";
+
+                p.tasks.add(t1);
+                p.tasks.add(t2);
+            }
+            case "midtown_body_interrupt" -> {
+                saveBenchmarkArea("body_interrupt_stone", 104, -60, 98, 107, -59, 102);
+                Areas.clearSelection();
+                p.survival.defendEnabled = true;
+                p.survival.defendRange = 10.0;
+                p.survival.eatEnabled = true;
+
+                ProjectTask t1 = new ProjectTask("t_clear", "Clear stone under attack", ProjectTask.Kind.CLEAR_AREA);
+                t1.areaName = "body_interrupt_stone";
+                p.tasks.add(t1);
+            }
+            case "chunk_no_selection_clobber" -> {
+                Config.cfg.chunkEnabled = true;
+                Config.cfg.chunkSize = 12;
+                saveBenchmarkArea("work_area", 104, -60, 92, 127, -59, 115);
+                saveBenchmarkArea("keep_me", 90, -60, 90, 92, -60, 92);
+                Areas.load("keep_me");
+                benchKeepBoxes = Areas.read();
+
+                ProjectTask t1 = new ProjectTask("t_clear", "Chunked work area", ProjectTask.Kind.CLEAR_AREA);
+                t1.areaName = "work_area";
+                t1.collectScaffoldAfter = false;
+                p.tasks.add(t1);
+            }
+            default -> {
+                return null;
+            }
+        }
+        p.ensureInitialized();
+        return p;
+    }
+
+    private static boolean verifyProjectBenchmark(Minecraft mc, String scenario, Project project) {
+        if (mc.level == null || project == null) return false;
+        GameProjectRuntime rt = GameProjectRuntime.instance();
+        return switch (scenario) {
+            case "project_queue_pipeline" ->
+                    isBoxAirNoFluid(mc, 104, -62, 99, 108, -61, 101)
+                            && rt.taskState("t_fill") == TaskQueue.TaskLedger.State.DONE
+                            && rt.taskState("t_clear") == TaskQueue.TaskLedger.State.DONE
+                            && rt.taskState("t_dump") == TaskQueue.TaskLedger.State.DONE
+                            && EngineSelector.current().allowBreak()
+                            && EngineSelector.current().allowPlace();
+            case "project_script_params" ->
+                    isBoxAirNoFluid(mc, 104, -60, 96, 106, -59, 98)
+                            && isBoxAirNoFluid(mc, 110, -60, 96, 112, -59, 98)
+                            && rt.taskState("t_mound_a") == TaskQueue.TaskLedger.State.DONE
+                            && rt.taskState("t_mound_b") == TaskQueue.TaskLedger.State.DONE;
+            case "project_batched_logistics" ->
+                    isBoxAirNoFluid(mc, 104, -60, 97, 109, -59, 103)
+                            && rt.taskState("t_clear") == TaskQueue.TaskLedger.State.DONE;
+            case "project_pre_dusk_gate" ->
+                    isBoxAirNoFluid(mc, 115, -60, 99, 117, -60, 101)
+                            && rt.taskState("t_clear") == TaskQueue.TaskLedger.State.DONE;
+            case "project_partial_stop_gate" -> {
+                TaskQueue.TaskLedger.State s1 = rt.taskState("t_fill");
+                TaskQueue.TaskLedger.State s2 = rt.taskState("t_clear");
+                yield s1 == TaskQueue.TaskLedger.State.FAILED
+                        && (s2 == null || s2 == TaskQueue.TaskLedger.State.PENDING)
+                        && isBoxBlock(mc, 112, -60, 99, 112, -60, 101, Blocks.DIRT);
+            }
+            case "midtown_body_interrupt" -> {
+                int zombies = 0;
+                if (mc.player != null) {
+                    for (Entity e : mc.level.entitiesForRendering()) {
+                        if (e.isAlive() && e.getType() == EntityType.ZOMBIE && e.distanceTo(mc.player) <= 48.0) {
+                            zombies++;
+                        }
+                    }
+                }
+                yield mc.player != null && mc.player.isAlive() && mc.player.getHealth() > 0f
+                        && zombies == 0
+                        && isBoxAirNoFluid(mc, 104, -60, 98, 107, -59, 102)
+                        && BodyController.INSTANCE.currentOwner() == null
+                        && rt.taskState("t_clear") == TaskQueue.TaskLedger.State.DONE;
+            }
+            case "chunk_no_selection_clobber" ->
+                    !benchSelectionClobbered
+                            && sameBoxes(Areas.read(), benchKeepBoxes)
+                            && isBoxAirNoFluid(mc, 104, -60, 92, 127, -59, 115)
+                            && rt.taskState("t_clear") == TaskQueue.TaskLedger.State.DONE;
+            default -> false;
+        };
+    }
+
+    private static void emitProjectBenchmark(String scenario, boolean pass, long elapsedMs) {
+        if (benchResultEmitted) return;
+        benchResultEmitted = true;
+        BenchmarkLogger.emit(
+                EngineSelector.selectedName(),
+                scenario,
+                pass,
+                Math.max(0L, elapsedMs),
+                0,
+                0,
+                0,
+                0
+        );
+    }
+
+    private static boolean isBoxAirNoFluid(Minecraft mc, int x1, int y1, int z1, int x2, int y2, int z2) {
+        if (mc.level == null) return false;
+        for (int x = Math.min(x1, x2); x <= Math.max(x1, x2); x++) {
+            for (int y = Math.min(y1, y2); y <= Math.max(y1, y2); y++) {
+                for (int z = Math.min(z1, z2); z <= Math.max(z1, z2); z++) {
+                    BlockPos p = new BlockPos(x, y, z);
+                    if (!mc.level.getBlockState(p).isAir() || !mc.level.getFluidState(p).isEmpty()) {
+                        return false;
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
+    private static boolean isBoxBlock(Minecraft mc, int x1, int y1, int z1, int x2, int y2, int z2, Block expected) {
+        if (mc.level == null) return false;
+        for (int x = Math.min(x1, x2); x <= Math.max(x1, x2); x++) {
+            for (int y = Math.min(y1, y2); y <= Math.max(y1, y2); y++) {
+                for (int z = Math.min(z1, z2); z <= Math.max(z1, z2); z++) {
+                    if (!mc.level.getBlockState(new BlockPos(x, y, z)).is(expected)) {
+                        return false;
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
+    private static boolean sameBoxes(List<int[]> a, List<int[]> b) {
+        if (a == null || b == null || a.size() != b.size()) return false;
+        for (int i = 0; i < a.size(); i++) {
+            if (!java.util.Arrays.equals(a.get(i), b.get(i))) return false;
+        }
+        return true;
     }
 
     /** Opens the world, or creates it first: a flat creative world with cheats, no structures. */

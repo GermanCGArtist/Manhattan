@@ -13,6 +13,11 @@ public final class Api {
         return BuildToolsMod.terminator.startNow(item);
     }
 
+    /** Fills the water inside {@code explicitBoxes} without mutating global Areas selection. */
+    public static String fillWater(Item item, java.util.List<int[]> explicitBoxes) {
+        return BuildToolsMod.terminator.startNow(item, explicitBoxes);
+    }
+
     public static boolean fillingWater() {
         return BuildToolsMod.terminator.busy();
     }
@@ -40,6 +45,12 @@ public final class Api {
         return BuildToolsMod.drain.busy() ? null : "";
     }
 
+    /** Drains water inside {@code explicitBoxes} without mutating global Areas selection. */
+    public static String drainNow(java.util.List<int[]> explicitBoxes) {
+        BuildToolsMod.drain.startNow(explicitBoxes);
+        return BuildToolsMod.drain.busy() ? null : "";
+    }
+
     public static boolean draining() {
         return BuildToolsMod.drain.busy();
     }
@@ -51,6 +62,12 @@ public final class Api {
     /** Fills the selection WITH water, using buckets. */
     public static String floodNow() {
         BuildToolsMod.fill.startNow();
+        return BuildToolsMod.fill.busy() ? null : "Could not start filling with water (see the message above).";
+    }
+
+    /** Fills {@code explicitBoxes} WITH water without mutating global Areas selection. */
+    public static String floodNow(java.util.List<int[]> explicitBoxes) {
+        BuildToolsMod.fill.startNow(explicitBoxes);
         return BuildToolsMod.fill.busy() ? null : "Could not start filling with water (see the message above).";
     }
 
@@ -197,6 +214,27 @@ public final class Api {
     /** Sets the player's own allowBreak (near a safe area it takes effect once you leave). Returns the old value. */
     public static boolean setOwnBreak(boolean v) {
         return RegionRules.setOwnBreak(v);
+    }
+
+    /** Sets the player's own allowPlace (near a safe area it takes effect once you leave). Returns the old value. */
+    public static boolean setOwnPlace(boolean v) {
+        return RegionRules.setOwnPlace(v);
+    }
+
+    public static boolean isEmergencyNeeded() {
+        return BuildToolsMod.escape.isEmergencyNeeded();
+    }
+
+    public static boolean startEmergencyNow() {
+        return BuildToolsMod.escape.startEmergencyNow();
+    }
+
+    public static boolean emergencyBusy() {
+        return BuildToolsMod.escape.busy();
+    }
+
+    public static void stopEmergency() {
+        BuildToolsMod.escape.onLostControl();
     }
 
     /** Inside a safe area (and safe areas are on). */

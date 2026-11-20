@@ -82,28 +82,13 @@ public class LoadChestMod implements ClientModInitializer {
         Map<String, Integer> keep = new LinkedHashMap<>();
     }
 
-    /** The queue's "addons off ..." line: is this feature switched off for now? (names or "all", comma separated) */
     /** The script's enable("eat", ...): this helper runs while the script runs, whatever its saved option says. */
     static boolean scriptOn(String feature, boolean saved) {
-        String v = System.getProperty("baritonequeue.helpers.on");
-        if (v != null) {
-            for (String k : v.split(",")) {
-                k = k.trim();
-                if (k.equals("all") || k.equals(feature)) return true;
-            }
-        }
-        return saved;
+        return dev.midtown.api.RuntimeBus.isHelperOn(feature, saved);
     }
 
     static boolean addonOff(String feature) {
-        String v = System.getProperty("baritonequeue.addons.off");
-        if (v == null) return false;
-        String f = feature.toLowerCase();
-        for (String k : v.split(",")) {
-            k = k.trim();
-            if (k.equals("all") || (!k.isEmpty() && f.contains(k))) return true;
-        }
-        return false;
+        return dev.midtown.api.RuntimeBus.isAddonOff(feature);
     }
 
     private static final int SEARCH_RADIUS = 48;
@@ -525,7 +510,7 @@ public class LoadChestMod implements ClientModInitializer {
         LocalPlayer p = mc.player;
         if (p == null || mc.level == null || mc.gameMode == null) { state = State.IDLE; return; }
 
-        if (PauseWatch.paused) {   // #pause: no chest trips, no pickups
+        if (PauseWatch.isPaused()) {   // #pause: no chest trips, no pickups
             pickupProcess.releaseDirectWalk(mc);
             if (state != State.IDLE) {
                 if (p.containerMenu != p.inventoryMenu) p.closeContainer();
@@ -536,7 +521,7 @@ public class LoadChestMod implements ClientModInitializer {
         trackOwnDrops(mc, p);
 
         if (state == State.IDLE) {
-            System.clearProperty("loadchest.busy");
+            dev.midtown.api.RuntimeBus.setLoadChestBusy(false);
             pickupProcess.tick(mc, p);
             // auto mode: check once a second whether the inventory filled up during #mine
             if (scriptOn("autoempty", cfg.auto) && ++autoCheck % 20 == 0 && baritoneBusy() && inventoryFull(p) && !addonOff("autoempty")) {
@@ -573,7 +558,7 @@ public class LoadChestMod implements ClientModInitializer {
         }
 
         pickupProcess.releaseDirectWalk(mc);
-        System.setProperty("loadchest.busy", "1");
+        dev.midtown.api.RuntimeBus.setLoadChestBusy(true);
         switch (state) {
             case PATHING -> {
                 if (++timer > PATH_TIMEOUT) { stop("Pathing timed out."); return; }
@@ -925,8 +910,8 @@ public class LoadChestMod implements ClientModInitializer {
                 || dev.survivalkit.Api.busy()
                 || dev.buildtools.Api.busy()
                 || dev.baritonequeue.ClearProcess.isClearWorking()
-                || System.getProperty("baritonequeue.step") != null
-                || System.getProperty("survivalkit.recovering") != null
+                || dev.midtown.api.RuntimeBus.currentStep() != null
+                || dev.midtown.api.RuntimeBus.isRecovering()
                 || (mc != null && mc.screen != null);
     }
 

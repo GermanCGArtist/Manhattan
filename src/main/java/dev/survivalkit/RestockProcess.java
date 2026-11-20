@@ -181,7 +181,7 @@ final class RestockProcess extends Feature {
         if (cfg.supply == null) { Util.msg("No supply chest saved. Look at a chest and run /survival supply set"); return; }
         if (cfg.want.isEmpty()) { Util.msg("The want-list is empty. Add rules with /survival want <item> <count>"); return; }
         if (state != State.IDLE) { Util.msg("Already restocking."); return; }
-        if (System.getProperty("baritonequeue.active") == null) {
+        if (!dev.midtown.api.RuntimeBus.isScriptActive()) {
             // typed by hand: look in the chest for everything again. A running script keeps the waiting times, so
             // "on restock_needed" does not fire again for what the chest did not have.
             exhausted.clear();

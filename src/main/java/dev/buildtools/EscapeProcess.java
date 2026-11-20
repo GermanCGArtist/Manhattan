@@ -51,6 +51,45 @@ final class EscapeProcess extends Feature {
         return state != State.IDLE;
     }
 
+    /** True when the player is in immediate life-threatening fluid danger (lava or low air underwater). */
+    boolean isEmergencyNeeded() {
+        if (state != State.IDLE) return true;
+        Minecraft mc = Minecraft.getInstance();
+        LocalPlayer p = mc == null ? null : mc.player;
+        if (p == null || mc.level == null || p.isSleeping()) return false;
+        if (p.isInLava()) return true;
+        return p.isUnderWater() && p.getAirSupply() < p.getMaxAirSupply() / 2 && !BuildToolsMod.terminator.busy();
+    }
+
+    /** Explicitly starts an emergency escape (air / lava / shore) for the project scheduler. */
+    boolean startEmergencyNow() {
+        Minecraft mc = Minecraft.getInstance();
+        LocalPlayer p = mc == null ? null : mc.player;
+        if (p == null || mc.level == null) return false;
+        if (state != State.IDLE) return true;
+        if (p.isUnderWater() && p.getAirSupply() < p.getMaxAirSupply() / 2) {
+            state = State.AIR;
+            airTicks = 0;
+            Util.msg("Emergency: swimming up for air.");
+            return true;
+        }
+        BlockPos land = findShore(mc.level, p.blockPosition());
+        if (land != null) {
+            shore = land;
+            manual = false;
+            timer = 0;
+            state = State.ESCAPING;
+            Util.msg("Emergency: escaping to dry land at " + shore.toShortString() + ".");
+            return true;
+        }
+        if (p.isInLava() || p.isInWater()) {
+            state = State.AIR;
+            airTicks = 0;
+            return true;
+        }
+        return false;
+    }
+
     @Override
     void tick() {
         now++;
@@ -88,7 +127,7 @@ final class EscapeProcess extends Feature {
         if (BuildToolsMod.drain.busy() || BuildToolsMod.fill.busy() || BuildToolsMod.terminator.busy()) return;
         if (mc.gameMode != null && mc.gameMode.isDestroying()) return;   // mining something underwater is progress
         // Filling or clearing water is the job: standing in it and placing blocks under your feet looks like "stuck".
-        String step = System.getProperty("baritonequeue.step");
+        String step = dev.midtown.api.RuntimeBus.currentStep();
         if (step != null && step.toLowerCase().contains("water") && EngineSelector.current().isBusy()) return;
 
         double minX = Double.MAX_VALUE, maxX = -Double.MAX_VALUE, minZ = Double.MAX_VALUE, maxZ = -Double.MAX_VALUE;

@@ -34,14 +34,7 @@ final class Util {
 
     /** The script's enable("eat", ...): this helper runs while the script runs, whatever its saved option says. */
     static boolean scriptOn(String feature, boolean saved) {
-        String v = System.getProperty("baritonequeue.helpers.on");
-        if (v != null) {
-            for (String k : v.split(",")) {
-                k = k.trim();
-                if (k.equals("all") || k.equals(feature)) return true;
-            }
-        }
-        return saved;
+        return dev.midtown.api.RuntimeBus.isHelperOn(feature, saved);
     }
 
     static boolean addonOff(String feature) {
@@ -50,13 +43,7 @@ final class Util {
         if (Recovery.waiting && (f.contains("defence") || f.contains("eat"))) return false;
         if (f.contains("defence") && DefenceProcess.forced) return false;
         if (f.contains("eat") && EatProcess.forced) return false;
-        String v = System.getProperty("baritonequeue.addons.off");
-        if (v == null) return false;
-        for (String k : v.split(",")) {
-            k = k.trim();
-            if (k.equals("all") || (!k.isEmpty() && f.contains(k))) return true;
-        }
-        return false;
+        return dev.midtown.api.RuntimeBus.isAddonOff(feature);
     }
 
     static boolean guiOpen(LocalPlayer p) {
@@ -76,13 +63,13 @@ final class Util {
 
     /** Features only start while a task is running, unless "always" is switched on. */
     static boolean mayAct() {
-        boolean queue = System.getProperty("baritonequeue.active") != null || System.getProperty("buildtools.busy") != null;
-        return !PauseWatch.paused && (dev.survivalkit.Config.cfg.always || baritoneBusy() || queue || Recovery.waiting);
+        boolean queue = dev.midtown.api.RuntimeBus.isScriptActive() || dev.midtown.api.RuntimeBus.isBuildToolsBusy();
+        return !PauseWatch.isPaused() && (dev.survivalkit.Config.cfg.always || baritoneBusy() || queue || Recovery.waiting);
     }
 
     /** True while LoadChest is walking to / using its chest. */
     static boolean loadChestBusy() {
-        return "1".equals(System.getProperty("loadchest.busy"));
+        return dev.midtown.api.RuntimeBus.isLoadChestBusy();
     }
 
     private static List<BlockPos> sites = List.of();

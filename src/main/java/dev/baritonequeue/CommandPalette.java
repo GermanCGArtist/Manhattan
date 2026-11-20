@@ -1,5 +1,7 @@
 package dev.baritonequeue;
 
+import dev.baritonequeue.project.GameProjectRuntime;
+import dev.baritonequeue.project.Project;
 import imgui.ImGui;
 import imgui.flag.ImGuiCol;
 import imgui.flag.ImGuiKey;
@@ -50,10 +52,29 @@ final class CommandPalette {
         out.add(new Cmd("Script", "Test script (check without running)", "", DockedPanels::runTest));
         out.add(new Cmd("Script", "Skip current step", "", RunnerView::skip));
         out.add(new Cmd("Script", "Stop", "", ImGuiManager::triggerStop));
+        out.add(new Cmd("Projects", "Open Projects", "", () -> Shell.drawer = Shell.Drawer.PROJECTS));
+        try {
+            GameProjectRuntime rt = GameProjectRuntime.instance();
+            if (rt != null) {
+                Project active = rt.activeProject();
+                String activeHint = active != null ? (active.name != null && !active.name.isBlank() ? active.name : active.id) : "";
+                out.add(new Cmd("Projects", "Run project queue", activeHint, () -> {
+                    String err = GameProjectRuntime.instance().startQueue();
+                    if (err != null && !err.isBlank()) Util.msg(err);
+                }));
+                out.add(new Cmd("Projects", "Stop project queue", "", () ->
+                        GameProjectRuntime.instance().stopQueue("Stopped from command palette.")));
+                for (String pid : rt.projectIds()) {
+                    out.add(new Cmd("Projects", "Switch project: " + pid, "", () ->
+                            GameProjectRuntime.instance().selectProject(pid)));
+                }
+            }
+        } catch (Throwable ignored) {
+        }
         out.add(new Cmd("Workspace", "Edit layout", "", () -> { ImGuiManager.openShell(Shell.Mode.EDIT); Shell.drawer = Shell.Drawer.NONE; }));
         out.add(new Cmd("Workspace", "Monitor layout", "", () -> { ImGuiManager.openShell(Shell.Mode.MONITOR); Shell.drawer = Shell.Drawer.NONE; }));
         for (Shell.Drawer d : Shell.Drawer.values()) {
-            if (d == Shell.Drawer.NONE) continue;
+            if (d == Shell.Drawer.NONE || d == Shell.Drawer.PROJECTS) continue;
             out.add(new Cmd("Workspace", "Open " + d.title, "", () -> Shell.drawer = d));
         }
         out.add(new Cmd("Workspace", "Close workspace (play)", "J", ImGuiManager::closeShell));

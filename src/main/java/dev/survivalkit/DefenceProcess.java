@@ -157,17 +157,11 @@ final class DefenceProcess extends Feature {
         stepInternal();
     }
 
+    private static final String MOTOR_OWNER = "defence";
+
     private void releaseKeys(Minecraft mc) {
-        if (!keysHeld) return;
-        Options o = mc.options;
-        if (o != null) {
-            o.keyUp.setDown(false);
-            o.keyDown.setDown(false);
-            o.keyLeft.setDown(false);
-            o.keyRight.setDown(false);
-            o.keySprint.setDown(false);
-            o.keyJump.setDown(false);
-        }
+        if (!keysHeld && !dev.midtown.body.BodyController.INSTANCE.isOwnedBy(MOTOR_OWNER)) return;
+        dev.midtown.body.BodyController.INSTANCE.releaseIfOwner(mc, MOTOR_OWNER);
         keysHeld = false;
     }
 
@@ -290,14 +284,9 @@ final class DefenceProcess extends Feature {
                     EngineSelector.current().goTo(GoalSpec.runAway(target.blockPosition(), 9.0));
                 }
             } else {
+                dev.midtown.body.BodyController.INSTANCE.acquire(mc, MOTOR_OWNER);
                 aimSmooth(p, aim, eye, dist);
-                Options o = mc.options;
-                o.keyUp.setDown(false);
-                o.keyDown.setDown(true);
-                o.keyLeft.setDown(false);
-                o.keyRight.setDown(false);
-                o.keySprint.setDown(false);
-                o.keyJump.setDown(false);
+                dev.midtown.body.BodyController.INSTANCE.setMovementKeys(mc, false, true, false, false, false, false, false);
                 keysHeld = true;
             }
             return;
@@ -377,13 +366,16 @@ final class DefenceProcess extends Feature {
                 return;
             }
 
-            Options o = mc.options;
-            o.keyUp.setDown(true);
-            o.keyDown.setDown(false);
-            o.keyLeft.setDown(false);
-            o.keyRight.setDown(false);
-            o.keySprint.setDown(dist > 3.5 && !p.isInWater());
-            o.keyJump.setDown(p.horizontalCollision && p.onGround());
+            dev.midtown.body.BodyController.INSTANCE.acquire(mc, MOTOR_OWNER);
+            dev.midtown.body.BodyController.INSTANCE.setMovementKeys(
+                    mc,
+                    true,
+                    false,
+                    false,
+                    false,
+                    p.horizontalCollision && p.onGround(),
+                    false,
+                    dist > 3.5 && !p.isInWater());
             keysHeld = true;
             return;
         }
@@ -396,13 +388,16 @@ final class DefenceProcess extends Feature {
             strafeDir = -strafeDir;
             strafeTicks = 0;
         }
-        Options o = mc.options;
-        o.keyUp.setDown(dist > 2.4);
-        o.keyDown.setDown(dist < 1.8);
-        o.keyLeft.setDown(strafeDir < 0);
-        o.keyRight.setDown(strafeDir > 0);
-        o.keySprint.setDown(false);
-        o.keyJump.setDown(false);
+        dev.midtown.body.BodyController.INSTANCE.acquire(mc, MOTOR_OWNER);
+        dev.midtown.body.BodyController.INSTANCE.setMovementKeys(
+                mc,
+                dist > 2.4,
+                dist < 1.8,
+                strafeDir < 0,
+                strafeDir > 0,
+                false,
+                false,
+                false);
         keysHeld = true;
     }
 

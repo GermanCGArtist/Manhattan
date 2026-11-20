@@ -120,7 +120,19 @@ tasks.register('nativesTest', JavaExec) {
     classpath = sourceSets.test.runtimeClasspath
     mainClass = 'dev.baritonequeue.ImGuiNativesTest'
 }
-tasks.named('check') { dependsOn 'langTest', 'parseScripts', 'midtownTest', 'chunkGridTest', 'chunkRunnerTest', 'nativesTest' }
+tasks.register('midtownBodyTest', JavaExec) {
+    group = 'verification'
+    description = 'Runs RuntimeBus, MotorLease, and HotbarController offline unit tests.'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.midtown.MidtownBodyTest'
+}
+tasks.register('projectQueueTest', JavaExec) {
+    group = 'verification'
+    description = 'Runs Project, TaskQueue, LogisticsPlanner, and PriorityScheduler offline unit tests.'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.baritonequeue.ProjectQueueTest'
+}
+tasks.named('check') { dependsOn 'langTest', 'parseScripts', 'midtownTest', 'midtownBodyTest', 'projectQueueTest', 'chunkGridTest', 'chunkRunnerTest', 'nativesTest' }
 tasks.named('test') { failOnNoDiscoveredTests = false }   // the tests above are plain programs, not JUnit
 
 java {

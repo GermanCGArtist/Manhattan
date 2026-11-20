@@ -3,7 +3,7 @@ package dev.buildtools;
 import dev.midtown.api.EngineSelector;
 import dev.midtown.api.EngineStatus;
 import dev.midtown.api.GoalSpec;
-import net.minecraft.client.KeyMapping;
+import dev.midtown.body.BodyController;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
@@ -50,6 +50,7 @@ import static dev.buildtools.Config.cfg;
  */
 public final class TerminatorProcess extends Feature {
     private static final Logger LOGGER = LoggerFactory.getLogger(TerminatorProcess.class);
+    private static final String MOTOR_OWNER = "terminator";
 
     private static final double REACH = 4.3;
     private static final int WALK_TIMEOUT = 20 * 40;
@@ -126,8 +127,13 @@ public final class TerminatorProcess extends Feature {
         return lastReason;
     }
 
-    /** Starts; returns an error text or null. */
+    /** Starts on the current selection; returns an error text or null. */
     String startNow(Item item) {
+        return startNow(item, null);
+    }
+
+    /** Starts within {@code explicitBoxes} (or the current selection when null); returns an error text or null. */
+    public String startNow(Item item, List<int[]> explicitBoxes) {
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer p = mc.player;
         if (p == null || mc.level == null) return "Not in a world.";
@@ -136,11 +142,22 @@ public final class TerminatorProcess extends Feature {
         if (item != null && Util.slotOf(p, item) < 0) return "There is no " + BuiltInRegistries.ITEM.getKey(item).getPath() + " in the inventory.";
         if (item == null && Util.countThrowaway(p) == 0) return "I have no blocks to fill with (dirt, cobblestone ... or name one: fill_water(\"dirt\")).";
         boxes.clear();
-        boxes.addAll(dev.baritonequeue.Areas.read());
-        if (boxes.isEmpty() && Config.cfg.corner1 != null && Config.cfg.corner2 != null) {
-            boxes.add(new int[]{
-                    Math.min(Config.cfg.corner1[0], Config.cfg.corner2[0]), Math.min(Config.cfg.corner1[1], Config.cfg.corner2[1]), Math.min(Config.cfg.corner1[2], Config.cfg.corner2[2]),
-                    Math.max(Config.cfg.corner1[0], Config.cfg.corner2[0]), Math.max(Config.cfg.corner1[1], Config.cfg.corner2[1]), Math.max(Config.cfg.corner1[2], Config.cfg.corner2[2])});
+        if (explicitBoxes != null) {
+            for (int[] b : explicitBoxes) {
+                if (b != null && b.length >= 6) {
+                    boxes.add(new int[]{
+                            Math.min(b[0], b[3]), Math.min(b[1], b[4]), Math.min(b[2], b[5]),
+                            Math.max(b[0], b[3]), Math.max(b[1], b[4]), Math.max(b[2], b[5])
+                    });
+                }
+            }
+        } else {
+            boxes.addAll(dev.baritonequeue.Areas.read());
+            if (boxes.isEmpty() && Config.cfg.corner1 != null && Config.cfg.corner2 != null) {
+                boxes.add(new int[]{
+                        Math.min(Config.cfg.corner1[0], Config.cfg.corner2[0]), Math.min(Config.cfg.corner1[1], Config.cfg.corner2[1]), Math.min(Config.cfg.corner1[2], Config.cfg.corner2[2]),
+                        Math.max(Config.cfg.corner1[0], Config.cfg.corner2[0]), Math.max(Config.cfg.corner1[1], Config.cfg.corner2[1]), Math.max(Config.cfg.corner1[2], Config.cfg.corner2[2])});
+            }
         }
         if (boxes.isEmpty()) return "Select the area first: area(\"name\"), select(corner1, corner2).";
         preferred = item;
@@ -187,6 +204,7 @@ public final class TerminatorProcess extends Feature {
     private int noProgress;
 
     private void startWalk(Level level, BlockPos to) {
+        releaseKeys();
         goal = to;
         setState(State.WALK);
         walkTicks = 0;
@@ -226,26 +244,19 @@ public final class TerminatorProcess extends Feature {
         if (mc.gameMode != null) mc.gameMode.stopDestroyBlock();
     }
 
-    // ------------------------------------------------------------------ keys (only ever held while this process steers)
-
-    private static void key(KeyMapping k, boolean down) {
-        k.setDown(down);
-    }
+    // ------------------------------------------------------------------ keys (routed through BodyController)
 
     private void hold(boolean forward, boolean jump, boolean sneak) {
-        var o = Minecraft.getInstance().options;
-        key(o.keyUp, forward);
-        key(o.keyJump, jump);
-        key(o.keyShift, sneak);
+        Minecraft mc = Minecraft.getInstance();
+        if (!BodyController.INSTANCE.acquire(mc, MOTOR_OWNER)) return;
+        BodyController.INSTANCE.setMovementKeys(mc, forward, false, false, false, jump, sneak, false);
         keysHeld = forward || jump || sneak;
     }
 
     private void releaseKeys() {
-        if (!keysHeld) return;
-        var o = Minecraft.getInstance().options;
-        key(o.keyUp, false);
-        key(o.keyJump, false);
-        key(o.keyShift, false);
+        Minecraft mc = Minecraft.getInstance();
+        if (!keysHeld && !BodyController.INSTANCE.isOwnedBy(MOTOR_OWNER)) return;
+        BodyController.INSTANCE.releaseIfOwner(mc, MOTOR_OWNER);
         keysHeld = false;
     }
 
@@ -761,14 +772,14 @@ public final class TerminatorProcess extends Feature {
         if (breaking != null) {
             if (!breakable(level, breaking) || ++breakTicks > BREAK_TIMEOUT) {
                 if (breakTicks > BREAK_TIMEOUT) failures.merge(breaking, 1, Integer::sum);
-                mc.gameMode.stopDestroyBlock();
+                BodyController.INSTANCE.stopBreaking(mc);
                 breaking = null;
                 return false;
             }
+            BodyController.INSTANCE.acquire(mc, MOTOR_OWNER);
             holdPosition(p);
             if (Util.aimAt(p, Vec3.atCenterOf(breaking))) {
-                mc.gameMode.continueDestroyBlock(breaking, Direction.UP);
-                p.swing(InteractionHand.MAIN_HAND);
+                BodyController.INSTANCE.breakBlockTick(mc, breaking);
             }
             return true;
         }
@@ -777,6 +788,7 @@ public final class TerminatorProcess extends Feature {
             done();
             return false;
         }
+        BodyController.INSTANCE.acquire(mc, MOTOR_OWNER);
         Placer.Status st = placer.tick(mc, p);
         if (falling && materialCount(p) < countBefore) {
             placed += countBefore - materialCount(p);
@@ -822,7 +834,7 @@ public final class TerminatorProcess extends Feature {
 
     private void abortWork(Minecraft mc) {
         current = null;
-        if (breaking != null && mc.gameMode != null) mc.gameMode.stopDestroyBlock();
+        if (breaking != null) BodyController.INSTANCE.stopBreaking(mc);
         breaking = null;
     }
 
@@ -854,9 +866,9 @@ public final class TerminatorProcess extends Feature {
     /** Turns towards a point (yaw only) and says how far away it is, horizontally. */
     private static double face(LocalPlayer p, double x, double z) {
         double dx = x - p.getX(), dz = z - p.getZ();
-        float yaw = (float) (Math.toDegrees(Math.atan2(dz, dx)) - 90.0);
+        float yaw = BodyController.yawTo(dx, dz);
         float d = Mth.wrapDegrees(yaw - p.getYRot());
-        p.setYRot(p.getYRot() + Mth.clamp(d, -45f, 45f));
+        BodyController.INSTANCE.aimYawSmooth(p, yaw, 45f);
         double dist = Math.sqrt(dx * dx + dz * dz);
         aligned = Math.abs(d) < 30 || dist >= 2.0;   // close by: turn first, then walk (else it circles the spot)
         return dist;
@@ -1000,8 +1012,7 @@ public final class TerminatorProcess extends Feature {
         if (!rs.getCollisionShape(level, roof).isEmpty() && rs.getDestroySpeed(level, roof) >= 0) {
             hold(false, true, false);
             if (Util.aimAt(p, Vec3.atCenterOf(roof))) {
-                mc.gameMode.continueDestroyBlock(roof, Direction.DOWN);
-                p.swing(InteractionHand.MAIN_HAND);
+                BodyController.INSTANCE.breakBlockTick(mc, roof);
             }
             return;
         }

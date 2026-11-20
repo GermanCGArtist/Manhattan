@@ -54,11 +54,11 @@ final class Recovery {
     void cancel() {
         if (reconnecting) {
             reconnecting = false;
-            System.clearProperty("survivalkit.recovering");
+            dev.midtown.api.RuntimeBus.setRecovering(false);
         }
         if (!waiting) return;
         waiting = false;
-        System.clearProperty("survivalkit.recovering");
+        dev.midtown.api.RuntimeBus.setRecovering(false);
     }
 
     private boolean reconnecting;
@@ -66,19 +66,19 @@ final class Recovery {
     /** The connection dropped: remember whether a task was running (the queue holds its step meanwhile). */
     void onDisconnect() {
         long now = System.currentTimeMillis();
-        queueMode = System.getProperty("baritonequeue.active") != null;
+        queueMode = dev.midtown.api.RuntimeBus.isScriptActive();
         boolean wasBusy = now - busyAt < BUSY_WINDOW;
         reconnecting = cfg.resume && (queueMode || (wasBusy && lastTask != null));
-        if (reconnecting) System.setProperty("survivalkit.recovering", "1");
+        if (reconnecting) dev.midtown.api.RuntimeBus.setRecovering(true);
     }
 
     /** Back in the world: bring the task back. */
     void afterReconnect() {
         if (!reconnecting) return;
         reconnecting = false;
-        System.clearProperty("survivalkit.recovering");
+        dev.midtown.api.RuntimeBus.setRecovering(false);
         if (queueMode) {
-            System.setProperty("survivalkit.safe", "1");
+            dev.midtown.api.RuntimeBus.setSafeAfterRespawn(true);
             Util.msg("Back on the server - the queue carries on.");
             return;
         }
@@ -98,7 +98,7 @@ final class Recovery {
         if (!cfg.resume) return;
         long now = System.currentTimeMillis();
         boolean wasBusy = now - busyAt < BUSY_WINDOW;
-        queueMode = System.getProperty("baritonequeue.active") != null;
+        queueMode = dev.midtown.api.RuntimeBus.isScriptActive();
         if (!wasBusy && !queueMode) return;
         if (!queueMode && lastTask == null) {
             Util.warn("noresume", "I do not know which task was running, so I cannot resume it. Type the Baritone command again.");
@@ -107,7 +107,7 @@ final class Recovery {
         deaths.removeIf(t -> now - t > DEATH_WINDOW);
         deaths.add(now);
         if (cfg.maxDeaths > 0 && deaths.size() > cfg.maxDeaths) {   // cfg.maxDeaths 0: never stop
-            if (queueMode) System.setProperty("survivalkit.gaveup", "you died " + deaths.size() + " times within 10 minutes - have a look at what is killing you.");
+            if (queueMode) dev.midtown.api.RuntimeBus.setRecoveryGaveUpReason("you died " + deaths.size() + " times within 10 minutes - have a look at what is killing you.");
             Util.warn("deathloop", "You died " + deaths.size() + " times within 10 minutes, so I will not resume the task by itself. "
                     + "Have a look at what is killing you first.");
             return;
@@ -115,7 +115,7 @@ final class Recovery {
         waiting = true;
         waitStart = now;
         check = 0;
-        System.setProperty("survivalkit.recovering", "1");
+        dev.midtown.api.RuntimeBus.setRecovering(true);
         Util.msg("Once you are healthy and no monster is near, I resume: " + (queueMode ? "the queue" : lastTask));
     }
 
@@ -137,11 +137,11 @@ final class Recovery {
                 return;
             }
             cancel();
-            if (queueMode) System.setProperty("survivalkit.gaveup", "could not get healthy again within 10 minutes after the respawn.");
+            if (queueMode) dev.midtown.api.RuntimeBus.setRecoveryGaveUpReason("could not get healthy again within 10 minutes after the respawn.");
             Util.warn("resumefail", "Could not get safe within 10 minutes, so the task is not resumed.");
             return;
         }
-        if (PauseWatch.paused || p.isSleeping() || Util.guiOpen(p)) return;
+        if (PauseWatch.isPaused() || p.isSleeping() || Util.guiOpen(p)) return;
         if (SurvivalKitMod.eat.busy() || SurvivalKitMod.defence.busy() || SurvivalKitMod.restock.busy() || SurvivalKitMod.sleep.busy()) return;
         // Health only comes back by itself with a food bar of 18 or more. Below that, with nothing being eaten,
         // waiting does not help: after a while go on (the task can restock food), like for unreachable mobs.
@@ -155,9 +155,9 @@ final class Recovery {
 
     private void resume(boolean anyway) {
         waiting = false;
-        System.clearProperty("survivalkit.recovering");
+        dev.midtown.api.RuntimeBus.setRecovering(false);
         if (queueMode) {
-            System.setProperty("survivalkit.safe", "1");
+            dev.midtown.api.RuntimeBus.setSafeAfterRespawn(true);
             if (!anyway) Util.msg("Safe again - the queue carries on.");
             return;
         }

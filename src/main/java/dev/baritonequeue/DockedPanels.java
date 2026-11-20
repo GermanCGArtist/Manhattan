@@ -1,5 +1,7 @@
 package dev.baritonequeue;
 
+import dev.baritonequeue.project.GameProjectRuntime;
+import dev.baritonequeue.project.ProjectTask;
 import imgui.ImDrawList;
 import imgui.ImGui;
 import imgui.flag.ImGuiCol;
@@ -152,6 +154,7 @@ public final class DockedPanels {
     private static final ImString captureSheetBuf = new ImString(32768);
     private static String lastCaptureNotice = "";
     private static String lastSyncedCaptureSheet = null;
+    private static String lastAreasNotice = "";
 
     // ------------------------------------------------------------------ Log state
     private static LogBuffer.Filter logFilter = LogBuffer.Filter.ALL;
@@ -1265,6 +1268,9 @@ public final class DockedPanels {
 
         ImGui.separator();
         ImGui.textColored(0.290f, 0.620f, 0.878f, 1.0f, "Saved Areas:");
+        if (!lastAreasNotice.isEmpty()) {
+            UiTheme.textColored(UiTheme.OK, lastAreasNotice);
+        }
         List<AreasView.AreaEntry> areas = AreasView.list();
         if (areas.isEmpty()) {
             ImGui.textDisabled("No saved areas.");
@@ -1286,6 +1292,13 @@ public final class DockedPanels {
                         AreasView.delete(a.name());
                         continue;
                     }
+                }
+                ImGui.sameLine(0f, 4f);
+                if (ImGui.smallButton("+ Queue##qarea_" + i)) {
+                    ProjectTask task = ProjectTask.forAreaRole(a.name(), a.role());
+                    GameProjectRuntime.instance().enqueueTask(task);
+                    lastAreasNotice = "Queued " + task.displayLabel();
+                    Util.msg(lastAreasNotice);
                 }
                 ImGui.sameLine(0f, 6f);
                 String tagPrefix = a.isLast() ? "" : a.tag() + " ";

@@ -25,7 +25,7 @@ final class Shell {
     enum Mode { CLOSED, EDIT, MONITOR }
 
     enum Drawer {
-        NONE(""), PRESETS("Presets"), CHESTS("Chests"), AREAS("Areas"), CAPTURE("Capture"), LOG("Log");
+        NONE(""), PROJECTS("Projects"), PRESETS("Presets"), CHESTS("Chests"), AREAS("Areas"), CAPTURE("Capture"), LOG("Log");
         final String title;
         Drawer(String title) { this.title = title; }
     }
@@ -169,7 +169,7 @@ final class Shell {
 
     // ------------------------------------------------------------------ activity bar and status bar
 
-    private enum Act { EDITOR, MONITOR, PRESETS, CHESTS, AREAS, CAPTURE, LOG }
+    private enum Act { EDITOR, MONITOR, PROJECTS, PRESETS, CHESTS, AREAS, CAPTURE, LOG }
 
     private static void activityBar(float H, float s) {
         float w = activityW(s);
@@ -188,6 +188,7 @@ final class Shell {
             boolean on = switch (a) {
                 case EDITOR -> mode == Mode.EDIT && drawer == Drawer.NONE;
                 case MONITOR -> mode == Mode.MONITOR && drawer == Drawer.NONE;
+                case PROJECTS -> drawer == Drawer.PROJECTS;
                 case PRESETS -> drawer == Drawer.PRESETS;
                 case CHESTS -> drawer == Drawer.CHESTS;
                 case AREAS -> drawer == Drawer.AREAS;
@@ -199,6 +200,7 @@ final class Shell {
                 switch (a) {
                     case EDITOR -> { ImGuiManager.openShell(Mode.EDIT); drawer = Drawer.NONE; }
                     case MONITOR -> { ImGuiManager.openShell(Mode.MONITOR); drawer = Drawer.NONE; }
+                    case PROJECTS -> toggleDrawer(Drawer.PROJECTS);
                     case PRESETS -> toggleDrawer(Drawer.PRESETS);
                     case CHESTS -> toggleDrawer(Drawer.CHESTS);
                     case AREAS -> toggleDrawer(Drawer.AREAS);
@@ -220,6 +222,7 @@ final class Shell {
         return switch (a) {
             case EDITOR -> "Edit: script editor (J toggles the workspace)";
             case MONITOR -> "Monitor: run telemetry around the game";
+            case PROJECTS -> "Projects & Task Queue";
             case PRESETS -> "Presets";
             case CHESTS -> "Chests";
             case AREAS -> "Areas";
@@ -244,8 +247,11 @@ final class Shell {
         dl.addText(16f * s, ty, u32(fg), run);
         float x = rw + 12f * s;
         String mid = snap.running()
-                ? "step " + snap.currentStep() + "/" + snap.totalSteps() + " · line " + snap.line() + " · " + snap.overallPercent() + "%   "
-                  + snap.stepTailText() + "   elapsed " + snap.elapsedText()
+                ? (snap.line() > 0
+                    ? "step " + snap.currentStep() + "/" + snap.totalSteps() + " · line " + snap.line() + " · " + snap.overallPercent() + "%   "
+                      + snap.stepTailText() + "   elapsed " + snap.elapsedText()
+                    : "task " + snap.currentStep() + "/" + snap.totalSteps() + " · " + snap.overallPercent() + "%   "
+                      + snap.stepTailText() + "   elapsed " + snap.elapsedText())
                 : DockedPanels.activeTabName() + " · " + snap.totalSteps() + " steps";
         dl.addText(x, ty, u32(DIM), Alerts.shorten(mid, (int) (W * 0.55f / (6.5f * s))));
         String right = "J: workspace   " + Platform.shortcutName() + "+P: commands   Esc: panels   " + Math.round(s * 100) + "%";
@@ -380,6 +386,7 @@ final class Shell {
             // the body scrolls both ways, so long lines are never just cut off
             if (ImGui.beginChild("##drawerBody", 0f, 0f, false, ImGuiWindowFlags.HorizontalScrollbar)) {
                 switch (drawer) {
+                    case PROJECTS -> ProjectPanel.render();
                     case PRESETS -> DockedPanels.renderPresetsPanel();
                     case CHESTS -> DockedPanels.renderChestsPanel();
                     case AREAS -> DockedPanels.renderAreasPanel();

@@ -21,6 +21,13 @@ final class Icons {
                 dl.addLine(cx, cy + r * 0.35f, cx + r * 0.5f, cy - r * 0.4f, col, t);
                 dl.addCircleFilled(cx, cy + r * 0.35f, t * 1.2f, col);
             }
+            case "PROJECTS" -> {  // stacked checklist / task queue
+                float[] ys = {y0 + r * 0.32f, cy, y1 - r * 0.32f};
+                for (float ry : ys) {
+                    dl.addRectFilled(x0, ry - t, x0 + t * 2.2f, ry + t, col, 1f);
+                    dl.addLine(x0 + r * 0.55f, ry, x1, ry, col, t);
+                }
+            }
             case "PRESETS" -> poly(dl, col, t, x0 + r * 0.35f, y0, x1 - r * 0.35f, y0, x1 - r * 0.35f, y1, cx, cy + r * 0.4f, x0 + r * 0.35f, y1, x0 + r * 0.35f, y0);
             case "CHESTS" -> {
                 dl.addRect(x0, cy - r * 0.2f, x1, y1, col, 1f, 0, t);

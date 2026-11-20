@@ -123,7 +123,19 @@ public final class FillProcess extends Feature {
         super("BuildTools water fill", 8);
     }
 
-    private List<int[]> boxes(LocalPlayer p) {
+    private List<int[]> boxes(LocalPlayer p, List<int[]> explicitBoxes) {
+        if (explicitBoxes != null && !explicitBoxes.isEmpty()) {
+            List<int[]> copy = new ArrayList<>(explicitBoxes.size());
+            for (int[] b : explicitBoxes) {
+                if (b != null && b.length >= 6) {
+                    copy.add(new int[]{
+                            Math.min(b[0], b[3]), Math.min(b[1], b[4]), Math.min(b[2], b[5]),
+                            Math.max(b[0], b[3]), Math.max(b[1], b[4]), Math.max(b[2], b[5])
+                    });
+                }
+            }
+            if (!copy.isEmpty()) return copy;
+        }
         List<int[]> boxes = new ArrayList<>(dev.baritonequeue.Areas.read());
         if (boxes.isEmpty() && Config.cfg.corner1 != null && Config.cfg.corner2 != null) {
             boxes.add(new int[]{
@@ -140,6 +152,10 @@ public final class FillProcess extends Feature {
     // ------------------------------------------------------------------ start
 
     void startNow() {
+        startNow(null);
+    }
+
+    public void startNow(List<int[]> explicitBoxes) {
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer p = mc.player;
         if (p == null || mc.level == null) return;
@@ -148,7 +164,7 @@ public final class FillProcess extends Feature {
         failure = null;
         Level level = mc.level;
 
-        List<int[]> boxes = boxes(p);
+        List<int[]> boxes = boxes(p, explicitBoxes);
         if (level.dimension() == Level.NETHER) { Util.msg("Water evaporates in the Nether."); return; }
 
         targets.clear();

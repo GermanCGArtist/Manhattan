@@ -174,6 +174,8 @@ public class ChunkRunner extends Actions.Action {
     private final Env env;
     private int chunkSizeY;   // > 0: bands of this height in Y, top first
     private int gap = -1;     // >= 0: boxes further apart than this are separate regions
+    private String taskIdPrefix;
+    private Map<String, Integer> latestDeficit = Map.of();
 
     private List<int[]> fullBounds = List.of();
     private List<int[]> savedSelection;
@@ -222,6 +224,26 @@ public class ChunkRunner extends Actions.Action {
         return this;
     }
 
+    /**
+     * Uses a stable task id prefix (e.g. {@code "t_001"}) for Jobs/Ledger chunk keys
+     * ({@code "<taskIdPrefix>/<x0>,<z0>[,<y0>]"}) instead of line-numbered {@code @line} ids.
+     */
+    public ChunkRunner withTaskPrefix(String taskIdPrefix) {
+        this.taskIdPrefix = (taskIdPrefix == null || taskIdPrefix.isBlank()) ? null : taskIdPrefix.trim();
+        return this;
+    }
+
+    public Map<String, Integer> latestDeficit() {
+        return latestDeficit;
+    }
+
+    public int remainingWork() {
+        if (done && result instanceof Double d) {
+            return Math.max(0, (int) Math.round(d));
+        }
+        return (int) Math.round(computeTotalRemaining());
+    }
+
     Phase phase() { return phase; }
     Step step() { return step; }
     int retryPass() { return retryPass; }
@@ -260,7 +282,9 @@ public class ChunkRunner extends Actions.Action {
         activeChunkAction = null;
 
         signature = buildSignature(workload.actionKind(), chunkSize, chunkSizeY, gap, fullBounds);
-        actionNode = Jobs.action(sanitizeIdPart(workload.actionKind()), env.runnerLine(), "", env.runnerRunning());
+        actionNode = taskIdPrefix != null
+                ? Jobs.taskAction(taskIdPrefix, workload.actionKind() + " [" + taskIdPrefix + "]")
+                : Jobs.action(sanitizeIdPart(workload.actionKind()), env.runnerLine(), "", env.runnerRunning());
         actionNode.state = Ledger.State.RUNNING;
 
         Ledger ledger = Jobs.ledger();
@@ -469,6 +493,7 @@ public class ChunkRunner extends Actions.Action {
             needsCheckedForAttempt = true;
             Map<String, Integer> required = workload.requiredItems(currentChunk, currentClipped);
             Map<String, Integer> deficit = computeDeficit(required);
+            latestDeficit = deficit.isEmpty() ? Map.of() : Collections.unmodifiableMap(new LinkedHashMap<>(deficit));
             if (!deficit.isEmpty() && env.triggerChunkNeeds(deficit, currentChunk)) {
                 return; // Wait for the "on chunk_needs" handler to finish and resume() us into RUN_CHUNK.
             }
@@ -561,6 +586,7 @@ public class ChunkRunner extends Actions.Action {
 
         currentChunk = null;
         currentClipped = null;
+        latestDeficit = Map.of();
         step = Step.PICK_CHUNK;
     }
 
@@ -607,6 +633,7 @@ public class ChunkRunner extends Actions.Action {
 
     private void finishCleanly(double resultValue) {
         phase = Phase.DONE;
+        latestDeficit = Map.of();
         MapLayers.unregister("chunks");
         env.removeProtectedArea(PROTECTED_AREA_NAME);
         if (workload.usesSelectionNarrowing() && savedSelection != null) {
@@ -620,6 +647,7 @@ public class ChunkRunner extends Actions.Action {
 
     private void cleanupAndFail(String why) {
         phase = Phase.DONE;
+        latestDeficit = Map.of();
         MapLayers.unregister("chunks");
         env.removeProtectedArea(PROTECTED_AREA_NAME);
         if (workload.usesSelectionNarrowing() && savedSelection != null) {
@@ -668,6 +696,7 @@ public class ChunkRunner extends Actions.Action {
     @Override
     void cancel() {
         MapLayers.unregister("chunks");
+        latestDeficit = Map.of();
         if (activeChunkAction != null) {
             activeChunkAction.cancel();
             activeChunkAction = null;

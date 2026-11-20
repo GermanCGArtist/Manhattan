@@ -188,8 +188,7 @@ public class SurvivalKitMod implements ClientModInitializer {
         respawnTick(mc);
         Session.tick(mc, mc.player);
         // the queue waits for a "/survival restock now" line while this is set
-        if (restock.busy() || sleep.busy()) System.setProperty("survivalkit.busy", "1");
-        else System.clearProperty("survivalkit.busy");
+        dev.midtown.api.RuntimeBus.setSurvivalKitBusy(restock.busy() || sleep.busy());
         ChestIndex.tick(mc, mc.player);
         // Clicking onto another monitor would make vanilla open the pause menu (and pause singleplayer worlds).
         if (cfg.background && mc.options.pauseOnLostFocus) mc.options.pauseOnLostFocus = false;

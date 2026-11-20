@@ -4,6 +4,8 @@ import dev.midtown.api.Area;
 import dev.midtown.api.EngineSelector;
 import dev.midtown.api.EngineStatus;
 import dev.midtown.api.GoalSpec;
+import dev.midtown.body.BodyController;
+import dev.midtown.body.HotbarController;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
@@ -41,6 +43,7 @@ import java.util.Set;
  * time went so far into the game log ("[Queue] clear_area progress").
  */
 public final class ClearProcess {
+    private static final String MOTOR_OWNER = "clear";
     private static final int LANE = 6, STEP = 3;
     private int pass = 3;   // layers per pass (2 or 3: feet and head, plus the block above the head)
     private static final int TRAVEL_TIMEOUT = 20 * 45, WALK_STUCK = 30, BREAK_TIMEOUT = 20 * 8, PICK_TIMEOUT = 20 * 3;
@@ -52,6 +55,7 @@ public final class ClearProcess {
 
     private boolean working;
     private boolean paused;          // suspended by an "on" block: carryOn() goes on from here
+    private boolean usingExplicitBoxes;
     private boolean scaffoldCleanupPass;
     private List<int[]> pausedBoxes;
     private int resumes, travelFails;
@@ -109,13 +113,31 @@ public final class ClearProcess {
 
     /** layers: how many layers one pass takes off (2 = feet and head, 3 = also the block above the head). */
     String begin(int layers) {
+        return begin(layers, null);
+    }
+
+    /** Starts clearing {@code explicitBoxes} (or the current selection when null) without mutating global Areas selection. */
+    public String begin(int layers, List<int[]> explicitBoxes) {
         pass = Math.max(1, Math.min(3, layers));
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.level == null) return "Not in a world.";
         if (working) return "clear_area is already running.";
         paused = false;
         boxes.clear();
-        boxes.addAll(Areas.read());
+        if (explicitBoxes != null) {
+            usingExplicitBoxes = true;
+            for (int[] b : explicitBoxes) {
+                if (b != null && b.length >= 6) {
+                    boxes.add(new int[]{
+                            Math.min(b[0], b[3]), Math.min(b[1], b[4]), Math.min(b[2], b[5]),
+                            Math.max(b[0], b[3]), Math.max(b[1], b[4]), Math.max(b[2], b[5])
+                    });
+                }
+            }
+        } else {
+            usingExplicitBoxes = false;
+            boxes.addAll(Areas.read());
+        }
         shaft = Shaft.current;
         Shaft.stopClimb();
         keepShaft();
@@ -169,11 +191,15 @@ public final class ClearProcess {
     /** After the "on" block: on from the same stop (or from scratch if the selection changed meanwhile). */
     String carryOn() {
         Minecraft mc = Minecraft.getInstance();
-        if (!paused || mc.player == null || mc.level == null) return begin();
-        List<int[]> now = Areas.read();
-        boolean same = now.size() == pausedBoxes.size();
-        for (int i = 0; same && i < now.size(); i++) same = java.util.Arrays.equals(now.get(i), pausedBoxes.get(i));
-        if (!same) { paused = false; return begin(); }
+        if (!paused || mc.player == null || mc.level == null) {
+            return usingExplicitBoxes && pausedBoxes != null ? begin(pass, pausedBoxes) : begin(pass);
+        }
+        if (!usingExplicitBoxes) {
+            List<int[]> now = Areas.read();
+            boolean same = now.size() == pausedBoxes.size();
+            for (int i = 0; same && i < now.size(); i++) same = java.util.Arrays.equals(now.get(i), pausedBoxes.get(i));
+            if (!same) { paused = false; return begin(pass); }
+        }
         paused = false;
         failure = null;
         state = State.NEXT;
@@ -205,14 +231,16 @@ public final class ClearProcess {
     }
 
     private void end() {
+        Minecraft mc = Minecraft.getInstance();
+        if (breaking != null) {
+            BodyController.INSTANCE.stopBreaking(mc);
+            breaking = null;
+        }
         releaseKeys();
         if (midtownTraveling) {
             EngineSelector.current().cancel();
             midtownTraveling = false;
         }
-        Minecraft mc = Minecraft.getInstance();
-        if (mc.gameMode != null && breaking != null) mc.gameMode.stopDestroyBlock();
-        breaking = null;
         if (breakBefore != null) dev.buildtools.Api.setOwnBreak(breakBefore);
         breakBefore = null;
     }
@@ -488,32 +516,7 @@ public final class ClearProcess {
                 } catch (NumberFormatException ignored) { }
             }
         }
-        var inv = p.getInventory();
-        int best = -1;
-        float bestSpeed = 1.0f;
-        for (int i = 0; i < 36; i++) {
-            ItemStack st = inv.getItem(i);
-            if (st.isEmpty()) continue;
-            if (st.isDamageableItem() && st.getMaxDamage() - st.getDamageValue() <= saverThreshold) continue;
-            float sp = st.getDestroySpeed(s);
-            if (sp > bestSpeed + 0.01f || (best >= 9 && i < 9 && sp >= bestSpeed - 0.01f && sp > 1.0f)) { best = i; bestSpeed = sp; }
-        }
-        if (best < 0) {
-            ItemStack cur = inv.getSelectedItem();
-            if (cur.isDamageableItem() && cur.getMaxDamage() - cur.getDamageValue() <= saverThreshold) {
-                for (int i = 0; i < 9; i++) {
-                    ItemStack st = inv.getItem(i);
-                    if (st.isEmpty() || !st.isDamageableItem()) {
-                        inv.setSelectedSlot(i);
-                        return;
-                    }
-                }
-            }
-            return;
-        }
-        if (best < 9) { inv.setSelectedSlot(best); return; }
-        int target = inv.getSelectedSlot();
-        mc.gameMode.handleContainerInput(p.inventoryMenu.containerId, best, target, ContainerInput.SWAP, p);
+        HotbarController.selectBestTool(mc, p, s, saverThreshold);
     }
 
     private static java.lang.reflect.Field delayField;
@@ -534,16 +537,19 @@ public final class ClearProcess {
         }
     }
 
-    // ------------------------------------------------------------------ steering
+    // ------------------------------------------------------------------ steering (routed through BodyController)
 
     private void hold(boolean forward) {
-        Minecraft.getInstance().options.keyUp.setDown(forward);
+        Minecraft mc = Minecraft.getInstance();
+        if (!BodyController.INSTANCE.acquire(mc, MOTOR_OWNER)) return;
+        BodyController.INSTANCE.setMovementKeys(mc, forward, false, false, false, false, false, false);
         keysHeld = forward;
     }
 
     private void releaseKeys() {
-        if (!keysHeld) return;
-        Minecraft.getInstance().options.keyUp.setDown(false);
+        Minecraft mc = Minecraft.getInstance();
+        if (!keysHeld && !BodyController.INSTANCE.isOwnedBy(MOTOR_OWNER)) return;
+        BodyController.INSTANCE.releaseIfOwner(mc, MOTOR_OWNER);
         keysHeld = false;
     }
 
@@ -551,7 +557,7 @@ public final class ClearProcess {
     void tick() {
         tickCount++;
         Shaft.tick();
-        if (working && (Minecraft.getInstance().player == null || PauseWatch.paused)) {
+        if (working && (Minecraft.getInstance().player == null || PauseWatch.isPaused())) {
             if (Minecraft.getInstance().player == null) cancel();
             releaseKeys();
             return;
@@ -576,19 +582,18 @@ public final class ClearProcess {
     private static boolean aim(LocalPlayer p, Vec3 at) {
         Vec3 eye = p.getEyePosition();
         double dx = at.x - eye.x, dy = at.y - eye.y, dz = at.z - eye.z;
-        float yaw = (float) (Math.toDegrees(Math.atan2(dz, dx)) - 90.0);
-        float pitch = (float) -Math.toDegrees(Math.atan2(dy, Math.sqrt(dx * dx + dz * dz)));
+        float yaw = BodyController.yawTo(dx, dz);
+        float pitch = BodyController.pitchTo(dx, dy, dz);
         float dYaw = Mth.wrapDegrees(yaw - p.getYRot()), dPitch = pitch - p.getXRot();
-        p.setYRot(p.getYRot() + Mth.clamp(dYaw, -60f, 60f));
-        p.setXRot(Mth.clamp(p.getXRot() + Mth.clamp(dPitch, -45f, 45f), -90f, 90f));
+        BodyController.INSTANCE.aimSmooth(p, yaw, pitch, 60f, 45f);
         return Math.abs(dYaw) < 12f && Math.abs(dPitch) < 12f;
     }
 
     private static double faceTowards(LocalPlayer p, double x, double z) {
         double dx = x - p.getX(), dz = z - p.getZ();
-        float yaw = (float) (Math.toDegrees(Math.atan2(dz, dx)) - 90.0);
+        float yaw = BodyController.yawTo(dx, dz);
         float err = Mth.wrapDegrees(yaw - p.getYRot());
-        p.setYRot(p.getYRot() + Mth.clamp(err, -45f, 45f));
+        BodyController.INSTANCE.aimYawSmooth(p, yaw, 45f);
         double dist = Math.sqrt(dx * dx + dz * dz);
         aligned = Math.abs(err) < 30 || dist >= 2.0;   // close by: turn first, then walk (else it circles the spot)
         return dist;
@@ -627,21 +632,32 @@ public final class ClearProcess {
         // a block being broken that takes several ticks
         if (breaking != null) {
             tBreak++;
-            if (!wanted(level, breaking)) { dev.buildtools.Api.forgetScaffold(breaking); breaking = null; broken++; }
-            else if (++breakTicks > BREAK_TIMEOUT) { skipped.add(breaking); mc.gameMode.stopDestroyBlock(); breaking = null; }
-            else {
+            if (!wanted(level, breaking)) {
+                BodyController.INSTANCE.stopBreaking(mc);
+                dev.buildtools.Api.forgetScaffold(breaking);
+                breaking = null;
+                broken++;
+            } else if (++breakTicks > BREAK_TIMEOUT) {
+                skipped.add(breaking);
+                BodyController.INSTANCE.stopBreaking(mc);
+                breaking = null;
+            } else {
+                BodyController.INSTANCE.acquire(mc, MOTOR_OWNER);
                 aim(p, Vec3.atCenterOf(breaking));
-                mc.gameMode.continueDestroyBlock(breaking, Direction.UP);
-                p.swing(InteractionHand.MAIN_HAND);
+                BodyController.INSTANCE.breakBlockTick(mc, breaking);
                 return;
             }
         }
 
         switch (state) {
             case WORK -> {
-                releaseKeys();
+                if (keysHeld) {
+                    BodyController.INSTANCE.clearMovementKeys(mc);
+                    keysHeld = false;
+                }
                 BlockHitResult hit = nextBlock(p, level);
                 if (hit == null) { state = State.PICK; stateTicks = 0; item = null; return; }
+                BodyController.INSTANCE.acquire(mc, MOTOR_OWNER);
                 tBreak++;
                 BlockPos b = hit.getBlockPos();
                 BlockState s = level.getBlockState(b);
@@ -660,8 +676,7 @@ public final class ClearProcess {
                 } else {
                     breaking = b;
                     breakTicks = 0;
-                    mc.gameMode.continueDestroyBlock(b, hit.getDirection());
-                    p.swing(InteractionHand.MAIN_HAND);
+                    BodyController.INSTANCE.breakBlockTick(mc, b);
                 }
                 return;
             }

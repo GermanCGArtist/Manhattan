@@ -256,15 +256,7 @@ final class Placer {
 
     /** The fastest tool for the block into the hand (from anywhere in the inventory). */
     private static void selectBestTool(Minecraft mc, LocalPlayer p, BlockState state) {
-        int best = -1;
-        float bestSpeed = 1.0f;
-        for (int i = 0; i < 36; i++) {
-            ItemStack st = p.getInventory().getItem(i);
-            if (st.isEmpty()) continue;
-            float s = st.getDestroySpeed(state);
-            if (s > bestSpeed + 0.01f) { bestSpeed = s; best = i; }
-        }
-        if (best >= 0) Util.equip(mc, p, best);
+        dev.midtown.body.HotbarController.selectBestTool(mc, p, state, 0);
     }
 
     private static int blockSlot(LocalPlayer p) {

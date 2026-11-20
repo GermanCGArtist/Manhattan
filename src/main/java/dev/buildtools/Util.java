@@ -29,28 +29,13 @@ final class Util {
         if (mc.player != null) mc.player.sendSystemMessage(Component.literal("[BuildTools] " + s));
     }
 
-    /** The queue's "addons off ..." line: is this feature switched off for now? (names or "all", comma separated) */
     /** The script's enable("eat", ...): this helper runs while the script runs, whatever its saved option says. */
     static boolean scriptOn(String feature, boolean saved) {
-        String v = System.getProperty("baritonequeue.helpers.on");
-        if (v != null) {
-            for (String k : v.split(",")) {
-                k = k.trim();
-                if (k.equals("all") || k.equals(feature)) return true;
-            }
-        }
-        return saved;
+        return dev.midtown.api.RuntimeBus.isHelperOn(feature, saved);
     }
 
     static boolean addonOff(String feature) {
-        String v = System.getProperty("baritonequeue.addons.off");
-        if (v == null) return false;
-        String f = feature.toLowerCase();
-        for (String k : v.split(",")) {
-            k = k.trim();
-            if (k.equals("all") || (!k.isEmpty() && f.contains(k))) return true;
-        }
-        return false;
+        return dev.midtown.api.RuntimeBus.isAddonOff(feature);
     }
 
     /** True while any engine task other than ours runs. */
@@ -60,7 +45,7 @@ final class Util {
 
     /** Tells the running script to stop. */
     static void haltQueue(String why) {
-        System.setProperty("baritonequeue.halt", why);
+        dev.midtown.api.RuntimeBus.requestHalt(why);
     }
 
     private static final Map<String, Long> lastWarn = new HashMap<>();
@@ -191,12 +176,11 @@ final class Util {
     static boolean aimAt(LocalPlayer p, Vec3 aim) {
         Vec3 eye = p.getEyePosition();
         double dx = aim.x - eye.x, dy = aim.y - eye.y, dz = aim.z - eye.z;
-        float yaw = (float) (Math.toDegrees(Math.atan2(dz, dx)) - 90.0);
-        float pitch = (float) -Math.toDegrees(Math.atan2(dy, Math.sqrt(dx * dx + dz * dz)));
+        float yaw = dev.midtown.body.BodyController.yawTo(dx, dz);
+        float pitch = dev.midtown.body.BodyController.pitchTo(dx, dy, dz);
         float dYaw = Mth.wrapDegrees(yaw - p.getYRot());
         float dPitch = pitch - p.getXRot();
-        p.setYRot(p.getYRot() + Mth.clamp(dYaw, -40f, 40f));
-        p.setXRot(Mth.clamp(p.getXRot() + Mth.clamp(dPitch, -30f, 30f), -90f, 90f));
+        dev.midtown.body.BodyController.INSTANCE.aimSmooth(p, yaw, pitch, 40f, 30f);
         return Math.abs(dYaw) < 6f && Math.abs(dPitch) < 6f;
     }
 }

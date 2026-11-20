@@ -114,7 +114,7 @@ final class ChestProcess {
 
     void tick() {
         if (state == State.IDLE) return;
-        if (PauseWatch.paused) { cancel(); return; }
+        if (PauseWatch.isPaused()) { cancel(); return; }
         if (Minecraft.getInstance().player == null) {
             if (pathingStarted) {
                 EngineSelector.current().cancel();

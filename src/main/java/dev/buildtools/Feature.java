@@ -22,7 +22,7 @@ abstract class Feature {
 
     public final boolean isActive() {
         try {
-            if (PauseWatch.paused || Util.addonOff(name)) {
+            if (PauseWatch.isPaused() || Util.addonOff(name)) {
                 if (busy()) onLostControl();
                 return false;
             }

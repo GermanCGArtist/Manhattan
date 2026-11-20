@@ -148,6 +148,22 @@ public final class Jobs {
         return new Node(Kind.ACTION, id, fn + " (line " + line + ")", job);
     }
 
+    /**
+     * A task-keyed action node whose stable id is {@code taskIdPrefix} (e.g. {@code "t_001"}),
+     * so chunk leaves get stable ids {@code "<taskIdPrefix>/<x0>,<z0>[,<y0>]"} independent of script line numbers.
+     */
+    static Node taskAction(String taskIdPrefix, String label) {
+        String id = taskIdPrefix.trim().replace('/', '-');
+        Node job = jobs.computeIfAbsent(id, n -> new Node(Kind.JOB, n, label != null ? label : n, root));
+        for (Node k : job.kids) {
+            if (k.id.equals(id)) {
+                k.kids.clear();
+                return k;
+            }
+        }
+        return new Node(Kind.ACTION, id, label != null ? label : id, job);
+    }
+
     /** Registers a spatial chunk leaf node under an action node. */
     static Node chunk(Node action, ChunkGrid.ColumnBox box) {
         String key = box.minX() + "," + box.minZ() + (box.ySlices() > 1 ? "," + box.minY() : "");

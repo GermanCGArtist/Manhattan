@@ -190,6 +190,7 @@ final class GameBuiltins {
         helpers();
         settings();
         schem();
+        projects();
     }
 
     // ------------------------------------------------------------------ what the player and the world look like
@@ -357,13 +358,14 @@ final class GameBuiltins {
                 String chestLabel = chest == null ? null : (String) chest[1];
                 Object r = in.await(() -> new ChunkRunner(new ChunkRunner.ChunkWorkload() {
                     @Override public String actionKind() { return "fill_water"; }
+                    @Override public boolean usesSelectionNarrowing() { return false; }
                     @Override public List<int[]> fullBounds() { return initialBoxes; }
                     @Override public Actions.Action createChunkAction(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
                         Minecraft mc = Minecraft.getInstance();
                         if (mc != null && mc.level != null && TerminatorProcess.countWater(mc.level, clippedBoxes) == 0) {
                             return new Actions.Now(() -> 0.0);
                         }
-                        return fillWaterChunkAction(it, blockName, chestPos, chestLabel, trip);
+                        return fillWaterChunkAction(it, blockName, chestPos, chestLabel, trip, clippedBoxes);
                     }
                     @Override public int countRemaining(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
                         Minecraft mc = Minecraft.getInstance();
@@ -470,14 +472,15 @@ final class GameBuiltins {
                 Shaft.current = Shaft.find(boxes);   // the stair shaft of this dig, if a "stairs" area lies in it
                 if (Shaft.current != null) Util.msg("Stair shaft '" + Shaft.current.name() + "' stays standing; its steps are carved as the hole gets deeper.");
                 if (!ChunkGrid.shouldChunk(boxes, cfg.chunkSize, cfg.chunkSizeY, cfg.chunkGap, cfg.chunkEnabled)) {
-                    return clearFeature(layers);
+                    return clearFeature(layers, null);
                 }
                 return new ChunkRunner(new ChunkRunner.ChunkWorkload() {
                     @Override public String actionKind() { return "clear_area"; }
+                    @Override public boolean usesSelectionNarrowing() { return false; }
                     @Override public boolean skipWhenEmpty() { return true; }
                     @Override public List<int[]> fullBounds() { return boxes; }
                     @Override public Actions.Action createChunkAction(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
-                        return clearFeature(layers);
+                        return clearFeature(layers, clippedBoxes);
                     }
                     @Override public int countRemaining(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
                         Minecraft mc = Minecraft.getInstance();
@@ -494,13 +497,14 @@ final class GameBuiltins {
                 in.await(() -> {
                     List<int[]> boxes = Areas.read();
                     if (!ChunkGrid.shouldChunk(boxes, cfg.chunkSize, cfg.chunkEnabled)) {
-                        return drainFeature();
+                        return drainFeature(null);
                     }
                     return new ChunkRunner(new ChunkRunner.ChunkWorkload() {
                         @Override public String actionKind() { return "drain"; }
+                        @Override public boolean usesSelectionNarrowing() { return false; }
                         @Override public List<int[]> fullBounds() { return boxes; }
                         @Override public Actions.Action createChunkAction(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
-                            return drainFeature();
+                            return drainFeature(clippedBoxes);
                         }
                         @Override public int countRemaining(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
                             Minecraft mc = Minecraft.getInstance();
@@ -535,9 +539,9 @@ final class GameBuiltins {
                         dev.loadchest.LoadChestMod::pickingUp, null, () -> true), "pickup", l));
     }
 
-    private static Actions.Action clearFeature(int layers) {
+    static Actions.Action clearFeature(int layers, List<int[]> explicitBoxes) {
         return new Actions.Feature(
-                () -> QueueMod.clear.begin(layers),
+                () -> QueueMod.clear.begin(layers, explicitBoxes),
                 QueueMod.clear::working,
                 QueueMod.clear::cancel,
                 () -> QueueMod.clear.failure() != null ? new Modules.Failure(QueueMod.clear.failure()) : (Object) QueueMod.clear.result())
@@ -545,19 +549,30 @@ final class GameBuiltins {
                 .withEstimate(Estimate.solid());
     }
 
-    private static Actions.Action drainFeature() {
-        return new Actions.Feature(dev.buildtools.Api::drainNow, dev.buildtools.Api::draining, dev.buildtools.Api::stopDraining, () -> true);
+    static Actions.Action drainFeature(List<int[]> explicitBoxes) {
+        return new Actions.Feature(
+                () -> explicitBoxes == null ? dev.buildtools.Api.drainNow() : dev.buildtools.Api.drainNow(explicitBoxes),
+                dev.buildtools.Api::draining,
+                dev.buildtools.Api::stopDraining,
+                () -> true);
     }
 
-    private static Actions.Action floodFeature() {
-        return new Actions.Feature(dev.buildtools.Api::floodNow, dev.buildtools.Api::flooding, dev.buildtools.Api::stopFlooding,
+    static Actions.Action floodFeature() {
+        return floodFeature(null);
+    }
+
+    static Actions.Action floodFeature(List<int[]> explicitBoxes) {
+        return new Actions.Feature(
+                () -> explicitBoxes == null ? dev.buildtools.Api.floodNow() : dev.buildtools.Api.floodNow(explicitBoxes),
+                dev.buildtools.Api::flooding,
+                dev.buildtools.Api::stopFlooding,
                 () -> {   // a stop with a reason (no water to refill from, cells out of reach ...) fails the script
                     String why = dev.buildtools.Api.floodFailure();
                     return why == null ? (Object) Boolean.TRUE : new Modules.Failure(why);
                 }).resumable(dev.buildtools.Api::pauseFlooding, dev.buildtools.Api::resumeFlooding);
     }
 
-    private static Actions.Action schemFeature(List<SchemSource.Placement> pls, Schem.Mode mode, ChunkGrid.ColumnBox bounds) {
+    static Actions.Action schemFeature(List<SchemSource.Placement> pls, Schem.Mode mode, ChunkGrid.ColumnBox bounds) {
         return new Actions.Feature(
                 () -> {
                     QueueMod.schem.setChunkBounds(bounds);
@@ -569,9 +584,9 @@ final class GameBuiltins {
                 .resumable(QueueMod.schem::suspendRun, QueueMod.schem::carryOn);
     }
 
-    private static Actions.Action fillWaterChunkAction(Item it, String blockName, BlockPos chestPos, String chestLabel, int trip) {
+    static Actions.Action fillWaterChunkAction(Item it, String blockName, BlockPos chestPos, String chestLabel, int trip, List<int[]> explicitBoxes) {
         Actions.Action simple = new Actions.Feature(
-                () -> dev.buildtools.Api.fillWater(it),
+                () -> explicitBoxes == null ? dev.buildtools.Api.fillWater(it) : dev.buildtools.Api.fillWater(it, explicitBoxes),
                 dev.buildtools.Api::fillingWater,
                 dev.buildtools.Api::stopFillingWater,
                 () -> (double) dev.buildtools.Api.lastFill()[1]).withEstimate(Estimate.water());
@@ -600,7 +615,7 @@ final class GameBuiltins {
 
             private void startFill() {
                 current = new Actions.Feature(
-                        () -> dev.buildtools.Api.fillWater(it),
+                        () -> explicitBoxes == null ? dev.buildtools.Api.fillWater(it) : dev.buildtools.Api.fillWater(it, explicitBoxes),
                         dev.buildtools.Api::fillingWater,
                         dev.buildtools.Api::stopFillingWater,
                         () -> (double) dev.buildtools.Api.lastFill()[1]).withEstimate(Estimate.water());
@@ -877,6 +892,26 @@ final class GameBuiltins {
             for (int[] b : Areas.read()) out.add(new ArrayList<>(List.of(new Pos(b[0], b[1], b[2]), new Pos(b[3], b[4], b[5]))));
             return out;
         });
+        def(g, "expand_selection", 1, 3, "expand_selection(dx [, dy [, dz]])", "expand (+N) or inset (-N) every box in the current selection (1 arg = horizontal X & Z; 2 args = X/Z and Y; 3 args = X, Y, Z)", (in, a, l) -> {
+            List<int[]> cur = Areas.read();
+            if (cur.isEmpty()) throw error("There is no selection to expand. Select an area first: area(\"name\") or select(corner1, corner2).", l);
+            int dx = toInt(a.get(0), "dx", l);
+            int dy = a.size() >= 2 ? toInt(a.get(1), "dy", l) : 0;
+            int dz = a.size() >= 3 ? toInt(a.get(2), "dz", l) : dx;
+            List<int[]> expanded = new ArrayList<>(cur.size());
+            for (int[] b : cur) {
+                int x1 = b[0] - dx, y1 = b[1] - dy, z1 = b[2] - dz;
+                int x2 = b[3] + dx, y2 = b[4] + dy, z2 = b[5] + dz;
+                if (x1 <= x2 && y1 <= y2 && z1 <= z2) {
+                    expanded.add(new int[]{x1, y1, z1, x2, y2, z2});
+                }
+            }
+            if (expanded.isEmpty()) throw error("expand_selection() inset collapsed the selection to empty.", l);
+            Areas.apply(expanded);
+            List<Object> out = new ArrayList<>(expanded.size());
+            for (int[] b : expanded) out.add(new ArrayList<>(List.of(new Pos(b[0], b[1], b[2]), new Pos(b[3], b[4], b[5]))));
+            return out;
+        });
         def(g, "areas", 0, 0, "areas()", "the names of the saved areas", (in, a, l) -> new ArrayList<Object>(cfg.areas.keySet()));
         def(g, "protect", 1, 3, "protect(\"name\" [, corner1, corner2])", "a safe area: Baritone never breaks or places blocks there (no corners: the selection)", (in, a, l) -> {
             String name = str(a.get(0));
@@ -915,6 +950,7 @@ final class GameBuiltins {
             LocalPlayer p = player(l);
             String want = str(a.get(1)).toLowerCase();
             HotbarTools.pinned.put(slot - 1, want);   // wanted tools moving into the hotbar leave this slot alone
+            dev.midtown.body.HotbarController.reserveSlot(slot - 1);
             var inv = p.getInventory();
             if (matchesItem(inv.getItem(slot - 1), want)) return true;   // already there
             int from = -1;
@@ -1005,5 +1041,284 @@ final class GameBuiltins {
             Config.save();
             return null;
         });
+    }
+
+    // ------------------------------------------------------------------ projects & task queue
+
+    private static void projects() {
+        String g = "projects";
+        def(g, "project", 0, 1, "project([\"name\"])", "return the active project id, or switch to (creating if needed) the named project", (in, a, l) -> {
+            var rt = dev.baritonequeue.project.GameProjectRuntime.instance();
+            if (a.isEmpty() || a.get(0) == null) {
+                var active = rt.activeProject();
+                return active == null ? null : active.id;
+            }
+            String raw = str(a.get(0)).trim();
+            if (raw.isEmpty()) throw error("project() needs a non-empty project name.", l);
+            String id = dev.baritonequeue.project.ProjectStore.sanitizeId(raw);
+            if (!rt.projectIds().contains(id)) {
+                rt.createProject(id, raw);
+            } else {
+                rt.selectProject(id);
+            }
+            var active = rt.activeProject();
+            return active == null ? id : active.id;
+        });
+        def(g, "enqueue", 1, 2, "enqueue(\"kind\" [, optsMap])", "add a task to the active project queue and return its task id", (in, a, l) -> {
+            String rawKind = str(a.get(0)).trim().toUpperCase(java.util.Locale.ROOT);
+            dev.baritonequeue.project.ProjectTask.Kind kind;
+            try {
+                kind = dev.baritonequeue.project.ProjectTask.Kind.valueOf(rawKind);
+            } catch (IllegalArgumentException e) {
+                throw error("Unknown task kind '" + rawKind + "'. Expected one of: fill_water, clear_area, clear_trees, schem_build, flood, drain, mine, dump, restock, script.", l);
+            }
+            dev.baritonequeue.project.ProjectTask task = new dev.baritonequeue.project.ProjectTask(null, null, kind);
+            if (a.size() > 1 && a.get(1) != null) {
+                if (!(a.get(1) instanceof Map<?, ?> opts)) {
+                    throw error("enqueue() second argument must be a map of options.", l);
+                }
+                applyTaskOptions(task, opts, l);
+            }
+            var rt = dev.baritonequeue.project.GameProjectRuntime.instance();
+            rt.enqueueTask(task);
+            return task.id;
+        });
+        def(g, "enqueue_script", 1, 3, "enqueue_script(\"path\" [, paramsMap [, optsMap]])", "add a SCRIPT task to the active project queue and return its task id", (in, a, l) -> {
+            String path = str(a.get(0)).trim();
+            if (path.isEmpty()) throw error("enqueue_script() needs a script path.", l);
+            dev.baritonequeue.project.ProjectTask task = new dev.baritonequeue.project.ProjectTask(null, "Script: " + path, dev.baritonequeue.project.ProjectTask.Kind.SCRIPT);
+            task.scriptPath = path;
+            if (a.size() > 1 && a.get(1) != null) {
+                if (!(a.get(1) instanceof Map<?, ?> pm)) {
+                    throw error("enqueue_script() second argument (params) must be a map.", l);
+                }
+                for (var e : pm.entrySet()) {
+                    task.params.put(str(e.getKey()), fromScriptValue(e.getValue()));
+                }
+            }
+            if (a.size() > 2 && a.get(2) != null) {
+                if (!(a.get(2) instanceof Map<?, ?> opts)) {
+                    throw error("enqueue_script() third argument (opts) must be a map.", l);
+                }
+                applyTaskOptions(task, opts, l);
+            }
+            var rt = dev.baritonequeue.project.GameProjectRuntime.instance();
+            rt.enqueueTask(task);
+            return task.id;
+        });
+        def(g, "run_queue", 0, 0, "run_queue()", "run the active project queue to completion and wait for it", (in, a, l) ->
+                in.await(() -> new Actions.Action() {
+                    @Override
+                    void start() {
+                        var rt = dev.baritonequeue.project.GameProjectRuntime.instance();
+                        if (!rt.running()) {
+                            String err = rt.startQueue();
+                            if (err != null) { fail(err); return; }
+                        }
+                    }
+
+                    @Override
+                    void tick() {
+                        var rt = dev.baritonequeue.project.GameProjectRuntime.instance();
+                        if (!rt.running()) {
+                            var tel = rt.telemetry();
+                            if (tel.lastError() != null && !tel.lastError().isBlank()) {
+                                fail(tel.lastError());
+                            } else {
+                                finish(true);
+                            }
+                        }
+                    }
+
+                    @Override
+                    void cancel() {
+                        dev.baritonequeue.project.GameProjectRuntime.instance().stopQueue("Cancelled by script.");
+                    }
+
+                    @Override
+                    boolean timed() {
+                        return false;
+                    }
+                }, "run_queue", l));
+        def(g, "queue_clear", 0, 0, "queue_clear()", "clear all tasks and ledger progress in the active project", (in, a, l) -> {
+            var rt = dev.baritonequeue.project.GameProjectRuntime.instance();
+            var active = rt.activeProject();
+            if (active != null) {
+                if (rt.running()) rt.stopQueue("Queue cleared by script.");
+                active.tasks.clear();
+                rt.resetQueue(null);
+                rt.saveActive();
+            }
+            return null;
+        });
+        def(g, "base_trip", 0, 1, "base_trip([needsMap])", "run a batched base logistics trip (return worn tools, dump excess, restock, fetch needed materials)", (in, a, l) -> {
+            Map<String, Integer> needs = new java.util.LinkedHashMap<>();
+            if (!a.isEmpty() && a.get(0) != null) {
+                if (!(a.get(0) instanceof Map<?, ?> m)) {
+                    throw error("base_trip() argument must be a map of item -> count.", l);
+                }
+                for (var e : m.entrySet()) {
+                    int qty = toInt(e.getValue(), "base_trip() count", l);
+                    if (qty > 0) needs.put(str(e.getKey()), qty);
+                }
+            }
+            return in.await(() -> new Actions.Action() {
+                private dev.baritonequeue.project.PriorityScheduler.ActionHandle handle;
+
+                @Override
+                void start() {
+                    var rt = dev.baritonequeue.project.GameProjectRuntime.instance();
+                    var project = rt.activeProject();
+                    var plan = dev.baritonequeue.project.LogisticsPlanner.planBaseTrip(project, null, rt.inventoryView(), needs);
+                    if (plan.isEmpty()) {
+                        finish(false);
+                        return;
+                    }
+                    handle = rt.startBaseTrip(plan);
+                    if (handle == null) {
+                        finish(false);
+                    }
+                }
+
+                @Override
+                void tick() {
+                    if (handle == null) { finish(false); return; }
+                    if (!handle.isDone()) handle.tick();
+                    if (handle.isDone()) {
+                        if (handle.error() != null) fail(handle.error());
+                        else finish(true);
+                    }
+                }
+
+                @Override
+                void cancel() {
+                    if (handle != null) handle.cancel();
+                }
+
+                @Override
+                void suspend() {
+                    if (handle != null) handle.suspend();
+                }
+
+                @Override
+                void resume() {
+                    done = false;
+                    ticks = 0;
+                    if (handle != null) handle.resume();
+                }
+            }, "base_trip", l);
+        });
+    }
+
+    private static void applyTaskOptions(dev.baritonequeue.project.ProjectTask task, Map<?, ?> opts, int line) {
+        task.ensureInitialized();
+        for (var e : opts.entrySet()) {
+            String key = str(e.getKey()).trim().toLowerCase(java.util.Locale.ROOT);
+            Object val = e.getValue();
+            if (val == null) continue;
+            switch (key) {
+                case "id" -> task.id = str(val);
+                case "label" -> task.label = str(val);
+                case "enabled" -> task.enabled = Values.truthy(val);
+                case "area", "areaname", "area_name" -> task.areaName = str(val);
+                case "expand" -> task.expand = toInt(val, "expand", line);
+                case "block" -> task.block = str(val);
+                case "layers" -> task.layers = Math.max(1, Math.min(3, toInt(val, "layers", line)));
+                case "placement" -> task.placement = str(val);
+                case "mode", "schemmode", "schem_mode" -> task.schemMode = str(val);
+                case "missing", "schemmissing", "schem_missing" -> task.schemMissing = str(val);
+                case "blocks", "mineblocks", "mine_blocks" -> {
+                    task.mineBlocks.clear();
+                    if (val instanceof List<?> list) {
+                        for (Object item : list) task.mineBlocks.add(str(item));
+                    } else {
+                        task.mineBlocks.add(str(val));
+                    }
+                }
+                case "collect_scaffold", "collectscaffoldafter" -> task.collectScaffoldAfter = Values.truthy(val);
+                case "pickup", "pickupafter" -> task.pickupAfter = Values.truthy(val);
+                case "dump", "dumpafter" -> task.dumpAfter = Values.truthy(val);
+                case "script", "scriptpath", "script_path" -> task.scriptPath = str(val);
+                case "inline", "inlinescript", "inline_script" -> task.inlineScript = str(val);
+                case "params" -> {
+                    if (val instanceof Map<?, ?> pm) {
+                        for (var pe : pm.entrySet()) {
+                            task.params.put(str(pe.getKey()), fromScriptValue(pe.getValue()));
+                        }
+                    }
+                }
+                case "partial", "partialpolicy", "partial_policy" -> {
+                    try {
+                        task.partialPolicy = dev.baritonequeue.project.ProjectTask.PartialPolicy.valueOf(
+                                str(val).trim().toUpperCase(java.util.Locale.ROOT));
+                    } catch (IllegalArgumentException ex) {
+                        throw error("Unknown partialPolicy '" + str(val) + "'.", line);
+                    }
+                }
+                case "partial_threshold", "partialthreshold" -> task.partialThreshold = Math.max(0, toInt(val, "partial_threshold", line));
+                case "error", "errorpolicy", "error_policy" -> {
+                    try {
+                        task.errorPolicy = dev.baritonequeue.project.ProjectTask.ErrorPolicy.valueOf(
+                                str(val).trim().toUpperCase(java.util.Locale.ROOT));
+                    } catch (IllegalArgumentException ex) {
+                        throw error("Unknown errorPolicy '" + str(val) + "'.", line);
+                    }
+                }
+                case "max_retries", "maxretries" -> task.maxRetries = Math.max(0, toInt(val, "max_retries", line));
+                case "overrides" -> {
+                    if (val instanceof Map<?, ?> om) {
+                        applyScopedOverrides(task.overrides, om, line);
+                    }
+                }
+                default -> { }
+            }
+        }
+    }
+
+    private static void applyScopedOverrides(dev.baritonequeue.project.ScopedOverrides ov, Map<?, ?> map, int line) {
+        ov.ensureInitialized();
+        for (var e : map.entrySet()) {
+            String key = str(e.getKey()).trim().toLowerCase(java.util.Locale.ROOT);
+            Object val = e.getValue();
+            if (val == null) continue;
+            switch (key) {
+                case "allowbreak", "allow_break" -> ov.allowBreak = Values.truthy(val);
+                case "allowplace", "allow_place" -> ov.allowPlace = Values.truthy(val);
+                case "keep" -> {
+                    if (val instanceof Map<?, ?> km) {
+                        for (var ke : km.entrySet()) ov.keep.put(str(ke.getKey()), toInt(ke.getValue(), "keep", line));
+                    }
+                }
+                case "want" -> {
+                    if (val instanceof Map<?, ?> wm) {
+                        for (var we : wm.entrySet()) ov.want.put(str(we.getKey()), toInt(we.getValue(), "want", line));
+                    }
+                }
+                case "suppresssurvival", "suppress_survival" -> {
+                    if (val instanceof List<?> sl) {
+                        for (Object s : sl) ov.suppressSurvival.add(str(s));
+                    } else {
+                        ov.suppressSurvival.add(str(val));
+                    }
+                }
+                default -> { }
+            }
+        }
+    }
+
+    private static Object fromScriptValue(Object v) {
+        if (v == null || v instanceof Boolean || v instanceof String || v instanceof Number) return v;
+        if (v instanceof Pos p) return new int[]{p.x(), p.y(), p.z()};
+        if (v instanceof List<?> list) {
+            List<Object> out = new ArrayList<>(list.size());
+            for (Object item : list) out.add(fromScriptValue(item));
+            return out;
+        }
+        if (v instanceof Map<?, ?> map) {
+            Map<String, Object> out = new java.util.LinkedHashMap<>();
+            for (var e : map.entrySet()) out.put(str(e.getKey()), fromScriptValue(e.getValue()));
+            return out;
+        }
+        return String.valueOf(v);
     }
 }

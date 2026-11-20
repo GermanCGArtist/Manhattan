@@ -3,6 +3,8 @@ package dev.baritonequeue;
 import dev.baritonequeue.Schem.Mode;
 import dev.baritonequeue.Schem.Phase;
 import dev.baritonequeue.Schem.Plan;
+import dev.midtown.body.BodyController;
+import dev.midtown.body.HotbarController;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
@@ -39,6 +41,7 @@ import java.util.List;
  * Baritone only walks (GoalBlock on a spot that was checked for reach and line of sight).
  */
 final class SchemPlacer {
+    private static final String MOTOR_OWNER = "schem";
     private static final double REACH = 4.4;
     private static final int MAX_BREAKS = 2, MAX_CLICKS = 3;
 
@@ -96,6 +99,7 @@ final class SchemPlacer {
     void stop() {
         dev.midtown.api.EngineSelector.current().cancel();
         stopBreaking();
+        BodyController.INSTANCE.releaseIfOwner(Minecraft.getInstance(), MOTOR_OWNER);
         cur = null;
         walkCooldown = 0;
         queue.clear();
@@ -103,7 +107,7 @@ final class SchemPlacer {
 
     private void stopBreaking() {
         Minecraft mc = Minecraft.getInstance();
-        if (breaking && mc.gameMode != null) mc.gameMode.stopDestroyBlock();
+        if (breaking) BodyController.INSTANCE.stopBreaking(mc);
         breaking = false;
     }
 
@@ -263,21 +267,13 @@ final class SchemPlacer {
         return found;
     }
 
-    private static void equip(Minecraft mc, LocalPlayer p, int idx) {
-        if (idx < 9) {
-            p.getInventory().setSelectedSlot(idx);
-            return;
-        }
-        int target = p.getInventory().getSelectedSlot();
-        for (int h = 0; h < 9; h++) if (p.getInventory().getItem(h).isEmpty()) { target = h; break; }
-        mc.gameMode.handleContainerInput(p.inventoryMenu.containerId, idx, target, ContainerInput.SWAP, p);
-        p.getInventory().setSelectedSlot(target);
+    private static boolean equipItem(Minecraft mc, LocalPlayer p, Item it) {
+        return HotbarController.selectItem(mc, p, st -> !st.isEmpty() && st.is(it));
     }
 
     private static boolean aim(LocalPlayer p, float yaw, float pitch) {
         float dy = Mth.wrapDegrees(yaw - p.getYRot()), dp = pitch - p.getXRot();
-        p.setYRot(p.getYRot() + Mth.clamp(dy, -35f, 35f));
-        p.setXRot(Mth.clamp(p.getXRot() + Mth.clamp(dp, -25f, 25f), -90f, 90f));
+        BodyController.INSTANCE.aimSmooth(p, yaw, pitch, 35f, 25f);
         return Math.abs(dy) < 0.5f && Math.abs(dp) < 0.5f;
     }
 
@@ -333,7 +329,10 @@ final class SchemPlacer {
         Level level = mc.level;
         if (p == null || level == null || mc.gameMode == null) return false;
         if (cur == null) {
-            if (queue.isEmpty()) return true;
+            if (queue.isEmpty()) {
+                BodyController.INSTANCE.releaseIfOwner(mc, MOTOR_OWNER);
+                return true;
+            }
             next(level, p);
             return false;
         }
@@ -355,6 +354,7 @@ final class SchemPlacer {
                     if (stageTicks > 20 * 40) { fail("could not get into reach to take away what is in the way"); return false; }
                     if (walkCooldown == 0 && !dev.midtown.api.EngineSelector.current().isBusy()) {
                         walkCooldown = 10;
+                        BodyController.INSTANCE.releaseIfOwner(mc, MOTOR_OWNER);
                         dev.midtown.api.EngineSelector.current().goTo(dev.midtown.api.GoalSpec.near(cur, 2));
                     }
                     return false;
@@ -395,6 +395,7 @@ final class SchemPlacer {
                         lastSpot = spot;
                         if (spot == null) { fail("no spot to stand on with a clear line to it"); return false; }
                         System.out.println("[Queue] schem: " + what() + " at " + cur.toShortString() + ": walking to " + spot.toShortString());
+                        BodyController.INSTANCE.releaseIfOwner(mc, MOTOR_OWNER);
                         dev.midtown.api.EngineSelector.current().goTo(dev.midtown.api.GoalSpec.exact(spot));
                     }
                     return false;
@@ -417,20 +418,18 @@ final class SchemPlacer {
                 if (stageTicks > 20 * 15) { fail("could not break what is there"); return false; }
                 Vec3 at = Vec3.atCenterOf(bp);
                 if (p.getEyePosition().distanceTo(at) > REACH) { stage = Stage.APPROACH; cands = clearing ? null : cands; stageTicks = 0; stopBreaking(); return false; }
-                Direction f = Direction.getApproximateNearest(p.getEyePosition().subtract(at));
-                aim(p, (float) (Math.toDegrees(Math.atan2(at.z - p.getEyePosition().z, at.x - p.getEyePosition().x)) - 90.0),
-                        (float) -Math.toDegrees(Math.atan2(at.y - p.getEyePosition().y, Math.hypot(at.x - p.getEyePosition().x, at.z - p.getEyePosition().z))));
-                if (!breaking) { ClearProcess.equipFor(mc, p, s); mc.gameMode.startDestroyBlock(bp, f); breaking = true; }   // the fastest tool first
-                else mc.gameMode.continueDestroyBlock(bp, f);
-                p.swing(InteractionHand.MAIN_HAND);
+                BodyController.INSTANCE.acquire(mc, MOTOR_OWNER);
+                aim(p, BodyController.yawTo(at.x - p.getEyePosition().x, at.z - p.getEyePosition().z),
+                        BodyController.pitchTo(at.x - p.getEyePosition().x, at.y - p.getEyePosition().y, at.z - p.getEyePosition().z));
+                if (!breaking) ClearProcess.equipFor(mc, p, s);
+                breaking = BodyController.INSTANCE.breakBlockTick(mc, bp);
             }
             case AIM -> {
                 if (stageTicks > 20 * 6) { fail("could not turn / click"); return false; }
                 if (!Schem.replaceable(level.getBlockState(cur)) && !wantsMerge(level)) { stage = Stage.BREAK; stageTicks = 0; return false; }
                 if (chosen == null || p.getEyePosition().distanceTo(chosen.hit()) > REACH) { stage = Stage.APPROACH; stageTicks = 0; return false; }
-                int slot = slotOf(p, item);
-                if (slot < 0) { fail("no " + Schem.itemName(item) + " in the inventory"); return false; }
-                equip(mc, p, slot);
+                if (!equipItem(mc, p, item)) { fail("no " + Schem.itemName(item) + " in the inventory"); return false; }
+                BodyController.INSTANCE.acquire(mc, MOTOR_OWNER);
                 if (!aim(p, chosen.yaw(), chosen.pitch())) { turned = 0; return false; }
                 if (++turned < 2) return false;   // let the rotation reach the server before clicking
                 turned = 0;

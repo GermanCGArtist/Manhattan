@@ -1,14 +1,18 @@
 package dev.survivalkit;
 
+import dev.midtown.api.RuntimeBus;
+
 /**
- * Tracks pause state.
+ * Tracks pause state, delegated to {@link RuntimeBus}.
  */
 final class PauseWatch {
     private PauseWatch() {}
 
-    static volatile boolean paused = false;
+    static boolean isPaused() {
+        return RuntimeBus.isPaused();
+    }
 
     public static void setPaused(boolean p) {
-        paused = p;
+        RuntimeBus.setPaused(p);
     }
 }
