@@ -172,7 +172,7 @@ public final class MidtownEngine implements PathEngine {
         }
 
         WorldSnapshot snap = WorldSnapshot.captureForGoal(mc.level, start, goal);
-        CalculationContext ctx = buildContext(player);
+        CalculationContext ctx = buildContext(player, goal);
         long gen = planGeneration.incrementAndGet();
         this.activePlanGen = gen;
         this.inFlightPlanGen = gen;
@@ -380,7 +380,7 @@ public final class MidtownEngine implements PathEngine {
             return;
         }
         WorldSnapshot snap = WorldSnapshot.capture(mc.level, start);
-        CalculationContext ctx = buildContext(player);
+        CalculationContext ctx = buildContext(player, null);
         GoalSpec placeholderGoal = GoalSpec.near(start, 0);
         long gen = planGeneration.incrementAndGet();
         this.activePlanGen = gen;
@@ -488,7 +488,7 @@ public final class MidtownEngine implements PathEngine {
         }
         cancelInFlightPlan();
         WorldSnapshot snap = WorldSnapshot.captureForGoal(mc.level, start, goal);
-        CalculationContext ctx = buildContext(player);
+        CalculationContext ctx = buildContext(player, goal);
         long gen = planGeneration.incrementAndGet();
         this.activePlanGen = gen;
         this.inFlightPlanGen = gen;
@@ -596,12 +596,12 @@ public final class MidtownEngine implements PathEngine {
         }
     }
 
-    private CalculationContext buildContext(LocalPlayer player) {
+    private CalculationContext buildContext(LocalPlayer player, GoalSpec goal) {
         CalculationContext.Builder builder = CalculationContext.fromPlayer(player, effectiveItemSaverThreshold())
                 .allowBreak(allowBreak)
                 .allowPlace(allowPlace)
                 .allowParkourPlace(allowParkourPlace)
-                .deathField(currentDeathField())
+                .deathField(currentDeathField(goal))
                 .dynamicEdgeBlacklist((fx, fy, fz, tx, ty, tz) ->
                         coordinator.edgeTracker().isBlacklisted(
                                 new BlockPos(fx, fy, fz),
@@ -891,11 +891,27 @@ public final class MidtownEngine implements PathEngine {
         saveDeathMemory();
     }
 
-    private static synchronized DeathMemory.DeathField currentDeathField() {
+    private DeathMemory.DeathField currentDeathField(GoalSpec goal) {
         Minecraft mc = Minecraft.getInstance();
         if (mc == null || mc.level == null) return DeathMemory.DeathField.EMPTY;
-        ensureDeathMemoryLoaded();
-        return DEATH_MEMORY.snapshot(mc.level.dimension().identifier().toString(), System.currentTimeMillis());
+        BlockPos goalPos = switch (goal) {
+            case GoalSpec.Exact g -> g.pos();
+            case GoalSpec.Near g -> g.pos();
+            case GoalSpec.LineOfSight g -> g.target();
+            case null, default -> null;
+        };
+        List<Area> protectedBoxes = new ArrayList<>();
+        for (List<Area> boxes : protectedAreas.values()) {
+            protectedBoxes.addAll(boxes);
+        }
+        synchronized (MidtownEngine.class) {
+            ensureDeathMemoryLoaded();
+            return DEATH_MEMORY.snapshot(
+                    mc.level.dimension().identifier().toString(),
+                    System.currentTimeMillis(),
+                    goalPos,
+                    protectedBoxes);
+        }
     }
 
     private static synchronized void ensureDeathMemoryLoaded() {

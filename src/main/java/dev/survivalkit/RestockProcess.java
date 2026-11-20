@@ -45,7 +45,7 @@ final class RestockProcess extends Feature {
     private State state = State.IDLE;
     private BlockPos chest;
     private boolean returnLeg;   // currently on the way to / at the return chest
-    private int timer, cooldown, check, topUpCooldown;
+    private int timer, cooldown, check, topUpCooldown, pathFails;
     private long now;
     private ArrayDeque<Action> queue;
     private static final long RETRY_MAX = 20L * 60 * 30;    // never wait longer than 30 min between looks
@@ -268,6 +268,7 @@ final class RestockProcess extends Feature {
             return;
         }
         timer = 0;
+        pathFails = 0;
         queue = null;
         state = State.PATHING;
         EngineSelector.current().goTo(GoalSpec.near(chest, 2));
@@ -378,6 +379,15 @@ final class RestockProcess extends Feature {
                     return;
                 }
                 if (!EngineSelector.current().isBusy()) {
+                    if (EngineSelector.current().status() == EngineStatus.FAILED) {
+                        if (++pathFails >= 3) {
+                            fail("Could not find a path to the " + chestName() + ".");
+                            return;
+                        }
+                        if (timer % 20 != 0) return;
+                    } else {
+                        pathFails = 0;
+                    }
                     GoalSpec goal = EngineSelector.current().status() == EngineStatus.DONE
                             ? GoalSpec.near(chest, 1)
                             : GoalSpec.near(chest, 2);

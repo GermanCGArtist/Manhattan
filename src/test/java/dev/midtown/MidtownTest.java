@@ -1269,6 +1269,30 @@ public class MidtownTest {
             assertTrue("partial plan steers outward instead of straight into death core",
                     partialAvoid.waypoints().stream().anyMatch(wp -> wp.getZ() >= 6)
                             && partialAvoid.waypoints().stream().noneMatch(wp -> wp.getX() == 25 && wp.getZ() == 4));
+
+            // 4. Protected base / goal-local deaths must not trap the bot at base, and PARTIAL never returns empty when walking around a wall
+            DeathMemory baseMem = new DeathMemory();
+            baseMem.recordTrailPosition(overworld, 1872, 66, 1210);
+            baseMem.recordDeath(overworld, 1875, 67, 1206, t0);
+            baseMem.recordDeath(overworld, 1959, 51, 1269, t0);
+            Area baseProtect = Area.of(1859, 64, 1203, 1875, 75, 1219);
+            DeathMemory.DeathField baseFiltered = baseMem.snapshot(
+                    overworld, t0, new BlockPos(1868, 71, 1217), List.of(baseProtect));
+            same("base-adjacent death is ignored near protected base", baseFiltered.penaltyAt(1872, 69, 1207), 0.0);
+            assertTrue("distant cave death remains active when leaving base", baseFiltered.penaltyAt(1959, 51, 1269) >= 50.0);
+
+            // Walking away from goal first (around a wall) under tight node budget still yields a non-empty PARTIAL path
+            GridWorldSnapshot wallDetour = GridWorldSnapshot.builder(0, 0, 0, 12, 4, 12)
+                    .fillFloor(0, BlockKind.SOLID)
+                    .fillBox(4, 1, 0, 4, 3, 6, BlockKind.SOLID)
+                    .build();
+            PlanResult detourPartial = planner.planSync(
+                    wallDetour,
+                    CalculationContext.builder().allowBreak(false).allowPlace(false).maxNodesExpanded(20).build(),
+                    new BlockPos(3, 1, 2),
+                    GoalSpec.exact(new BlockPos(6, 1, 2)));
+            same("wall detour partial status", detourPartial.status(), PlanResult.Status.PARTIAL);
+            assertTrue("wall detour partial is non-empty", detourPartial.hasPath());
         } finally {
             planner.shutdown();
         }

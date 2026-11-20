@@ -2,6 +2,8 @@ package dev.midtown.plan;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import dev.midtown.api.Area;
+import net.minecraft.core.BlockPos;
 
 import java.io.IOException;
 import java.io.Reader;
@@ -13,6 +15,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Deque;
 import java.util.List;
 import java.util.Objects;
@@ -258,6 +261,20 @@ public final class DeathMemory {
 
     /** Builds an immutable {@link DeathField} snapshot for {@code dimension} at {@code nowMs}. */
     public synchronized DeathField snapshot(String dimension, long nowMs) {
+        return snapshot(dimension, nowMs, null, List.of());
+    }
+
+    /**
+     * Builds an immutable {@link DeathField} snapshot for {@code dimension} at {@code nowMs},
+     * excluding records near {@code protectedAreas} (so base deaths never trap the bot inside its own base)
+     * or covering {@code goalPos} (so destinations inside a death zone remain smoothly reachable).
+     */
+    public synchronized DeathField snapshot(
+            String dimension,
+            long nowMs,
+            BlockPos goalPos,
+            Collection<Area> protectedAreas
+    ) {
         if (records.isEmpty()) return DeathField.EMPTY;
         List<Record> active = new ArrayList<>();
         List<Double> weights = new ArrayList<>();
@@ -266,6 +283,7 @@ public final class DeathMemory {
             if (dimension != null && !Objects.equals(dimension, r.dimension)) continue;
             long age = nowMs - r.timestampMs;
             if (age > MAX_AGE_MS) continue;
+            if (isNearProtected(r, protectedAreas, 16) || isNearGoal(r, goalPos)) continue;
             double decay = Math.pow(0.5, Math.max(0L, age) / (double) HALF_LIFE_MS);
             double eff = r.weight * decay;
             if (eff < 0.05) continue;
@@ -382,5 +400,27 @@ public final class DeathMemory {
             }
         } catch (Exception ignored) {
         }
+    }
+
+    private static boolean isNearProtected(Record r, Collection<Area> protectedAreas, int margin) {
+        if (protectedAreas == null || protectedAreas.isEmpty()) return false;
+        for (Area area : protectedAreas) {
+            if (area == null) continue;
+            if (r.x >= area.minX() - margin && r.x <= area.maxX() + margin
+                    && r.y >= area.minY() - margin && r.y <= area.maxY() + margin
+                    && r.z >= area.minZ() - margin && r.z <= area.maxZ() + margin) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isNearGoal(Record r, BlockPos goalPos) {
+        if (goalPos == null) return false;
+        long dx = (long) goalPos.getX() - r.x;
+        long dz = (long) goalPos.getZ() - r.z;
+        long maxHoriz = (long) Math.max(1, r.radiusXZ) + 8L;
+        int maxVert = Math.max(1, r.radiusY) + 6;
+        return dx * dx + dz * dz <= maxHoriz * maxHoriz && Math.abs(goalPos.getY() - r.y) <= maxVert;
     }
 }

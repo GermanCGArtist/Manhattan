@@ -259,6 +259,8 @@ public final class MidtownPlanner {
         int bestProgressId = startId;
         double bestProgressH = state.hScore(startId);
         double bestProgressG = 0.0;
+        int bestAnyId = startId;
+        double bestAnyScore = Double.POSITIVE_INFINITY;
 
         int expanded = 0;
         int maxNodes = ctx.maxNodesExpanded();
@@ -303,6 +305,10 @@ public final class MidtownPlanner {
                 if (curScore < bestScore - 1e-6) {
                     bestScore = curScore;
                     bestNodeId = curId;
+                }
+                if (curScore < bestAnyScore - 1e-6) {
+                    bestAnyScore = curScore;
+                    bestAnyId = curId;
                 }
                 if (curH < bestProgressH - 1e-6 || (Math.abs(curH - bestProgressH) <= 1e-6 && curG < bestProgressG)) {
                     bestProgressH = curH;
@@ -355,7 +361,9 @@ public final class MidtownPlanner {
         }
 
         long elapsed = (System.nanoTime() - startNanos) / 1_000_000L;
-        int chosenBest = bestNodeId != startId ? bestNodeId : bestProgressId;
+        int chosenBest = bestNodeId != startId
+                ? bestNodeId
+                : (bestProgressId != startId ? bestProgressId : bestAnyId);
         if (timedOut) {
             return reconstruct(PlanResult.Status.PARTIAL, start, state, chosenBest, expanded, elapsed);
         }
