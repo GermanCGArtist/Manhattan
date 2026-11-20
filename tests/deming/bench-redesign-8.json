@@ -1,0 +1,223 @@
+{
+  "name": "midtown-redesign-8",
+  "instances": [
+    {
+      "id": "redesign-01-project-queue-pipeline",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/manhattan-2.12.5.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+      ],
+      "account": { "offline": { "username": "BenchR01" } },
+      "ram_mb": 2560,
+      "cpu_cores": 4,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=project_queue_pipeline",
+        "-Dmanhattan.testbridge.port=25560"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=project_queue_pipeline pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=project_queue_pipeline pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "redesign-02-project-script-params",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/manhattan-2.12.5.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+      ],
+      "account": { "offline": { "username": "BenchR02" } },
+      "ram_mb": 2560,
+      "cpu_cores": 4,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=project_script_params",
+        "-Dmanhattan.testbridge.port=25561"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=project_script_params pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=project_script_params pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "redesign-03-project-batched-logistics",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/manhattan-2.12.5.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+      ],
+      "account": { "offline": { "username": "BenchR03" } },
+      "ram_mb": 2560,
+      "cpu_cores": 4,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=project_batched_logistics",
+        "-Dmanhattan.testbridge.port=25562"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=project_batched_logistics pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=project_batched_logistics pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "redesign-04-project-pre-dusk-gate",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/manhattan-2.12.5.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+      ],
+      "account": { "offline": { "username": "BenchR04" } },
+      "ram_mb": 2560,
+      "cpu_cores": 4,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=project_pre_dusk_gate",
+        "-Dmanhattan.testbridge.port=25563"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=project_pre_dusk_gate pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=project_pre_dusk_gate pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "redesign-05-project-partial-stop-gate",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/manhattan-2.12.5.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+      ],
+      "account": { "offline": { "username": "BenchR05" } },
+      "ram_mb": 2560,
+      "cpu_cores": 4,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=project_partial_stop_gate",
+        "-Dmanhattan.testbridge.port=25564"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=project_partial_stop_gate pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=project_partial_stop_gate pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "redesign-06-midtown-async-replan",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/manhattan-2.12.5.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+      ],
+      "account": { "offline": { "username": "BenchR06" } },
+      "ram_mb": 2560,
+      "cpu_cores": 4,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=midtown_async_replan",
+        "-Dmanhattan.testbridge.port=25565"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=midtown_async_replan pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=midtown_async_replan pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "redesign-07-midtown-body-interrupt",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/manhattan-2.12.5.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+      ],
+      "account": { "offline": { "username": "BenchR07" } },
+      "ram_mb": 2560,
+      "cpu_cores": 4,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=midtown_body_interrupt",
+        "-Dmanhattan.testbridge.port=25566"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=midtown_body_interrupt pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=midtown_body_interrupt pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "redesign-08-chunk-no-selection-clobber",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/manhattan-2.12.5.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+      ],
+      "account": { "offline": { "username": "BenchR08" } },
+      "ram_mb": 2560,
+      "cpu_cores": 4,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=chunk_no_selection_clobber",
+        "-Dmanhattan.testbridge.port=25567"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_no_selection_clobber pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_no_selection_clobber pass=false|FATAL"
+        }
+      }
+    }
+  ],
+  "server": null,
+  "timeout_secs": 600
+}
