@@ -24,6 +24,11 @@ public final class LogisticsPlanner {
         boolean restockNeeded();
 
         boolean hasWornTools();
+
+        /** True when the supply chest recently ran short on {@code item} and is in backoff. */
+        default boolean isRestockExhausted(String item) {
+            return false;
+        }
     }
 
     /** Ordered steps that can be performed during a single base trip. */
@@ -110,7 +115,7 @@ public final class LogisticsPlanner {
         boolean needRestock = survival.restockEnabled
                 && !suppressRestock
                 && places.toolChest != null
-                && (inv.restockNeeded() || missingEffectiveWant(survival, activeOverrides, inv));
+                && (inv.restockNeeded() || hasUnexhaustedWantDeficit(survival, activeOverrides, inv));
 
         Map<String, Integer> positiveDeficit = filterPositive(materialDeficit);
         boolean needMaterials = !positiveDeficit.isEmpty()
@@ -148,11 +153,15 @@ public final class LogisticsPlanner {
         return new BaseTripPlan(steps, fetchMap);
     }
 
-    private static boolean missingEffectiveWant(
+    /**
+     * Returns true when any effective wanted rule is unexhausted and below half its target quantity.
+     */
+    public static boolean hasUnexhaustedWantDeficit(
             Project.SurvivalPolicy survival,
             ScopedOverrides activeOverrides,
             InventoryView inv
     ) {
+        if (survival == null || inv == null) return false;
         Map<String, Integer> effectiveWant = new LinkedHashMap<>();
         if (survival.want != null) effectiveWant.putAll(survival.want);
         if (activeOverrides != null && activeOverrides.want != null) {
@@ -162,7 +171,8 @@ public final class LogisticsPlanner {
             String item = e.getKey();
             Integer needed = e.getValue();
             if (item == null || item.isBlank() || needed == null || needed <= 0) continue;
-            if (inv.count(item) < needed) return true;
+            if (inv.isRestockExhausted(item)) continue;
+            if (inv.count(item) * 2 < needed) return true;
         }
         return false;
     }

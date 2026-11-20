@@ -51,6 +51,8 @@ final class RestockProcess extends Feature {
     private static final long RETRY_MAX = 20L * 60 * 30;    // never wait longer than 30 min between looks
     private final Map<String, Long> exhausted = new HashMap<>();
     private final Map<String, Integer> emptyTrips = new HashMap<>();
+    private long returnExhaustedUntil;
+    private int returnEmptyTrips;
     private List<BlockPos> route = new ArrayList<>();   // supply chests to visit this trip, most promising first
     private int routeIdx;
     private final Map<String, int[]> shortHere = new HashMap<>();   // rule -> {got, need} at the chest just emptied
@@ -90,6 +92,8 @@ final class RestockProcess extends Feature {
             int worn = Util.wornCount(p, key);
             if (worn > lastWorn.getOrDefault(key, 0)) {
                 exhausted.remove(key);
+                returnExhaustedUntil = 0;
+                returnEmptyTrips = 0;
                 Util.debug("worn-out " + key + " detected");
             }
             lastWorn.put(key, worn);
@@ -174,6 +178,45 @@ final class RestockProcess extends Feature {
         return false;
     }
 
+    static boolean isExhausted(String rule) {
+        return SurvivalKitMod.restock.isExhaustedNow(rule);
+    }
+
+    private boolean isExhaustedNow(String rule) {
+        if (rule == null || rule.isBlank()) return false;
+        String k = rule.trim().toLowerCase(java.util.Locale.ROOT);
+        if (k.equals("food")) k = "@food";
+        return exhausted.getOrDefault(k, 0L) > now;
+    }
+
+    static boolean hasReturnableWornTools(LocalPlayer p) {
+        return SurvivalKitMod.restock.hasReturnableWornNow(p);
+    }
+
+    private boolean hasReturnableWornNow(LocalPlayer p) {
+        if (p == null || cfg.want.isEmpty()) return false;
+        if (returnExhaustedUntil > now) return false;
+        boolean hasSeparateReturn = cfg.returnChest != null;
+        for (String key : cfg.want.keySet()) {
+            if (!Util.hasWorn(p, key)) continue;
+            if (hasSeparateReturn || exhausted.getOrDefault(key, 0L) <= now) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static void resetBackoff() {
+        SurvivalKitMod.restock.resetBackoffNow();
+    }
+
+    private void resetBackoffNow() {
+        exhausted.clear();
+        emptyTrips.clear();
+        returnExhaustedUntil = 0;
+        returnEmptyTrips = 0;
+    }
+
     /** /survival restock now */
     void startNow() {
         Minecraft mc = Minecraft.getInstance();
@@ -184,8 +227,7 @@ final class RestockProcess extends Feature {
         if (!dev.midtown.api.RuntimeBus.isScriptActive()) {
             // typed by hand: look in the chest for everything again. A running script keeps the waiting times, so
             // "on restock_needed" does not fire again for what the chest did not have.
-            exhausted.clear();
-            emptyTrips.clear();
+            resetBackoffNow();
         }
         ChestIndex.hint = null;
         start(mc, mc.player);
@@ -211,6 +253,7 @@ final class RestockProcess extends Feature {
             } else {
                 Util.warn("returnmissing", "No chest at the return chest position " + ret.toShortString()
                         + " (not loaded, or it was removed) - worn tools go into the supply chest instead.");
+                returnExhaustedUntil = Math.max(returnExhaustedUntil, now + RETRY_IDLE);
             }
         }
         route = buildRoute(mc, p);
@@ -402,6 +445,7 @@ final class RestockProcess extends Feature {
                 if (have < e.getValue()) exhausted.put(e.getKey(), Math.max(exhausted.getOrDefault(e.getKey(), 0L), now + wait));
             }
         }
+        if (returnLeg) returnExhaustedUntil = Math.max(returnExhaustedUntil, now + wait);
         Util.msg(why + " Trying again in " + Math.max(1, wait / (20 * 60)) + " min" + (failStreak > 2 ? " (it keeps failing: check the way to the chest, and that nothing is on top of it)." : "."));
         state = State.IDLE;
         cooldown = (int) wait;
@@ -431,7 +475,7 @@ final class RestockProcess extends Feature {
         for (Slot s : h.slots) {
             if (s.container != p.getInventory() && s.getItem().isEmpty()) free++;
         }
-        int returned = 0;
+        int returned = 0, wornTotal = 0;
         for (Slot s : h.slots) {
             if (s.container != p.getInventory()) continue;
             ItemStack st = s.getItem();
@@ -441,12 +485,21 @@ final class RestockProcess extends Feature {
                 if (Util.matches(st, key)) { wanted = true; break; }
             }
             if (!wanted) continue;
+            wornTotal++;
             if (returned >= free) {
                 Util.warn("returnfull", "The return chest is full - some worn tools stay in the inventory. Empty it.");
-                break;
+                continue;
             }
             plan.add(new Action(s.index, 0, ContainerInput.QUICK_MOVE));
             returned++;
+        }
+        if (wornTotal > returned) {
+            int streak = ++returnEmptyTrips;
+            long wait = Math.min(RETRY_MAX, RETRY_IDLE * (1L << Math.min(5, Math.max(0, streak - 1))));
+            returnExhaustedUntil = now + wait;
+        } else if (returned > 0) {
+            returnEmptyTrips = 0;
+            returnExhaustedUntil = 0;
         }
         if (returned > 0) summary.add("returned " + returned + " worn tool" + (returned == 1 ? "" : "s"));
         return plan;

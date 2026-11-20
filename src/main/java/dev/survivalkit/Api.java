@@ -106,16 +106,11 @@ public final class Api {
         SurvivalKitMod.eat.onLostControl();
     }
 
-    /** True if the player carries any worn-out tool (at the item-saver limit). */
+    /** True if the player carries a worn-out wanted tool that can currently be returned/replaced. */
     public static boolean hasWornTools() {
         var mc = Minecraft.getInstance();
         var p = mc == null ? null : mc.player;
-        if (p == null) return false;
-        for (int i = 0; i < 36; i++) {
-            var st = p.getInventory().getItem(i);
-            if (!st.isEmpty() && st.isDamageableItem() && Util.nearlyBroken(st)) return true;
-        }
-        return false;
+        return p != null && RestockProcess.hasReturnableWornTools(p);
     }
 
     public static boolean fighting() {
@@ -145,6 +140,16 @@ public final class Api {
     public static boolean restockNeeded() {
         var p = Minecraft.getInstance().player;
         return p != null && cfg.supply != null && RestockProcess.needed(p);
+    }
+
+    /** True when the supply chest was recently short on {@code item} and is still in backoff. */
+    public static boolean restockExhausted(String item) {
+        return RestockProcess.isExhausted(item);
+    }
+
+    /** Clears supply/return chest shortage backoffs (e.g. when starting a fresh project queue run). */
+    public static void resetRestockBackoff() {
+        RestockProcess.resetBackoff();
     }
 
     public static boolean bedTime() {

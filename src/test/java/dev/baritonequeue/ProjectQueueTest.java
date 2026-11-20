@@ -18,6 +18,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 
@@ -405,6 +406,33 @@ public class ProjectQueueTest {
         wantOv.want.put("torch", 32);
         LogisticsPlanner.BaseTripPlan wantTrip = LogisticsPlanner.planBaseTrip(p, wantOv, healthy, Map.of());
         eq("override want triggers RESTOCK_TOOLS_FOOD", wantTrip.steps(),
+                List.of(LogisticsPlanner.StepKind.RESTOCK_TOOLS_FOOD));
+
+        // Exhausted missing wanted item (e.g. supply chest out of diamond_hoe) must NOT re-trigger base trip
+        p.survival.want.put("diamond_hoe", 1);
+        FakeInventory missingHoe = new FakeInventory(20, false, false, Map.of("dirt", 64), Set.of());
+        eq("unexhausted missing diamond_hoe triggers RESTOCK_TOOLS_FOOD",
+                LogisticsPlanner.planBaseTrip(p, null, missingHoe, Map.of()).steps(),
+                List.of(LogisticsPlanner.StepKind.RESTOCK_TOOLS_FOOD));
+
+        FakeInventory exhaustedHoe = new FakeInventory(20, false, false, Map.of("dirt", 64), Set.of("diamond_hoe"));
+        check("exhausted diamond_hoe skips base trip",
+                LogisticsPlanner.planBaseTrip(p, null, exhaustedHoe, Map.of()).isEmpty());
+
+        // Half-stock rule: 31/32 or 16/32 food does NOT trigger restock, only < 50% (15/32) does
+        p.survival.want.clear();
+        p.survival.want.put("food", 32);
+        FakeInventory almostFullFood = new FakeInventory(20, false, false, Map.of("food", 31), Set.of());
+        check("31/32 food skips base trip",
+                LogisticsPlanner.planBaseTrip(p, null, almostFullFood, Map.of()).isEmpty());
+
+        FakeInventory halfFood = new FakeInventory(20, false, false, Map.of("food", 16), Set.of());
+        check("16/32 food skips base trip",
+                LogisticsPlanner.planBaseTrip(p, null, halfFood, Map.of()).isEmpty());
+
+        FakeInventory lowFood = new FakeInventory(20, false, false, Map.of("food", 15), Set.of());
+        eq("15/32 food triggers RESTOCK_TOOLS_FOOD",
+                LogisticsPlanner.planBaseTrip(p, null, lowFood, Map.of()).steps(),
                 List.of(LogisticsPlanner.StepKind.RESTOCK_TOOLS_FOOD));
     }
 
@@ -858,18 +886,31 @@ public class ProjectQueueTest {
         final boolean restockNeeded;
         final boolean wornTools;
         final Map<String, Integer> counts;
+        final Set<String> exhausted;
 
         FakeInventory(int freeSlots, boolean restockNeeded, boolean wornTools, Map<String, Integer> counts) {
+            this(freeSlots, restockNeeded, wornTools, counts, Set.of());
+        }
+
+        FakeInventory(
+                int freeSlots,
+                boolean restockNeeded,
+                boolean wornTools,
+                Map<String, Integer> counts,
+                Set<String> exhausted
+        ) {
             this.freeSlots = freeSlots;
             this.restockNeeded = restockNeeded;
             this.wornTools = wornTools;
             this.counts = new LinkedHashMap<>(counts);
+            this.exhausted = Set.copyOf(exhausted);
         }
 
         @Override public int freeSlots() { return freeSlots; }
         @Override public int count(String item) { return counts.getOrDefault(item, 0); }
         @Override public boolean restockNeeded() { return restockNeeded; }
         @Override public boolean hasWornTools() { return wornTools; }
+        @Override public boolean isRestockExhausted(String item) { return exhausted.contains(item); }
     }
 
     private static final class FakeHandle implements PriorityScheduler.ActionHandle {

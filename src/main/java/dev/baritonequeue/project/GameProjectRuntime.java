@@ -48,6 +48,7 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
     private int eatCooldownTicks;
     private int sleepCooldownTicks;
     private int baseTripCooldownTicks;
+    private int baseTripFailStreak;
     private int emergencyCooldownTicks;
 
     private GameProjectRuntime() {
@@ -194,7 +195,9 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
         eatCooldownTicks = 0;
         sleepCooldownTicks = 0;
         baseTripCooldownTicks = 0;
+        baseTripFailStreak = 0;
         emergencyCooldownTicks = 0;
+        dev.survivalkit.Api.resetRestockBackoff();
 
         activateProject(project);
         RuntimeBus.setPaused(false);
@@ -417,6 +420,11 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
             public boolean hasWornTools() {
                 return dev.survivalkit.Api.hasWornTools();
             }
+
+            @Override
+            public boolean isRestockExhausted(String item) {
+                return dev.survivalkit.Api.restockExhausted(item);
+            }
         };
     }
 
@@ -566,6 +574,7 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
                     dev.survivalkit.Api::restocking,
                     dev.survivalkit.Api::stopRestocking));
         }
+        List<Item> fetchItems = new ArrayList<>();
         if (plan.steps().contains(LogisticsPlanner.StepKind.FETCH_MATERIALS)
                 && !plan.materialsToFetch().isEmpty()
                 && !proj.places.materialChests.isEmpty()) {
@@ -575,6 +584,7 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
                 if (itemName == null || itemName.isBlank() || qty <= 0) continue;
                 Item item = QueueMod.projectResolveItem(itemName);
                 if (item == null) continue;
+                fetchItems.add(item);
                 List<BlockPos> chests = orderMaterialChests(proj.places.materialChests, item);
                 for (BlockPos chestPos : chests) {
                     stepFactories.add(() -> {
@@ -592,10 +602,34 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
         }
 
         int freeBefore = inventoryView().freeSlots();
+        int fetchBeforeSum = 0;
+        for (Item it : fetchItems) fetchBeforeSum += countExactItem(it);
+        final int fetchBefore = fetchBeforeSum;
+        final boolean hasFetch = !fetchItems.isEmpty();
         return new SequentialHandle(stepFactories, null, (err) -> {
-            int freeAfter = inventoryView().freeSlots();
-            boolean progressed = err == null && (freeAfter > freeBefore || !inventoryView().restockNeeded());
-            baseTripCooldownTicks = progressed ? 40 : 200;
+            LogisticsPlanner.InventoryView after = inventoryView();
+            int freeAfter = after.freeSlots();
+            int fetchedDelta = 0;
+            if (hasFetch) {
+                int fetchAfter = 0;
+                for (Item it : fetchItems) fetchAfter += countExactItem(it);
+                fetchedDelta = fetchAfter - fetchBefore;
+            }
+            boolean dumpStuck = hasDump && freeAfter <= freeBefore && freeAfter < proj.survival.dumpFreeSlotsBelow;
+            boolean returnStuck = hasReturn && after.hasWornTools();
+            boolean restockStuck = hasRestock && (after.restockNeeded()
+                    || LogisticsPlanner.hasUnexhaustedWantDeficit(proj.survival, null, after));
+            boolean fetchStuck = hasFetch && fetchedDelta <= 0;
+            boolean stillBlocked = err != null || dumpStuck || returnStuck || restockStuck || fetchStuck;
+            if (!stillBlocked) {
+                baseTripFailStreak = 0;
+                baseTripCooldownTicks = 60;
+            } else {
+                baseTripFailStreak = Math.min(6, baseTripFailStreak + 1);
+                baseTripCooldownTicks = Math.min(20 * 300, 20 * 30 * (1 << (baseTripFailStreak - 1)));
+                QueueMod.projectLog("Base trip did not clear all needs; backing off "
+                        + (baseTripCooldownTicks / 20) + "s.");
+            }
         });
     }
 
