@@ -407,6 +407,7 @@ public class QueueMod implements ClientModInitializer {
 
     private void tick(Minecraft mc) {
         Util.flush();
+        ScaffoldZones.syncWorld(mc);
         if (mc.player == null) {
             picking = false;
             if (Shell.isOpen()) ImGuiManager.closeShell();   // left the world: the title screen gets the whole window
@@ -1290,6 +1291,154 @@ public class QueueMod implements ClientModInitializer {
             Runnable stopFn) {
         Actions.Action act = new Actions.Feature(startFn, busyFn, stopFn, () -> true);
         return wrapAction(act, () -> 0, null);
+    }
+
+    public static PriorityScheduler.ActionHandle projectStartClearTrees(
+            List<int[]> explicitBoxes,
+            String taskId,
+            int[] dumpChestCoords,
+            boolean allowMidRunDump,
+            Integer treeZoneDiameterOverride) {
+        BlockPos chest = (dumpChestCoords != null && dumpChestCoords.length >= 3)
+                ? new BlockPos(dumpChestCoords[0], dumpChestCoords[1], dumpChestCoords[2])
+                : null;
+        String chestText = chest == null ? null : "at " + chest.toShortString();
+        return new PriorityScheduler.ActionHandle() {
+            private Fiber fiber;
+            private boolean started;
+            private boolean done;
+            private boolean suspended;
+            private String error;
+            private Integer prevDiameter;
+            private boolean diameterRestored;
+
+            private void restoreDiameter() {
+                if (prevDiameter != null && !diameterRestored) {
+                    diameterRestored = true;
+                    dev.buildtools.TreeZoneOptions.setDiameter(prevDiameter);
+                }
+            }
+
+            private void ensureStarted() {
+                if (started) return;
+                started = true;
+                if (treeZoneDiameterOverride != null && treeZoneDiameterOverride > 0) {
+                    prevDiameter = dev.buildtools.TreeZoneOptions.setDiameter(treeZoneDiameterOverride);
+                }
+                Interp[] holder = new Interp[1];
+                fiber = new Fiber("project-clear-trees", () -> {
+                    try {
+                        TreeClear.run(holder[0], 1, chest, chestText, explicitBoxes, taskId, allowMidRunDump);
+                    } finally {
+                        restoreDiameter();
+                    }
+                });
+                holder[0] = new Interp(null, fiber);
+            }
+
+            private void finishWithError(String err) {
+                error = err;
+                done = true;
+                restoreDiameter();
+            }
+
+            @Override
+            public boolean isDone() {
+                return done;
+            }
+
+            @Override
+            public String error() {
+                return error;
+            }
+
+            @Override
+            public int remainingWork() {
+                return TreeClear.lastRemainingTrees();
+            }
+
+            @Override
+            public void cancel() {
+                if (done) return;
+                done = true;
+                if (fiber != null && fiber.action != null && !fiber.action.done) {
+                    try {
+                        fiber.action.cancel();
+                    } catch (Throwable ignored) {
+                    }
+                }
+                if (fiber != null) fiber.kill();
+                restoreDiameter();
+            }
+
+            @Override
+            public void suspend() {
+                if (done || suspended) return;
+                suspended = true;
+                if (fiber != null && fiber.action != null && !fiber.action.done) {
+                    fiber.action.suspend();
+                }
+            }
+
+            @Override
+            public void resume() {
+                if (done || !suspended) return;
+                suspended = false;
+                if (fiber != null && fiber.action != null && !fiber.action.done) {
+                    fiber.action.resume();
+                }
+            }
+
+            @Override
+            public void tick() {
+                if (done || suspended) return;
+                ensureStarted();
+                if (fiber.action != null) {
+                    if (!fiber.action.done) {
+                        fiber.action.ticks++;
+                        fiber.action.tick();
+                        if (!fiber.action.done) return;
+                    }
+                }
+                if (fiber.done) {
+                    if (fiber.failure != null) {
+                        finishWithError(fiber.failure instanceof Values.ScriptError se
+                                ? se.getMessage()
+                                : String.valueOf(fiber.failure));
+                    } else {
+                        finishWithError(null);
+                    }
+                    return;
+                }
+                if (!fiber.resume()) {
+                    finishWithError("clear_trees timed out waiting for fiber.");
+                    return;
+                }
+                if (fiber.done) {
+                    if (fiber.failure != null) {
+                        finishWithError(fiber.failure instanceof Values.ScriptError se
+                                ? se.getMessage()
+                                : String.valueOf(fiber.failure));
+                    } else {
+                        finishWithError(null);
+                    }
+                    return;
+                }
+                if (fiber.wanted != null) {
+                    Supplier<Actions.Action> factory = fiber.wanted;
+                    fiber.wanted = null;
+                    try {
+                        Actions.Action a = factory.get();
+                        fiber.action = a;
+                        a.start();
+                    } catch (Throwable t) {
+                        Actions.Action failed = new Actions.Now(() -> null);
+                        failed.fail("Failed to start '" + fiber.actionText + "': " + t.getMessage());
+                        fiber.action = failed;
+                    }
+                }
+            }
+        };
     }
 
     public static void projectApplySelection(List<int[]> boxes) {

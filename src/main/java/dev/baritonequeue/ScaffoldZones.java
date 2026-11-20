@@ -40,19 +40,54 @@ final class ScaffoldZones {
     }
 
     private static final List<Zone> zones = new CopyOnWriteArrayList<>();
+    private static Object world;
+    private static String dimension = "";
+
+    static void syncWorld(Minecraft mc) {
+        if (mc == null || mc.level == null || mc.player == null) {
+            if (world != null || !zones.isEmpty()) {
+                world = null;
+                dimension = "";
+                zones.clear();
+            }
+            return;
+        }
+        if (mc.level != world) {
+            world = mc.level;
+            dimension = "";
+            zones.clear();
+        }
+        String d = mc.level.dimension().identifier().toString();
+        if (!d.equals(dimension)) {
+            dimension = d;
+            zones.clear();
+        }
+    }
 
     static void clear() {
         zones.clear();
     }
 
-    /** The zone for a tree whose logs span x0..x1, y0..y1, z0..z1 (block coordinates). Wider trunks get a wider zone. */
-    static Zone add(int x0, int y0, int z0, int x1, int y1, int z1) {
-        double cx = (x0 + x1 + 1) / 2.0, cz = (z0 + z1 + 1) / 2.0;
-        double half = Math.max(x1 - x0 + 1, z1 - z0 + 1) / 2.0;
-        double r = Math.max(dev.buildtools.TreeZoneOptions.diameter() / 2.0, half + 1.5);
-        Zone z = new Zone(cx, cz, r, y0 - 1, y1 + 1);
+    static void clearCurrentFlags() {
+        for (Zone z : zones) z.current = false;
+    }
+
+    /** Pure-Java cylinder zone creation with explicit diameter (clamped >= 3), usable in headless tests. */
+    static Zone addWithDiameter(int x0, int y0, int z0, int x1, int y1, int z1, int diameter) {
+        int minX = Math.min(x0, x1), maxX = Math.max(x0, x1);
+        int minY = Math.min(y0, y1), maxY = Math.max(y0, y1);
+        int minZ = Math.min(z0, z1), maxZ = Math.max(z0, z1);
+        double cx = (minX + maxX + 1) / 2.0, cz = (minZ + maxZ + 1) / 2.0;
+        double half = Math.max(maxX - minX + 1, maxZ - minZ + 1) / 2.0;
+        double r = Math.max(Math.max(3, diameter) / 2.0, half + 1.5);
+        Zone z = new Zone(cx, cz, r, minY - 1, maxY + 1);
         zones.add(z);
         return z;
+    }
+
+    /** The zone for a tree whose logs span x0..x1, y0..y1, z0..z1 (block coordinates). Wider trunks get a wider zone. */
+    static Zone add(int x0, int y0, int z0, int x1, int y1, int z1) {
+        return addWithDiameter(x0, y0, z0, x1, y1, z1, dev.buildtools.TreeZoneOptions.diameter());
     }
 
     static boolean inAny(BlockPos p) {

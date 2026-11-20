@@ -134,9 +134,18 @@ public class ProjectQueueTest {
         ProjectTask flood = ProjectTask.forAreaRole("basin", "flood");
         eq("forAreaRole flood kind", flood.kind, ProjectTask.Kind.FLOOD);
 
+        ProjectTask trees = ProjectTask.forAreaRole("woods", "trees");
+        eq("forAreaRole trees kind", trees.kind, ProjectTask.Kind.CLEAR_TREES);
+        eq("forAreaRole trees area", trees.areaName, "woods");
+        eq("forAreaRole trees label", trees.label, "Clear trees: woods");
+
+        ProjectTask forest = ProjectTask.forAreaRole("pine_grove", "FOREST");
+        eq("forAreaRole forest kind", forest.kind, ProjectTask.Kind.CLEAR_TREES);
+        eq("forAreaRole forest label", forest.label, "Clear trees: pine_grove");
+
         ProjectTask fallback = ProjectTask.forAreaRole("misc", "unknown_role");
         eq("forAreaRole default kind", fallback.kind, ProjectTask.Kind.CLEAR_AREA);
-        check("forAreaRole unique ids", !dig.id.equals(fill.id) && !fill.id.equals(flood.id));
+        check("forAreaRole unique ids", !dig.id.equals(fill.id) && !fill.id.equals(flood.id) && !flood.id.equals(trees.id));
     }
 
     // ------------------------------------------------------------------ 3. ProjectStore
@@ -151,6 +160,8 @@ public class ProjectQueueTest {
         try {
             String world = "Survival World:25565";
             Project p1 = ProjectStore.createDefault(world, "Canal Build", "Canal Build");
+            eq("default treeZoneDiameter", p1.survival.treeZoneDiameter, 9);
+            eq("default showTreeZones", p1.survival.showTreeZones, true);
             p1.places.bed = new int[]{10, 64, -5};
             p1.places.toolChest = new int[]{12, 64, -5};
             p1.places.returnChest = new int[]{14, 64, -5};
@@ -162,6 +173,8 @@ public class ProjectQueueTest {
             p1.survival.hotbar.put(0, "diamond_pickaxe");
             p1.survival.keep.put("dirt", 128);
             p1.survival.preDuskMarginTicks = 1500;
+            p1.survival.treeZoneDiameter = 13;
+            p1.survival.showTreeZones = false;
 
             ProjectTask t1 = ProjectTask.forAreaRole("lake_1", "fill");
             t1.id = "t_001";
@@ -173,6 +186,11 @@ public class ProjectQueueTest {
             t1.errorPolicy = ProjectTask.ErrorPolicy.RETRY;
             t1.maxRetries = 2;
             p1.tasks.add(t1);
+
+            ProjectTask t2 = ProjectTask.forAreaRole("north_woods", "trees");
+            t2.id = "t_002";
+            t2.treeZoneDiameter = 11;
+            p1.tasks.add(t2);
 
             ProjectStore.save(tmp, p1);
             Project p2 = ProjectStore.createDefault(world, "alpha", "Alpha");
@@ -194,17 +212,35 @@ public class ProjectQueueTest {
             eq("loaded survival want", loaded.survival.want.get("@food"), 16);
             eq("loaded survival hotbar", loaded.survival.hotbar.get(0), "diamond_pickaxe");
             eq("loaded preDuskMarginTicks", loaded.survival.preDuskMarginTicks, 1500);
-            eq("loaded tasks count", loaded.tasks.size(), 1);
+            eq("loaded treeZoneDiameter", loaded.survival.treeZoneDiameter, 13);
+            eq("loaded showTreeZones", loaded.survival.showTreeZones, false);
+            eq("loaded tasks count", loaded.tasks.size(), 2);
             ProjectTask lt = loaded.tasks.get(0);
             eq("loaded task id", lt.id, "t_001");
             eq("loaded task kind", lt.kind, ProjectTask.Kind.FILL_WATER);
             eq("loaded task expand", lt.expand, 1);
+            eq("loaded task treeZoneDiameter null", lt.treeZoneDiameter, null);
             eq("loaded task allowBreak", lt.overrides.allowBreak, Boolean.FALSE);
             check("loaded task suppress dump", lt.overrides.isSuppressed("dump"));
             eq("loaded task partialPolicy", lt.partialPolicy, ProjectTask.PartialPolicy.STOP);
             eq("loaded task partialThreshold", lt.partialThreshold, 3);
             eq("loaded task errorPolicy", lt.errorPolicy, ProjectTask.ErrorPolicy.RETRY);
             eq("loaded task maxRetries", lt.maxRetries, 2);
+
+            ProjectTask lt2 = loaded.tasks.get(1);
+            eq("loaded tree task kind", lt2.kind, ProjectTask.Kind.CLEAR_TREES);
+            eq("loaded tree task treeZoneDiameter", lt2.treeZoneDiameter, 11);
+
+            // Legacy JSON without treeZoneDiameter/showTreeZones and invalid <3 diameter clamp
+            com.google.gson.Gson gson = new com.google.gson.Gson();
+            Project legacyProj = gson.fromJson("{\"id\":\"leg\",\"survival\":{}}", Project.class);
+            legacyProj.ensureInitialized();
+            eq("legacy json treeZoneDiameter default", legacyProj.survival.treeZoneDiameter, 9);
+            eq("legacy json showTreeZones default", legacyProj.survival.showTreeZones, true);
+
+            Project clampedProj = gson.fromJson("{\"id\":\"clamp\",\"survival\":{\"treeZoneDiameter\":1}}", Project.class);
+            clampedProj.ensureInitialized();
+            eq("invalid <3 treeZoneDiameter resets to 9", clampedProj.survival.treeZoneDiameter, 9);
 
             check("delete active project", ProjectStore.delete(tmp, world, "canal_build"));
             eq("activeId cleared after deleting active project", ProjectStore.activeId(tmp, world), null);

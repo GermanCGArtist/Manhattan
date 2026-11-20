@@ -720,7 +720,8 @@ public class TestBridge implements ClientModInitializer {
             case RUNNING -> {
                 String scenario = BENCHMARK.trim();
                 if (benchProjectMode) {
-                    if ("chunk_no_selection_clobber".equals(scenario) && !sameBoxes(Areas.read(), benchKeepBoxes)) {
+                    if (("chunk_no_selection_clobber".equals(scenario) || "project_clear_trees_zones".equals(scenario))
+                            && !sameBoxes(Areas.read(), benchKeepBoxes)) {
                         benchSelectionClobbered = true;
                     }
                     if (!GameProjectRuntime.instance().running()) {
@@ -1080,6 +1081,20 @@ public class TestBridge implements ClientModInitializer {
                 cmds.add("give @s diamond_pickaxe 1");
                 cmds.add("effect give @s haste 10000 255 true");
             }
+            case "project_clear_trees_zones" -> {
+                cmds.add("fill 100 -60 92 122 -45 112 air");
+                // Tree 1 at (107, 100): place canopy before trunk so log column is preserved
+                cmds.add("fill 105 -56 98 109 -54 102 oak_leaves");
+                cmds.add("fill 107 -60 100 107 -55 100 oak_log");
+                // Tree 2 at (114, 103): place canopy before trunk so log column is preserved
+                cmds.add("fill 112 -55 101 116 -53 105 oak_leaves");
+                cmds.add("fill 114 -60 103 114 -54 103 oak_log");
+                cmds.add("setblock 98 -60 100 chest");
+                cmds.add("give @s diamond_axe 1");
+                cmds.add("give @s diamond_shovel 1");
+                cmds.add("give @s dirt 64");
+                cmds.add("effect give @s haste 10000 255 true");
+            }
             default -> { }
         }
         cmds.add("tp @s 100 -60 100 0 0");
@@ -1169,6 +1184,14 @@ public class TestBridge implements ClientModInitializer {
                     mc.level.getBlockState(new BlockPos(104, -60, 98)).is(Blocks.STONE);
             case "chunk_no_selection_clobber" ->
                     mc.level.getBlockState(new BlockPos(104, -60, 92)).is(Blocks.STONE);
+            case "project_clear_trees_zones" ->
+                    mc.level.getBlockState(new BlockPos(98, -60, 100)).is(Blocks.CHEST)
+                            && mc.level.getBlockState(new BlockPos(107, -60, 100)).is(Blocks.OAK_LOG)
+                            && mc.level.getBlockState(new BlockPos(107, -55, 100)).is(Blocks.OAK_LOG)
+                            && mc.level.getBlockState(new BlockPos(105, -56, 98)).is(Blocks.OAK_LEAVES)
+                            && mc.level.getBlockState(new BlockPos(114, -60, 103)).is(Blocks.OAK_LOG)
+                            && mc.level.getBlockState(new BlockPos(114, -54, 103)).is(Blocks.OAK_LOG)
+                            && mc.level.getBlockState(new BlockPos(116, -53, 105)).is(Blocks.OAK_LEAVES);
             default -> true;
         };
     }
@@ -1445,7 +1468,8 @@ public class TestBridge implements ClientModInitializer {
                  "project_pre_dusk_gate",
                  "project_partial_stop_gate",
                  "midtown_body_interrupt",
-                 "chunk_no_selection_clobber" -> true;
+                 "chunk_no_selection_clobber",
+                 "project_clear_trees_zones" -> true;
             default -> false;
         };
     }
@@ -1578,6 +1602,20 @@ public class TestBridge implements ClientModInitializer {
                 t1.collectScaffoldAfter = false;
                 p.tasks.add(t1);
             }
+            case "project_clear_trees_zones" -> {
+                saveBenchmarkArea("woods_test", 104, -60, 96, 118, -48, 108);
+                saveBenchmarkArea("keep_me", 90, -60, 90, 92, -60, 92);
+                Areas.load("keep_me");
+                benchKeepBoxes = Areas.read();
+
+                p.places.dumpChest = new int[]{98, -60, 100};
+                p.survival.treeZoneDiameter = 9;
+                p.survival.showTreeZones = true;
+
+                ProjectTask t1 = new ProjectTask("t_trees", "Clear trees with zones", ProjectTask.Kind.CLEAR_TREES);
+                t1.areaName = "woods_test";
+                p.tasks.add(t1);
+            }
             default -> {
                 return null;
             }
@@ -1635,6 +1673,32 @@ public class TestBridge implements ClientModInitializer {
                             && sameBoxes(Areas.read(), benchKeepBoxes)
                             && isBoxAirNoFluid(mc, 104, -60, 92, 127, -59, 115)
                             && rt.taskState("t_clear") == TaskQueue.TaskLedger.State.DONE;
+            case "project_clear_trees_zones" -> {
+                boolean noOakLogs = hasNoBlockOnServer(mc, 104, -60, 96, 118, -48, 108, Blocks.OAK_LOG);
+                boolean keepMeOk = !benchSelectionClobbered && sameBoxes(Areas.read(), benchKeepBoxes);
+                List<ScaffoldZones.Zone> zones = ScaffoldZones.all();
+                boolean zonesClean = !zones.isEmpty();
+                for (ScaffoldZones.Zone z : zones) {
+                    if (z.current || z.pending) {
+                        zonesClean = false;
+                        break;
+                    }
+                }
+                boolean allowedZoneCleared = dev.buildtools.Api.scaffoldAllowedZone == null;
+                boolean autoSweepRestored = !dev.buildtools.TreeZoneOptions.isAutoSweepSuppressed();
+                boolean bodyIdle = BodyController.INSTANCE.currentOwner() == null;
+                boolean taskDone = rt.taskState("t_trees") == TaskQueue.TaskLedger.State.DONE;
+                System.out.println("[testbridge] project_clear_trees_zones verify: noOakLogs=" + noOakLogs
+                        + " keepMeOk=" + keepMeOk
+                        + " zonesCount=" + zones.size()
+                        + " zonesClean=" + zonesClean
+                        + " allowedZoneCleared=" + allowedZoneCleared
+                        + " autoSweepRestored=" + autoSweepRestored
+                        + " bodyIdle=" + bodyIdle
+                        + " taskDone=" + taskDone);
+                yield noOakLogs && keepMeOk && zonesClean && allowedZoneCleared
+                        && autoSweepRestored && bodyIdle && taskDone;
+            }
             default -> false;
         };
     }
@@ -1681,6 +1745,33 @@ public class TestBridge implements ClientModInitializer {
             }
         }
         return true;
+    }
+
+    private static boolean hasNoBlockOnServer(Minecraft mc, int x1, int y1, int z1, int x2, int y2, int z2, Block forbidden) {
+        var server = mc.getSingleplayerServer();
+        if (server == null) return false;
+        try {
+            return server.submit(() -> {
+                ServerLevel lvl = server.overworld();
+                if (mc.player != null) {
+                    ServerLevel own = server.getLevel(mc.player.level().dimension());
+                    if (own != null) lvl = own;
+                }
+                for (int x = Math.min(x1, x2); x <= Math.max(x1, x2); x++) {
+                    for (int y = Math.min(y1, y2); y <= Math.max(y1, y2); y++) {
+                        for (int z = Math.min(z1, z2); z <= Math.max(z1, z2); z++) {
+                            if (lvl.getBlockState(new BlockPos(x, y, z)).is(forbidden)) {
+                                return false;
+                            }
+                        }
+                    }
+                }
+                return true;
+            }).get(20, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            System.out.println("[testbridge] server block check failed: " + e);
+            return false;
+        }
     }
 
     private static boolean sameBoxes(List<int[]> a, List<int[]> b) {

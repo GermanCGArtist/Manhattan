@@ -1,0 +1,88 @@
+{
+  "name": "trees-zones",
+  "instances": [
+    {
+      "id": "tz-01-project-clear-trees-zones",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/manhattan-2.12.5.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+      ],
+      "account": { "offline": { "username": "BenchTZ01" } },
+      "ram_mb": 2560,
+      "cpu_cores": 4,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=project_clear_trees_zones",
+        "-Dmanhattan.testbridge.port=25560"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=project_clear_trees_zones pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=project_clear_trees_zones pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "tz-02-project-queue-pipeline",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/manhattan-2.12.5.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+      ],
+      "account": { "offline": { "username": "BenchTZ02" } },
+      "ram_mb": 2560,
+      "cpu_cores": 4,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=project_queue_pipeline",
+        "-Dmanhattan.testbridge.port=25561"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=project_queue_pipeline pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=project_queue_pipeline pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "tz-03-chunk-no-selection-clobber",
+      "mc_version": "26.1.1",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
+        { "local_path": "build/libs/manhattan-2.12.5.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+      ],
+      "account": { "offline": { "username": "BenchTZ03" } },
+      "ram_mb": 2560,
+      "cpu_cores": 4,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=chunk_no_selection_clobber",
+        "-Dmanhattan.testbridge.port=25562"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_no_selection_clobber pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=chunk_no_selection_clobber pass=false|FATAL"
+        }
+      }
+    }
+  ],
+  "server": null,
+  "timeout_secs": 600
+}

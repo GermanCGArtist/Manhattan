@@ -36,6 +36,8 @@ final class Scaffold {
             BlockPos placed = level.getBlockState(clicked).canBeReplaced() ? clicked : clicked.relative(hit.getDirection());
             var outside = Api.scaffoldOutsideSchematic;   // a schematic build knows which blocks are wanted
             if (outside != null && !outside.test(placed, bi.getBlock())) return InteractionResult.PASS;   // the schematic wants it: not scaffolding
+            var allowed = Api.scaffoldAllowedZone;
+            if (allowed != null && !allowed.test(placed)) return InteractionResult.PASS;
             if (spots.size() < MAX) spots.put(placed.immutable(), bi.getBlock());
             return InteractionResult.PASS;
         });
@@ -68,12 +70,14 @@ final class Scaffold {
     static int near(LocalPlayer p, int r) {
         Level level = p.level();
         var outside = Api.scaffoldOutsideSchematic;
+        var allowed = Api.scaffoldAllowedZone;
         int n = 0;
         for (var e : spots.entrySet()) {
             BlockPos pos = e.getKey();
             if (pos.distSqr(p.blockPosition()) <= (double) r * r
                     && level.hasChunkAt(pos)
                     && (outside == null || outside.test(pos, e.getValue()))
+                    && (allowed == null || allowed.test(pos))
                     && level.getBlockState(pos).getBlock() == e.getValue()) {
                 n++;
             }
@@ -87,6 +91,11 @@ final class Scaffold {
         if (b == null) return false;
         var outside = Api.scaffoldOutsideSchematic;
         if (outside != null && !outside.test(pos, b)) {   // a schematic wants this block here: never taken down
+            spots.remove(pos);
+            return false;
+        }
+        var allowed = Api.scaffoldAllowedZone;
+        if (allowed != null && !allowed.test(pos)) {
             spots.remove(pos);
             return false;
         }

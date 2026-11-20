@@ -102,6 +102,9 @@ public final class Project {
         public boolean preDuskGate = true;
         public int preDuskMarginTicks = 1200;
 
+        public int treeZoneDiameter = 9;
+        public boolean showTreeZones = true;
+
         public SurvivalPolicy() {
         }
 
@@ -109,6 +112,7 @@ public final class Project {
             if (want == null) want = new LinkedHashMap<>();
             if (hotbar == null) hotbar = new LinkedHashMap<>();
             if (keep == null) keep = new LinkedHashMap<>();
+            if (treeZoneDiameter < 3) treeZoneDiameter = 9;
         }
     }
 }

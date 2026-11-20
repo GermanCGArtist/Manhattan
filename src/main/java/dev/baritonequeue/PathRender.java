@@ -30,6 +30,7 @@ final class PathRender {
 
     static void render() {
         Minecraft mc = Minecraft.getInstance();
+        ScaffoldZones.syncWorld(mc);
         if (mc.levelRenderer == null || mc.player == null) return;
         boolean zones = ScaffoldZones.wanted();   // the tree zones of clear_trees (their own switch: buildtools.showTreeZones)
         MidtownEngine me = null;

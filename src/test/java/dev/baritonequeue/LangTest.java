@@ -340,6 +340,7 @@ public class LangTest {
         jobs();
         heavymaticaApi();
         logoffAndDisconnect();
+        treeZones();
         System.out.println(passes + " passed, " + fails + " failed");
         System.exit(fails == 0 ? 0 : 1);
     }
@@ -557,5 +558,72 @@ public class LangTest {
         Config.cfg.logoffOnDone = false;
         Config.cfg.logoffOnError = false;
         Modules.set("survival.logoffOnMissingBed", false, 0);
+    }
+
+    /** Cylinder scaffold zones and TreeZoneOptions headless tests. */
+    static void treeZones() {
+        ScaffoldZones.clear();
+        assertTrue("scaffold zones initially empty", ScaffoldZones.all().isEmpty());
+
+        // 1x1 trunk with diameter 9 -> cx=10.5, cz=20.5, r=4.5, y=[63..71]
+        ScaffoldZones.Zone z1 = ScaffoldZones.addWithDiameter(10, 64, 20, 10, 70, 20, 9);
+        same("zone1 cx", z1.cx, 10.5);
+        same("zone1 cz", z1.cz, 20.5);
+        same("zone1 r", z1.r, 4.5);
+        same("zone1 y0", z1.y0, 63);
+        same("zone1 y1", z1.y1, 71);
+        assertTrue("zone1 contains trunk center", z1.contains(new net.minecraft.core.BlockPos(10, 64, 20)));
+        assertTrue("zone1 inAny trunk center", ScaffoldZones.inAny(new net.minecraft.core.BlockPos(10, 64, 20)));
+        assertTrue("zone1 contains y0-1", z1.contains(new net.minecraft.core.BlockPos(10, 63, 20)));
+        assertTrue("zone1 contains y1+1", z1.contains(new net.minecraft.core.BlockPos(10, 71, 20)));
+        assertFalse("zone1 excludes below y0-1", z1.contains(new net.minecraft.core.BlockPos(10, 62, 20)));
+        assertFalse("zone1 excludes above y1+1", z1.contains(new net.minecraft.core.BlockPos(10, 72, 20)));
+        assertTrue("zone1 contains inside radius", z1.contains(new net.minecraft.core.BlockPos(14, 65, 20)));
+        assertFalse("zone1 excludes outside radius", z1.contains(new net.minecraft.core.BlockPos(15, 65, 20)));
+
+        // Wide 2x2 trunk with small diameter 3 -> radius expands to half + 1.5 = 2.5
+        ScaffoldZones.Zone z2 = ScaffoldZones.addWithDiameter(100, 64, 100, 101, 75, 101, 3);
+        same("zone2 cx", z2.cx, 101.0);
+        same("zone2 cz", z2.cz, 101.0);
+        same("zone2 expanded r", z2.r, 2.5);
+        same("zone2 y0", z2.y0, 63);
+        same("zone2 y1", z2.y1, 76);
+
+        // Very wide 10x10 canopy with diameter 9 -> radius expands to 5.0 + 1.5 = 6.5
+        ScaffoldZones.Zone z3 = ScaffoldZones.addWithDiameter(200, 64, 200, 209, 72, 209, 9);
+        same("zone3 wide r", z3.r, 6.5);
+
+        // Clamped diameter < 3
+        ScaffoldZones.Zone z4 = ScaffoldZones.addWithDiameter(300, 64, 300, 300, 66, 300, 1);
+        same("zone4 clamped r", z4.r, 2.0);
+
+        // clearCurrentFlags clears current without clearing pending
+        z1.current = true;
+        z1.pending = true;
+        z2.current = true;
+        ScaffoldZones.clearCurrentFlags();
+        assertFalse("z1 current cleared", z1.current);
+        assertFalse("z2 current cleared", z2.current);
+        assertTrue("z1 pending preserved", z1.pending);
+        ScaffoldZones.clear();
+
+        // TreeZoneOptions setters and clamping
+        assertFalse("autoSweepSuppressed initially false", dev.buildtools.TreeZoneOptions.isAutoSweepSuppressed());
+        same("setAutoSweepSuppressed true returns false", dev.buildtools.TreeZoneOptions.setAutoSweepSuppressed(true), false);
+        assertTrue("autoSweepSuppressed is true", dev.buildtools.TreeZoneOptions.isAutoSweepSuppressed());
+        same("setAutoSweepSuppressed false returns true", dev.buildtools.TreeZoneOptions.setAutoSweepSuppressed(false), true);
+        assertFalse("autoSweepSuppressed restored false", dev.buildtools.TreeZoneOptions.isAutoSweepSuppressed());
+
+        int origDiam = dev.buildtools.TreeZoneOptions.setDiameter(13);
+        same("diameter set to 13", dev.buildtools.TreeZoneOptions.diameter(), 13);
+        same("setDiameter clamps <3 to 3", dev.buildtools.TreeZoneOptions.setDiameter(1), 13);
+        same("diameter clamped at 3", dev.buildtools.TreeZoneOptions.diameter(), 3);
+        dev.buildtools.TreeZoneOptions.setDiameter(origDiam);
+
+        boolean origShow = dev.buildtools.TreeZoneOptions.setShow(false);
+        assertFalse("show set to false", dev.buildtools.TreeZoneOptions.show());
+        same("setShow true returns false", dev.buildtools.TreeZoneOptions.setShow(true), false);
+        assertTrue("show set to true", dev.buildtools.TreeZoneOptions.show());
+        dev.buildtools.TreeZoneOptions.setShow(origShow);
     }
 }

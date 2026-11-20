@@ -1238,6 +1238,10 @@ final class GameBuiltins {
                 case "collect_scaffold", "collectscaffoldafter" -> task.collectScaffoldAfter = Values.truthy(val);
                 case "pickup", "pickupafter" -> task.pickupAfter = Values.truthy(val);
                 case "dump", "dumpafter" -> task.dumpAfter = Values.truthy(val);
+                case "tree_zone_diameter", "treezonediameter", "zone_diameter" -> {
+                    int d = toInt(val, "tree_zone_diameter", line);
+                    task.treeZoneDiameter = d <= 0 ? null : Math.max(3, d);
+                }
                 case "script", "scriptpath", "script_path" -> task.scriptPath = str(val);
                 case "inline", "inlinescript", "inline_script" -> task.inlineScript = str(val);
                 case "params" -> {

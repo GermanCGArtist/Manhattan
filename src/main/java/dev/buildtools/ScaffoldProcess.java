@@ -4,12 +4,12 @@ import dev.baritonequeue.ClearProcess;
 import dev.midtown.api.EngineSelector;
 import dev.midtown.api.EngineStatus;
 import dev.midtown.api.GoalSpec;
+import dev.midtown.body.BodyController;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.util.Mth;
-import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.level.ClipContext;
@@ -35,6 +35,7 @@ import static dev.buildtools.Config.cfg;
  * everything within reach from where it stands with the fastest tool in the hotbar, then collects the drops.
  */
 final class ScaffoldProcess extends Feature {
+    private static final String MOTOR_OWNER = "scaffold";
     private static final double REACH = 4.4;
     private static final int TARGET_TIMEOUT = 20 * 12;
     private static final int GATHER_TIMEOUT = 20 * 6;
@@ -43,7 +44,6 @@ final class ScaffoldProcess extends Feature {
     private boolean gathering;
     private boolean sweepingCluster;
     private boolean waitingForPath;
-    private boolean breakStarted;
     private boolean walkingToItem;
     private BlockPos target;
     private ItemEntity item;
@@ -80,6 +80,7 @@ final class ScaffoldProcess extends Feature {
             stepInternal(mc, p);
             return;
         }
+        if (TreeZoneOptions.isAutoSweepSuppressed()) return;
         if (p == null || mc.level == null || !Util.scriptOn("scaffold", cfg.scaffoldAuto) || cooldown > 0 || ++check % 20 != 0 || Util.addonOff("scaffold")) return;
         if (!Util.baritoneBusy()) return;
         if (Scaffold.near(p, 40) >= cfg.scaffoldBatch) start(mc, p, true);
@@ -119,13 +120,11 @@ final class ScaffoldProcess extends Feature {
         targetTicks = 0;
         pathAttempts = 0;
         waitingForPath = false;
-        breakStarted = false;
     }
 
-    private void releaseWalkKey(Minecraft mc) {
-        if (!walkingToItem) return;
-        if (mc != null && mc.options != null) mc.options.keyUp.setDown(false);
+    private void releaseMotor(Minecraft mc) {
         walkingToItem = false;
+        BodyController.INSTANCE.releaseIfOwner(mc, MOTOR_OWNER);
     }
 
     private Boolean breakBefore;
@@ -136,7 +135,7 @@ final class ScaffoldProcess extends Feature {
         if (on) {
             breakBefore = RegionRules.setOwnBreak(false);
         } else {
-            releaseWalkKey(Minecraft.getInstance());
+            releaseMotor(Minecraft.getInstance());
             if (breakBefore != null) {
                 RegionRules.setOwnBreak(breakBefore);
                 breakBefore = null;
@@ -154,9 +153,7 @@ final class ScaffoldProcess extends Feature {
         itemGoalPos = null;
         sweepSkipped.clear();
         brokenPositions.clear();
-        Minecraft mc = Minecraft.getInstance();
-        releaseWalkKey(mc);
-        if (mc.gameMode != null) mc.gameMode.stopDestroyBlock();
+        releaseMotor(Minecraft.getInstance());
         EngineSelector.current().cancel();
     }
 
@@ -175,6 +172,7 @@ final class ScaffoldProcess extends Feature {
         if (target != null && !Scaffold.valid(level, target)) {
             broken++;
             brokenPositions.add(target.immutable());
+            BodyController.INSTANCE.stopBreaking(mc);
             resetTargetState();
         }
         if (gathering || sweepingCluster) {
@@ -208,7 +206,6 @@ final class ScaffoldProcess extends Feature {
             targetTicks = 0;
             pathAttempts = 0;
             waitingForPath = false;
-            breakStarted = false;
         }
         if (!level.getBlockState(target).isAir() && !announced.contains(target)) {
             announced.add(target.immutable());
@@ -225,7 +222,7 @@ final class ScaffoldProcess extends Feature {
             itemGoalPos = null;
         }
         if (item == null) {
-            releaseWalkKey(mc);
+            releaseMotor(mc);
             if (sweepingCluster) {
                 sweepingCluster = false;
                 return;
@@ -236,7 +233,7 @@ final class ScaffoldProcess extends Feature {
         if (++itemTicks > GATHER_TIMEOUT) {
             ignoredItems.add(item.getId());
             item = null;
-            releaseWalkKey(mc);
+            releaseMotor(mc);
             EngineSelector.current().cancel();
             return;
         }
@@ -246,15 +243,16 @@ final class ScaffoldProcess extends Feature {
         double dy = Math.abs(item.getY() - p.getY());
         if (horizDist <= 2.2 && dy <= 1.2) {
             if (EngineSelector.current().isBusy()) EngineSelector.current().cancel();
-            float yaw = (float) (Math.toDegrees(Math.atan2(dz, dx)) - 90.0);
+            if (!BodyController.INSTANCE.acquire(mc, MOTOR_OWNER)) return;
+            float yaw = BodyController.yawTo(dx, dz);
             float err = Mth.wrapDegrees(yaw - p.getYRot());
-            p.setYRot(p.getYRot() + Mth.clamp(err, -45f, 45f));
+            BodyController.INSTANCE.aimYawSmooth(p, yaw, 45f);
             boolean aligned = Math.abs(err) < 35.0 || horizDist >= 1.5;
-            mc.options.keyUp.setDown(aligned);
+            BodyController.INSTANCE.setMovementKeys(mc, aligned, false, false, false, false, false, false);
             walkingToItem = true;
             return;
         }
-        releaseWalkKey(mc);
+        releaseMotor(mc);
         if (!EngineSelector.current().isBusy()) {
             EngineStatus st = EngineSelector.current().status();
             if (itemAttempt == 0) {
@@ -286,12 +284,13 @@ final class ScaffoldProcess extends Feature {
             sweepSkipped.add(target.immutable());
             skipped++;
             resetTargetState();
-            mc.gameMode.stopDestroyBlock();
+            releaseMotor(mc);
             EngineSelector.current().cancel();
             return;
         }
         BlockHitResult hit = reachHit(p, level, target);
         if (hit == null) {
+            releaseMotor(mc);
             if (waitingForPath) {
                 if (EngineSelector.current().isBusy()) return;
                 waitingForPath = false;
@@ -312,7 +311,6 @@ final class ScaffoldProcess extends Feature {
             sweepSkipped.add(target.immutable());
             skipped++;
             resetTargetState();
-            mc.gameMode.stopDestroyBlock();
             return;
         }
 
@@ -322,23 +320,16 @@ final class ScaffoldProcess extends Feature {
         waitingForPath = false;
         pathAttempts = 0;
 
+        if (!BodyController.INSTANCE.acquire(mc, MOTOR_OWNER)) return;
+        if (walkingToItem) {
+            BodyController.INSTANCE.clearMovementKeys(mc);
+            walkingToItem = false;
+        }
         BlockState state = level.getBlockState(target);
         ClearProcess.equipFor(mc, p, state);
         if (Util.aimAt(p, hit.getLocation())) {
             dropTypes.add(state.getBlock().asItem());
-            if (state.getDestroyProgress(p, level, target) >= 1.0f) {
-                mc.gameMode.startDestroyBlock(target, hit.getDirection());
-                p.swing(InteractionHand.MAIN_HAND);
-                breakStarted = false;
-            } else {
-                if (!breakStarted) {
-                    mc.gameMode.startDestroyBlock(target, hit.getDirection());
-                    breakStarted = true;
-                } else {
-                    mc.gameMode.continueDestroyBlock(target, hit.getDirection());
-                }
-                p.swing(InteractionHand.MAIN_HAND);
-            }
+            BodyController.INSTANCE.breakBlockTick(mc, target);
         }
     }
 
@@ -533,7 +524,7 @@ final class ScaffoldProcess extends Feature {
         itemGoalPos = null;
         sweepSkipped.clear();
         brokenPositions.clear();
-        if (mc.gameMode != null) mc.gameMode.stopDestroyBlock();
+        releaseMotor(mc);
         cooldown = 20 * 20;
         Util.msg("Scaffolding collected: " + broken + " block" + (broken == 1 ? "" : "s") + " removed"
                 + (skipped > 0 ? ", " + skipped + " left (out of reach or inside a safe area)" : "") + ".");

@@ -43,6 +43,8 @@ final class ProjectPanel {
     private static int addExpand = 0;
     private static final ImInt addLayers = new ImInt(3);
     private static final ImString addBlock = new ImString("dirt", 64);
+    private static final ImInt addTreeZoneDiameter = new ImInt(0);
+    private static final ImBoolean addDumpAfter = new ImBoolean(false);
     private static ProjectTask.PartialPolicy addPartial = ProjectTask.PartialPolicy.WARN_CONTINUE;
     private static ProjectTask.ErrorPolicy addError = ProjectTask.ErrorPolicy.STOP;
 
@@ -338,6 +340,10 @@ final class ProjectPanel {
         if (t.kind == ProjectTask.Kind.CLEAR_AREA || t.kind == ProjectTask.Kind.MINE || t.kind == ProjectTask.Kind.DRAIN) {
             parts.add("layers=" + t.layers);
         }
+        if (t.kind == ProjectTask.Kind.CLEAR_TREES) {
+            if (t.treeZoneDiameter != null) parts.add("zone=" + t.treeZoneDiameter);
+            if (t.dumpAfter) parts.add("dumpAfter");
+        }
         return "(" + String.join(", ", parts) + ")";
     }
 
@@ -350,6 +356,8 @@ final class ProjectPanel {
                 + (t.scriptPath != null && !t.scriptPath.isBlank() ? "\nScript: " + t.scriptPath : "")
                 + (t.block != null && !t.block.isBlank() ? "\nBlock: " + t.block : "")
                 + "\nExpand: " + t.expand + "   Layers: " + t.layers
+                + (t.treeZoneDiameter != null ? "\nZone diameter: " + t.treeZoneDiameter : "")
+                + (t.dumpAfter ? "\nDump after: true" : "")
                 + "\nPartial policy: " + t.partialPolicy + "   Error policy: " + t.errorPolicy;
     }
 
@@ -450,6 +458,21 @@ final class ProjectPanel {
         ImGui.setNextItemWidth(110f * s);
         ImGui.inputTextWithHint("Block##AddTaskBlock", "dirt", addBlock);
 
+        if (addKind == ProjectTask.Kind.CLEAR_TREES) {
+            ImGui.setNextItemWidth(90f * s);
+            if (ImGui.inputInt("Zone Diameter (0 = project default)##AddTaskTreeZoneDiam", addTreeZoneDiameter)) {
+                int v = addTreeZoneDiameter.get();
+                if (v < 0) addTreeZoneDiameter.set(0);
+                else if (v > 32) addTreeZoneDiameter.set(32);
+            }
+            if (ImGui.isItemDeactivatedAfterEdit()) {
+                int v = addTreeZoneDiameter.get();
+                if (v > 0 && v < 3) addTreeZoneDiameter.set(3);
+            }
+            ImGui.sameLine(0f, 8f * s);
+            ImGui.checkbox("Dump After##AddTaskDumpAfter", addDumpAfter);
+        }
+
         // Policies
         ImGui.setNextItemWidth(140f * s);
         if (ImGui.beginCombo("Partial##AddTaskPartial", addPartial.name())) {
@@ -480,6 +503,11 @@ final class ProjectPanel {
             task.expand = addExpand;
             task.layers = Math.max(1, addLayers.get());
             if (!addBlock.get().isBlank()) task.block = addBlock.get().trim();
+            if (addKind == ProjectTask.Kind.CLEAR_TREES) {
+                int zd = addTreeZoneDiameter.get();
+                task.treeZoneDiameter = zd <= 0 ? null : Math.max(3, Math.min(32, zd));
+                task.dumpAfter = addDumpAfter.get();
+            }
             task.partialPolicy = addPartial;
             task.errorPolicy = addError;
             rt.enqueueTask(task);
@@ -564,6 +592,8 @@ final class ProjectPanel {
         if (checkbox("Logoff on done", "logoffOnDone", surv.logoffOnDone, b)) surv.logoffOnDone = b.get();
 
         if (checkbox("Logoff on error", "logoffOnError", surv.logoffOnError, b)) surv.logoffOnError = b.get();
+        ImGui.sameLine(190f * s);
+        if (checkbox("Show Tree Zones", "showTreeZones", surv.showTreeZones, b)) surv.showTreeZones = b.get();
 
         ImGui.spacing();
         ImGui.setNextItemWidth(90f * s);
@@ -590,6 +620,11 @@ final class ProjectPanel {
         numIntBuf.set(surv.preDuskMarginTicks);
         if (ImGui.inputInt("Pre-dusk margin (ticks)##preDuskTicks", numIntBuf)) {
             surv.preDuskMarginTicks = Math.max(0, numIntBuf.get());
+        }
+        ImGui.setNextItemWidth(90f * s);
+        numIntBuf.set(surv.treeZoneDiameter);
+        if (ImGui.inputInt("Tree Zone Diameter##treeZoneDiameter", numIntBuf)) {
+            surv.treeZoneDiameter = Math.max(3, Math.min(32, numIntBuf.get()));
         }
 
         ImGui.separator();

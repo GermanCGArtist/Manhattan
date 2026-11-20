@@ -117,6 +117,12 @@ public final class Api {
      */
     public static volatile java.util.function.BiPredicate<net.minecraft.core.BlockPos, net.minecraft.world.level.block.Block> scaffoldOutsideSchematic;
 
+    /**
+     * Optional filter restricting which positions may be recorded or collected as scaffolding (e.g. clear_trees cylinder zones).
+     * null = no zone restriction.
+     */
+    public static volatile java.util.function.Predicate<net.minecraft.core.BlockPos> scaffoldAllowedZone;
+
     /** Marks a block as scaffolding, so collect_scaffold() takes it down (clear_trees finds pillars the recorder missed). */
     public static void addScaffold(net.minecraft.core.BlockPos pos, net.minecraft.world.level.block.Block block) {
         Scaffold.spots().put(pos.immutable(), block);

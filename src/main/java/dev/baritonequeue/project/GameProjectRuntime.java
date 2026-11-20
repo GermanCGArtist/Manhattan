@@ -745,18 +745,12 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
         if (boxes == null || boxes.isEmpty()) {
             return failedHandle("No area/selection available for CLEAR_TREES task '" + task.displayLabel() + "'.");
         }
-        List<int[]> savedSelection = Areas.read();
-        QueueMod.projectApplySelection(boxes);
-        String scriptLine = proj.places.dumpChest != null
-                ? "clear_trees(dump_chest)"
-                : "clear_trees()";
-        Map<String, Object> places = buildProjectPlacesMap(proj);
-        String err = QueueMod.projectRunnerStart(List.of(scriptLine), task.id, Map.of(), places);
-        if (err != null) {
-            QueueMod.projectApplySelection(savedSelection);
-            return failedHandle(err);
-        }
-        return new RunnerScriptHandle(() -> QueueMod.projectApplySelection(savedSelection));
+        return QueueMod.projectStartClearTrees(
+                boxes,
+                task.id,
+                proj.places.dumpChest,
+                !proj.survival.batchBaseTrips,
+                task.treeZoneDiameter);
     }
 
     private PriorityScheduler.ActionHandle startFloodTask(ProjectTask task) {
@@ -865,7 +859,7 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
                 "survival.eat", "survival.eatBelow", "survival.defence",
                 "survival.sleep", "survival.bedLead", "survival.weather", "survival.logoffOnMissingBed",
                 "survival.restock", "survival.respawn", "survival.resume", "survival.reconnect", "survival.maxDeaths",
-                "buildtools.escape",
+                "buildtools.escape", "buildtools.scaffoldAuto", "buildtools.treeZoneDiameter", "buildtools.showTreeZones",
                 "loadchest.chest", "loadchest.auto", "loadchest.pickup"
         };
         for (String key : optKeys) {
@@ -897,6 +891,9 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
         QueueMod.projectSetOption("survival.sleep", false);
         QueueMod.projectSetOption("survival.restock", false);
         QueueMod.projectSetOption("buildtools.escape", false);
+        QueueMod.projectSetOption("buildtools.scaffoldAuto", false);
+        QueueMod.projectSetOption("buildtools.treeZoneDiameter", (double) Math.max(3, p.survival.treeZoneDiameter));
+        QueueMod.projectSetOption("buildtools.showTreeZones", p.survival.showTreeZones);
         QueueMod.projectSetOption("loadchest.auto", false);
         QueueMod.projectSetOption("loadchest.pickup", false);
 

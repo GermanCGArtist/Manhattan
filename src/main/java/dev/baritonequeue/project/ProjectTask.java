@@ -59,6 +59,8 @@ public final class ProjectTask {
     public boolean collectScaffoldAfter = false;
     public boolean pickupAfter = false;
     public boolean dumpAfter = false;
+    /** Optional per-task override for clear_trees cylinder diameter (null = inherit project/buildtools default). */
+    public Integer treeZoneDiameter;
     public String scriptPath;
     public String inlineScript;
     public Map<String, Object> params = new LinkedHashMap<>();
@@ -93,6 +95,10 @@ public final class ProjectTask {
         if (errorPolicy == null) errorPolicy = ErrorPolicy.STOP;
         if (maxRetries < 0) maxRetries = 0;
         if (partialThreshold < 0) partialThreshold = 0;
+        if (treeZoneDiameter != null) {
+            if (treeZoneDiameter <= 0) treeZoneDiameter = null;
+            else if (treeZoneDiameter < 3) treeZoneDiameter = 3;
+        }
     }
 
     /** Returns a human-readable label for UI/logs, falling back to kind + target/id. */
@@ -108,6 +114,7 @@ public final class ProjectTask {
     /**
      * Creates a task for an area and semantic role:
      * {@code "dig"} / {@code "clear"} -> {@link Kind#CLEAR_AREA},
+     * {@code "trees"} / {@code "forest"} -> {@link Kind#CLEAR_TREES},
      * {@code "fill"} -> {@link Kind#FILL_WATER},
      * {@code "flood"} -> {@link Kind#FLOOD},
      * default -> {@link Kind#CLEAR_AREA}.
@@ -126,6 +133,10 @@ public final class ProjectTask {
             case "flood" -> {
                 resolvedKind = Kind.FLOOD;
                 verb = "Flood";
+            }
+            case "trees", "forest" -> {
+                resolvedKind = Kind.CLEAR_TREES;
+                verb = "Clear trees";
             }
             case "dig", "clear" -> {
                 resolvedKind = Kind.CLEAR_AREA;

@@ -108,14 +108,14 @@ final class Actions {
     // ------------------------------------------------------------------ Baritone
 
     /** A Baritone command; done when Baritone has been idle for 2 seconds. Stuck tasks are restarted, then skipped. */
-    static final class BaritoneCommand extends Action {
+    static class BaritoneCommand extends Action {
         private static final int START_WAIT = 10;
         private static final int KICK_TICKS = 20 * 60 * 3;
         private static final int MAX_KICKS = 3;
         private static final int IDLE_DONE = 40;
 
         final String command;
-        private int sinceStart, idle, noProgress, still, kicks, builderPaused;
+        private int sinceStart, idle, noProgress, still, kicks;
         private double ax, ay, az;
         private boolean anchored;
 
@@ -133,9 +133,25 @@ final class Actions {
         }
 
         private BaritoneCommand(String command, boolean legacy) {
+            this(command, legacy, Estimate.of(command));
+        }
+
+        protected BaritoneCommand(String label, Estimate estimate) {
+            this(label, false, estimate);
+        }
+
+        private BaritoneCommand(String command, boolean legacy, Estimate estimate) {
             this.command = command;
             this.legacy = legacy;
-            this.estimate = Estimate.of(command);
+            this.estimate = estimate != null ? estimate : new Estimate();
+        }
+
+        protected boolean dispatch(boolean warnLegacy) {
+            return execute(command, warnLegacy);
+        }
+
+        protected String displayName() {
+            return "'#" + command + "'";
         }
 
         void start() {
@@ -143,9 +159,8 @@ final class Actions {
             idle = 0;
             noProgress = 0;
             still = 0;
-            builderPaused = 0;
             anchored = false;
-            if (!execute(command, legacy)) fail("Baritone did not accept '#" + command + "' (check the spelling).");
+            if (!dispatch(legacy)) fail("Baritone did not accept " + displayName() + " (check the spelling).");
         }
 
         static boolean execute(String command, boolean warnLegacy) {
@@ -269,9 +284,8 @@ final class Actions {
             if (++sinceStart < START_WAIT) return;
             if (Util.baritoneBusy() || QueueMod.clear.working()) {
                 idle = 0;
-                builderPaused = 0;
                 if (stuck()) {
-                    Util.warn("queue", "'#" + command + "' made no progress for " + cfg.stallMinutes
+                    Util.warn("queue", displayName() + " made no progress for " + cfg.stallMinutes
                             + " min, so I stopped it and go on. "
                             + "Change the limit with stall(minutes) in the script or /queue stall <minutes|off>.");
                     dev.midtown.api.EngineSelector.current().cancel();
@@ -306,10 +320,10 @@ final class Actions {
             else if (++still > KICK_TICKS && kicks < MAX_KICKS) {
                 kicks++;
                 still = 0;
-                Util.msg("The task has stood still for " + KICK_TICKS / 1200 + " min without getting anywhere. Starting '#"
-                        + command + "' again (" + kicks + "/" + MAX_KICKS + ").");
+                Util.msg("The task has stood still for " + KICK_TICKS / 1200 + " min without getting anywhere. Starting "
+                        + displayName() + " again (" + kicks + "/" + MAX_KICKS + ").");
                 dev.midtown.api.EngineSelector.current().cancel();
-                if (!execute(command, false)) fail("Engine did not accept '#" + command + "' when restarting it.");
+                if (!dispatch(false)) fail("Engine did not accept " + displayName() + " when restarting it.");
                 return false;
             }
             int limit = Runner.stallLimit();
@@ -329,6 +343,42 @@ final class Actions {
         @Override
         void resume() {
             dev.midtown.api.EngineSelector.current().resume();
+        }
+    }
+
+    /** Mines matching blocks inside an explicit {@link dev.midtown.api.Area} directly without mutating global selection. */
+    static final class MineArea extends BaritoneCommand {
+        private final dev.midtown.api.BlockFilter filter;
+        private final dev.midtown.api.Area box;
+
+        MineArea(dev.midtown.api.BlockFilter filter, dev.midtown.api.Area box, String label) {
+            super(label == null || label.isBlank() ? "mine" : label, new Estimate());
+            this.filter = filter;
+            this.box = box;
+        }
+
+        @Override
+        protected boolean dispatch(boolean warnLegacy) {
+            if (filter == null || filter.isEmpty()) return false;
+            dev.midtown.api.EngineSelector.current().mine(filter, box);
+            return true;
+        }
+
+        @Override
+        protected String displayName() {
+            return "'" + command + "'";
+        }
+
+        @Override
+        void suspend() {
+            cancel();
+        }
+
+        @Override
+        void resume() {
+            done = false;
+            ticks = 0;
+            start();
         }
     }
 

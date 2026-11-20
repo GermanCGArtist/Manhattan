@@ -44,6 +44,12 @@ import static dev.baritonequeue.Values.error;
 final class TreeClear {
     private TreeClear() {}
 
+    static volatile int lastRemainingTrees;
+
+    static int lastRemainingTrees() {
+        return lastRemainingTrees;
+    }
+
     /** The blocks a tree is made of (besides every log, wood and stem: BlockTags.LOGS). */
     private static final Set<Block> BODY = Set.of(Blocks.MANGROVE_ROOTS, Blocks.MUDDY_MANGROVE_ROOTS,
             Blocks.MUSHROOM_STEM, Blocks.RED_MUSHROOM_BLOCK, Blocks.BROWN_MUSHROOM_BLOCK,
@@ -228,10 +234,6 @@ final class TreeClear {
             net.minecraft.world.item.Items.COBBLED_DEEPSLATE,
             net.minecraft.world.item.Items.SANDSTONE);
 
-    private static void select(int x0, int y0, int z0, int x1, int y1, int z1) {
-        Areas.setSingleBox(new BlockPos(x0, y0, z0), new BlockPos(x1, y1, z1));
-    }
-
     private static final int AROUND = 5;   // how far from the tree Baritone may stand on a pillar
 
     private static final Set<Block> GROUND = Set.of(Blocks.GRASS_BLOCK, Blocks.MYCELIUM, Blocks.PODZOL, Blocks.DIRT_PATH, Blocks.FARMLAND);
@@ -283,6 +285,7 @@ final class TreeClear {
         final int line;
         final BlockPos chest;
         final String chestText;
+        final boolean allowMidRunDump;
         final Map<Item, Integer> stored = new HashMap<>();
         int dumps;
         final Map<String, Long> phases = new java.util.TreeMap<>();   // where the time goes, for the report at the end
@@ -291,11 +294,12 @@ final class TreeClear {
             phases.merge(phase, System.nanoTime() - since, Long::sum);
         }
 
-        Run(Interp in, int line, BlockPos chest, String chestText) {
+        Run(Interp in, int line, BlockPos chest, String chestText, boolean allowMidRunDump) {
             this.in = in;
             this.line = line;
             this.chest = chest;
             this.chestText = chestText;
+            this.allowMidRunDump = allowMidRunDump;
         }
 
         void pickup() {
@@ -339,11 +343,15 @@ final class TreeClear {
         }
 
         /** Colours of the drawn zones: orange while scaffolding still stands inside, green once it is gone. */
-        void refreshZones() {
+        void refreshZones(Level level) {
             var spots = dev.buildtools.Api.scaffoldSpots();
+            List<BlockPos> standing = new ArrayList<>();
+            for (BlockPos b : spots) {
+                if (dev.buildtools.Api.isScaffold(level, b)) standing.add(b);
+            }
             for (ScaffoldZones.Zone z : ScaffoldZones.all()) {
                 boolean p = false;
-                for (BlockPos b : spots) if (z.contains(b)) { p = true; break; }
+                for (BlockPos b : standing) if (z.contains(b)) { p = true; break; }
                 z.pending = p;
             }
         }
@@ -353,7 +361,7 @@ final class TreeClear {
             try {
                 tidy0(level, open, chunkEnd);
             } finally {
-                refreshZones();
+                refreshZones(level);
             }
         }
 
@@ -465,7 +473,7 @@ final class TreeClear {
         }
 
         void dumpIfFull() {
-            if (chest != null && freeSlots(player(line)) < DUMP_BELOW) dump();
+            if (allowMidRunDump && chest != null && freeSlots(player(line)) < DUMP_BELOW) dump();
         }
     }
 
@@ -480,41 +488,74 @@ final class TreeClear {
     }
 
     static Object run(Interp in, int line, BlockPos chest, String chestText) {
+        return run(in, line, chest, chestText, null, null, true);
+    }
+
+    static Object run(
+            Interp in,
+            int line,
+            BlockPos chest,
+            String chestText,
+            List<int[]> explicitBoxes,
+            String taskIdPrefix,
+            boolean allowMidRunDump) {
         Minecraft mc = Minecraft.getInstance();
         Level level = mc.level;
         LocalPlayer p = player(line);
         if (level == null) throw error("Not in a world.", line);
-        List<int[]> boxes = Areas.read();
+        List<int[]> boxes;
+        if (explicitBoxes != null) {
+            boxes = new ArrayList<>(explicitBoxes.size());
+            for (int[] b : explicitBoxes) {
+                if (b != null && b.length >= 6) {
+                    boxes.add(new int[]{
+                            Math.min(b[0], b[3]), Math.min(b[1], b[4]), Math.min(b[2], b[5]),
+                            Math.max(b[0], b[3]), Math.max(b[1], b[4]), Math.max(b[2], b[5])
+                    });
+                }
+            }
+        } else {
+            boxes = Areas.read();
+        }
         if (boxes.isEmpty()) throw error("There is no selection. Select the forest first: area(\"name\") or select(corner1, corner2).", line);
 
-        Run r = new Run(in, line, chest, chestText);
+        lastRemainingTrees = 0;
+        Run r = new Run(in, line, chest, chestText, allowMidRunDump);
         ScaffoldZones.clear();
         boolean autoSweep = dev.buildtools.TreeZoneOptions.setAutoSweep(false);   // it would take scaffolding down anywhere, not only in the zones
-        Map<Item, Integer> start = inventory(p);
-        boolean throwaway = false;
-        for (Item it : THROWAWAY_ITEMS) if (start.containsKey(it)) throwaway = true;
-        if (!throwaway) Util.msg("clear_trees: you carry no scaffolding blocks (e.g. dirt): tall trees may be out of reach.");
-
-        boolean chunked = Config.cfg.chunkEnabled;
-        int size = chunked ? Config.cfg.chunkSize : 1 << 20;
-        // Full-height columns, no bands in Y: trees stand on the ground, and with bands the bot walked the whole footprint
-        // once per band (a 250 high selection = dozens of passes over mostly empty sky). Air-only sections are skipped by the scan.
-        List<ChunkGrid.ColumnBox> chunks = ChunkGrid.orderSerpentine(
-                ChunkGrid.split(boxes, size, 0, chunked ? Config.cfg.chunkGap : -1), p.blockPosition());
-        // finished chunks of an earlier run (same selection, same sizes) are skipped; one chunk is not worth a ledger entry
-        String signature = "clear_trees:" + size + "y0g" + (chunked ? Config.cfg.chunkGap : -1);
-        for (int[] b : boxes) signature += ":" + b[0] + "," + b[1] + "," + b[2] + "-" + b[3] + "," + b[4] + "," + b[5];
-        Jobs.Node actionNode = chunks.size() > 1 ? Jobs.action("clear_trees", line, "", QueueMod.runner != null && QueueMod.runner.running()) : null;
-        Ledger ledger = Jobs.ledger();
-
-        Set<BlockPos> ground = throwaway(in, level, boxes, null);   // what is there before: never taken for scaffolding
-        Set<BlockPos> seen = new HashSet<>();
-        List<Tree> trees = new ArrayList<>();
-        int total = 0, cleared = 0, gaveUp = 0, chunkNo = 0, skipped = 0, quickFails = 0;
-        List<BlockPos> spots = new ArrayList<>();
-        Map<BlockPos, Long> spotTimes = new HashMap<>();
-        Util.msg("clear_trees: " + (chunks.size() == 1 ? "scanning the selection." : chunks.size() + " chunks, scanned and cut one after the other."));
+        boolean prevSuppressed = dev.buildtools.TreeZoneOptions.setAutoSweepSuppressed(true);
+        var prevAllowed = dev.buildtools.Api.scaffoldAllowedZone;
+        dev.buildtools.Api.scaffoldAllowedZone = ScaffoldZones::inAny;
         try {
+            Map<Item, Integer> start = inventory(p);
+            boolean throwaway = false;
+            for (Item it : THROWAWAY_ITEMS) if (start.containsKey(it)) throwaway = true;
+            if (!throwaway) Util.msg("clear_trees: you carry no scaffolding blocks (e.g. dirt): tall trees may be out of reach.");
+
+            boolean chunked = Config.cfg.chunkEnabled;
+            int size = chunked ? Config.cfg.chunkSize : 1 << 20;
+            // Full-height columns, no bands in Y: trees stand on the ground, and with bands the bot walked the whole footprint
+            // once per band (a 250 high selection = dozens of passes over mostly empty sky). Air-only sections are skipped by the scan.
+            List<ChunkGrid.ColumnBox> chunks = ChunkGrid.orderSerpentine(
+                    ChunkGrid.split(boxes, size, 0, chunked ? Config.cfg.chunkGap : -1), p.blockPosition());
+            // finished chunks of an earlier run (same selection, same sizes) are skipped; one chunk is not worth a ledger entry
+            String signature = "clear_trees:" + size + "y0g" + (chunked ? Config.cfg.chunkGap : -1);
+            for (int[] b : boxes) signature += ":" + b[0] + "," + b[1] + "," + b[2] + "-" + b[3] + "," + b[4] + "," + b[5];
+            Jobs.Node actionNode = null;
+            if (chunks.size() > 1) {
+                actionNode = (taskIdPrefix != null && !taskIdPrefix.isBlank())
+                        ? Jobs.taskAction(taskIdPrefix, "clear_trees")
+                        : Jobs.action("clear_trees", line, "", QueueMod.runner != null && QueueMod.runner.running());
+            }
+            Ledger ledger = Jobs.ledger();
+
+            Set<BlockPos> ground = throwaway(in, level, boxes, null);   // what is there before: never taken for scaffolding
+            Set<BlockPos> seen = new HashSet<>();
+            List<Tree> trees = new ArrayList<>();
+            int total = 0, cleared = 0, gaveUp = 0, chunkNo = 0, skipped = 0, quickFails = 0;
+            List<BlockPos> spots = new ArrayList<>();
+            Map<BlockPos, Long> spotTimes = new HashMap<>();
+            Util.msg("clear_trees: " + (chunks.size() == 1 ? "scanning the selection." : chunks.size() + " chunks, scanned and cut one after the other."));
             for (ChunkGrid.ColumnBox chunk : chunks) {
                 chunkNo++;
                 Jobs.Node node = actionNode == null ? null : Jobs.chunk(actionNode, chunk);
@@ -612,15 +653,15 @@ final class TreeClear {
                     long tryStart = System.nanoTime();
                     Util.msg("Tree " + (cleared + gaveUp + 1) + "/" + total + (t.tries > 1 ? " (second try)" : "") + ": " + n + " blocks ("
                             + String.join(", ", kinds) + ") at " + t.seed.getX() + " " + t.seed.getY() + " " + t.seed.getZ());
-                    select(x0, y0, z0, x1, y1, z1);
                     List<int[]> box = List.of(new int[]{x0, y0 - 2, z0, x1, y1, z1});
                     ScaffoldZones.Zone zone = ScaffoldZones.add(x0, y0, z0, x1, y1, z1);   // scaffolding comes down only in here
                     zone.current = true;
                     zone.pending = true;
                     Set<BlockPos> before = throwaway(in, level, box, null);
-                    String cmd = "sel replace " + String.join(" ", kinds) + " air";
+                    dev.midtown.api.BlockFilter filter = dev.midtown.api.BlockFilter.ofNames(kinds.toArray(String[]::new));
+                    dev.midtown.api.Area treeArea = dev.midtown.api.Area.of(x0, y0, z0, x1, y1, z1);
                     long m0 = System.nanoTime();
-                    in.await(() -> new Actions.BaritoneCommand(cmd), cmd, line);
+                    in.await(() -> new Actions.MineArea(filter, treeArea, "mine tree"), "mine tree", line);
                     r.lap("mining + pillars", m0);
                     BlockPos mid = new BlockPos((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
                     r.collect(level, mid);   // the drops that are close; the others are not worth a walk
@@ -667,89 +708,92 @@ final class TreeClear {
                 if (node != null) Jobs.set(node, open == 0 ? Ledger.State.DONE : Ledger.State.DEFERRED, 1, open, open == 0 ? null : open + " out of reach", signature);
                 if (actionNode != null) Jobs.settle(actionNode);
             }
-        } finally {
-            Areas.apply(boxes);
-            dev.buildtools.TreeZoneOptions.setAutoSweep(autoSweep);
-        }
-        if (skipped > 0) Util.msg("clear_trees: " + skipped + " chunk" + (skipped == 1 ? "" : "s") + " already done in an earlier run, skipped.");
+            if (skipped > 0) Util.msg("clear_trees: " + skipped + " chunk" + (skipped == 1 ? "" : "s") + " already done in an earlier run, skipped.");
 
-        // leaves: give them a while to fall apart, then one sweep for what they dropped. Drops despawn after 5 minutes, so
-        // only the spots of the last minutes are worth it (in a big area the early ones are long gone)
-        long cutoff = System.currentTimeMillis() - SPOT_AGE_MS;
-        spots.removeIf(b -> spotTimes.getOrDefault(b, 0L) < cutoff);
-        if (!spots.isEmpty()) {
-            int waited = 0;
-            while (waited < LEAF_WAIT_S && decaying(in, level, boxes) > 0) {
-                long lw0 = System.nanoTime();
-                in.await(() -> new Actions.Wait(5), "wait for the leaves", line);
-                r.lap("leaf wait", lw0);
-                waited += 5;
-            }
-            Map<Long, BlockPos> cells = new HashMap<>();
-            for (BlockPos b : spots) cells.putIfAbsent(Math.floorDiv(b.getX(), SWEEP_CELL) * 100000L + Math.floorDiv(b.getZ(), SWEEP_CELL), b);
-            List<BlockPos> todo = new ArrayList<>(cells.values());
-            Util.msg("clear_trees: sweeping " + todo.size() + " spot" + (todo.size() == 1 ? "" : "s") + " for saplings, sticks and apples"
-                    + (waited > 0 ? " (waited " + waited + " s for the leaves)" : "") + ".");
-            long sw0 = System.nanoTime();
-            while (!todo.isEmpty()) {
-                BlockPos me = player(line).blockPosition();
-                BlockPos at = todo.get(0);
-                for (BlockPos b : todo) if (b.distSqr(me) < at.distSqr(me)) at = b;
-                todo.remove(at);
-                double dx = at.getX() - me.getX(), dz = at.getZ() - me.getZ();
-                AABB around = new AABB(at).inflate(16, 12, 16);
-                boolean drops = !level.getEntitiesOfClass(ItemEntity.class, around, e -> e.isAlive()).isEmpty();
-                boolean far = dx * dx + dz * dz > 40 * 40;   // items further away than that the client may not know of
-                if (!drops && !far) continue;
-                if (dx * dx + dz * dz > 10 * 10) {
-                    String go = "goto " + at.getX() + " " + at.getZ();
-                    in.await(() -> new Actions.BaritoneCommand(go), go, line);
+            // leaves: give them a while to fall apart, then one sweep for what they dropped. Drops despawn after 5 minutes, so
+            // only the spots of the last minutes are worth it (in a big area the early ones are long gone)
+            long cutoff = System.currentTimeMillis() - SPOT_AGE_MS;
+            spots.removeIf(b -> spotTimes.getOrDefault(b, 0L) < cutoff);
+            if (!spots.isEmpty()) {
+                int waited = 0;
+                while (waited < LEAF_WAIT_S && decaying(in, level, boxes) > 0) {
+                    long lw0 = System.nanoTime();
+                    in.await(() -> new Actions.Wait(5), "wait for the leaves", line);
+                    r.lap("leaf wait", lw0);
+                    waited += 5;
                 }
-                r.pickup();
-                r.dumpIfFull();
+                Map<Long, BlockPos> cells = new HashMap<>();
+                for (BlockPos b : spots) cells.putIfAbsent(Math.floorDiv(b.getX(), SWEEP_CELL) * 100000L + Math.floorDiv(b.getZ(), SWEEP_CELL), b);
+                List<BlockPos> todo = new ArrayList<>(cells.values());
+                Util.msg("clear_trees: sweeping " + todo.size() + " spot" + (todo.size() == 1 ? "" : "s") + " for saplings, sticks and apples"
+                        + (waited > 0 ? " (waited " + waited + " s for the leaves)" : "") + ".");
+                long sw0 = System.nanoTime();
+                while (!todo.isEmpty()) {
+                    BlockPos me = player(line).blockPosition();
+                    BlockPos at = todo.get(0);
+                    for (BlockPos b : todo) if (b.distSqr(me) < at.distSqr(me)) at = b;
+                    todo.remove(at);
+                    double dx = at.getX() - me.getX(), dz = at.getZ() - me.getZ();
+                    AABB around = new AABB(at).inflate(16, 12, 16);
+                    boolean drops = !level.getEntitiesOfClass(ItemEntity.class, around, e -> e.isAlive()).isEmpty();
+                    boolean far = dx * dx + dz * dz > 40 * 40;   // items further away than that the client may not know of
+                    if (!drops && !far) continue;
+                    if (dx * dx + dz * dz > 10 * 10) {
+                        String go = "goto " + at.getX() + " " + at.getZ();
+                        in.await(() -> new Actions.BaritoneCommand(go), go, line);
+                    }
+                    r.pickup();
+                    r.dumpIfFull();
+                }
+                r.lap("sweep", sw0);
             }
-            r.lap("sweep", sw0);
-        }
-        // anything left standing from pickups and the sweep (pillars up to drops on the leaves)
-        for (int round = 0; round < 3 && markNew(in, level, boxes, ground) > 0; round++) {
+            // anything left standing from pickups and the sweep (pillars up to drops on the leaves)
+            for (int round = 0; round < 3 && markNew(in, level, boxes, ground) > 0; round++) {
+                r.forgetOutsideZones();
+                r.scaffold(null);
+                r.pickup();   // may climb again: look once more
+            }
             r.forgetOutsideZones();
-            r.scaffold(null);
-            r.pickup();   // may climb again: look once more
-        }
-        r.forgetOutsideZones();
-        r.scaffold(null);   // whatever stands in the zones still
-        r.refreshZones();
-        if (chest != null) r.dump();
+            r.scaffold(null);   // whatever stands in the zones still
+            r.refreshZones(level);
+            if (chest != null) r.dump();
 
-        // the report: what is in the inventory now and not before, plus what went into the chest
-        Map<Item, Integer> now = inventory(player(line));
-        Map<Item, Integer> gained = new HashMap<>(r.stored);
-        now.forEach((it, n) -> gained.merge(it, n, Integer::sum));
-        start.forEach((it, n) -> gained.merge(it, -n, Integer::sum));
-        List<Map.Entry<Item, Integer>> list = new ArrayList<>(gained.entrySet());
-        list.removeIf(e -> e.getValue() <= 0);
-        list.sort((a, b) -> b.getValue() - a.getValue());
-        Map<Object, Object> out = Values.newMap();
-        StringBuilder sb = new StringBuilder();
-        for (var e : list) {
-            out.put(ChestOp.name(e.getKey()), (double) e.getValue());
-            if (sb.length() > 0) sb.append(", ");
-            sb.append(e.getValue()).append(' ').append(ChestOp.name(e.getKey()));
+            // the report: what is in the inventory now and not before, plus what went into the chest
+            Map<Item, Integer> now = inventory(player(line));
+            Map<Item, Integer> gained = new HashMap<>(r.stored);
+            now.forEach((it, n) -> gained.merge(it, n, Integer::sum));
+            start.forEach((it, n) -> gained.merge(it, -n, Integer::sum));
+            List<Map.Entry<Item, Integer>> list = new ArrayList<>(gained.entrySet());
+            list.removeIf(e -> e.getValue() <= 0);
+            list.sort((a, b) -> b.getValue() - a.getValue());
+            Map<Object, Object> out = Values.newMap();
+            StringBuilder sb = new StringBuilder();
+            for (var e : list) {
+                out.put(ChestOp.name(e.getKey()), (double) e.getValue());
+                if (sb.length() > 0) sb.append(", ");
+                sb.append(e.getValue()).append(' ').append(ChestOp.name(e.getKey()));
+            }
+            {
+                StringBuilder ph = new StringBuilder();
+                long sum = 0;
+                for (long v : r.phases.values()) sum += v;
+                for (var e : r.phases.entrySet()) ph.append(ph.length() > 0 ? ", " : "").append(e.getKey()).append(' ').append(e.getValue() / 1_000_000_000L).append(" s");
+                Util.msg("clear_trees: time per phase (" + sum / 1_000_000_000L + " s counted): " + ph + ".");
+            }
+            int left = 0;
+            for (Tree t : trees) {
+                t.blocks.removeIf(b -> !level.hasChunkAt(b) || !tree(level, b));
+                if (!t.blocks.isEmpty()) left++;
+            }
+            lastRemainingTrees = left;
+            Util.msg("clear_trees: " + cleared + " of " + total + " trees cleared" + (left > 0 ? ", " + left + " not (out of reach)" : "")
+                    + ". Gained: " + (sb.length() == 0 ? "nothing" : sb) + (chest != null ? " (in the chest " + chestText + ")" : "") + ".");
+            return out;
+        } finally {
+            dev.buildtools.Api.scaffoldAllowedZone = prevAllowed;
+            dev.buildtools.TreeZoneOptions.setAutoSweepSuppressed(prevSuppressed);
+            dev.buildtools.TreeZoneOptions.setAutoSweep(autoSweep);
+            ScaffoldZones.clearCurrentFlags();
         }
-        {
-            StringBuilder ph = new StringBuilder();
-            long sum = 0;
-            for (long v : r.phases.values()) sum += v;
-            for (var e : r.phases.entrySet()) ph.append(ph.length() > 0 ? ", " : "").append(e.getKey()).append(' ').append(e.getValue() / 1_000_000_000L).append(" s");
-            Util.msg("clear_trees: time per phase (" + sum / 1_000_000_000L + " s counted): " + ph + ".");
-        }
-        int left = 0;
-        for (Tree t : trees) {
-            t.blocks.removeIf(b -> !level.hasChunkAt(b) || !tree(level, b));
-            if (!t.blocks.isEmpty()) left++;
-        }
-        Util.msg("clear_trees: " + cleared + " of " + total + " trees cleared" + (left > 0 ? ", " + left + " not (out of reach)" : "")
-                + ". Gained: " + (sb.length() == 0 ? "nothing" : sb) + (chest != null ? " (in the chest " + chestText + ")" : "") + ".");
-        return out;
     }
 }
