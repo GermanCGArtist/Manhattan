@@ -11,6 +11,7 @@ import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
 import com.mojang.renderpearl.api.commands.CommandEncoder;
 import com.mojang.renderpearl.api.commands.RenderPass;
 import com.mojang.renderpearl.api.device.GpuDevice;
+import com.mojang.renderpearl.api.pipeline.ColorTargetState;
 import com.mojang.renderpearl.api.pipeline.CompiledRenderPipeline;
 import com.mojang.renderpearl.api.pipeline.IndexType;
 import com.mojang.renderpearl.api.pipeline.PrimitiveTopology;
@@ -54,6 +55,16 @@ final class ImGuiRenderPearlRenderer {
             .withLocation(Identifier.fromNamespaceAndPath("manhattan", "pipeline/imgui"))
             .withVertexBinding(0, DefaultVertexFormat.POSITION_TEX_COLOR)
             .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
+            .withCull(false)
+            .withDepthStencilState(Optional.empty())
+            .build();
+
+    /** Opaque (no alpha-blend) pipeline for the docked game viewport so sky / Distant Horizons alpha=0 pixels stay opaque. */
+    private static final RenderPipeline GAME_QUAD_PIPELINE = RenderPipeline.builder(RenderPipelines.GUI_TEXTURED_SNIPPET)
+            .withLocation(Identifier.fromNamespaceAndPath("manhattan", "pipeline/imgui_game_quad"))
+            .withVertexBinding(0, DefaultVertexFormat.POSITION_TEX_COLOR)
+            .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
+            .withColorTargetState(ColorTargetState.DEFAULT)
             .withCull(false)
             .withDepthStencilState(Optional.empty())
             .build();
@@ -225,10 +236,11 @@ final class ImGuiRenderPearlRenderer {
         if (drawGameQuad) {
             float x0 = fittedViewport[0], y0 = fittedViewport[1];
             float x1 = x0 + fittedViewport[2], y1 = y0 + fittedViewport[3];
-            putVtx(stagingVtx, x0, y0, 0f, 0f, 0xFFFFFFFF);
-            putVtx(stagingVtx, x1, y0, 1f, 0f, 0xFFFFFFFF);
-            putVtx(stagingVtx, x1, y1, 1f, 1f, 0xFFFFFFFF);
-            putVtx(stagingVtx, x0, y1, 0f, 1f, 0xFFFFFFFF);
+            // mainRenderTarget color texture is stored bottom-up on Vulkan/RenderPearl -> flip V (1 at top, 0 at bottom).
+            putVtx(stagingVtx, x0, y0, 0f, 1f, 0xFFFFFFFF);
+            putVtx(stagingVtx, x1, y0, 1f, 1f, 0xFFFFFFFF);
+            putVtx(stagingVtx, x1, y1, 1f, 0f, 0xFFFFFFFF);
+            putVtx(stagingVtx, x0, y1, 0f, 0f, 0xFFFFFFFF);
             stagingIdx.putShort((short) 0).putShort((short) 1).putShort((short) 2);
             stagingIdx.putShort((short) 0).putShort((short) 2).putShort((short) 3);
         }
@@ -280,17 +292,23 @@ final class ImGuiRenderPearlRenderer {
         ImVec4 clipRect = new ImVec4();
 
         try (RenderPass pass = enc.createRenderPass(() -> "Manhattan ImGui", mainColorView, Optional.empty())) {
-            pass.setPipeline(compiled);
-            RenderSystem.bindDefaultUniforms(pass);
-            pass.setUniform("DynamicTransforms", dynTransform);
             pass.setVertexBuffer(0, vertexBuffer.slice(0, totalVtxBytes));
             pass.setIndexBuffer(indexBuffer, IndexType.SHORT);
 
             if (drawGameQuad) {
+                CompiledRenderPipeline gameCompiled = RenderSystem.getCompiledPipelineNullable(GAME_QUAD_PIPELINE);
+                if (gameCompiled == null) gameCompiled = RenderSystem.getCompiledPipeline(GAME_QUAD_PIPELINE);
+                pass.setPipeline(gameCompiled != null ? gameCompiled : compiled);
+                RenderSystem.bindDefaultUniforms(pass);
+                pass.setUniform("DynamicTransforms", dynTransform);
                 pass.disableScissor();
                 pass.setUniform("Sampler0", gameCopyView, linearSampler);
                 pass.drawIndexed(6, 1, 0, 0, 0);
             }
+
+            pass.setPipeline(compiled);
+            RenderSystem.bindDefaultUniforms(pass);
+            pass.setUniform("DynamicTransforms", dynTransform);
 
             for (int i = 0; i < lists; i++) {
                 int cmdCount = drawData.getCmdListCmdBufferSize(i);
