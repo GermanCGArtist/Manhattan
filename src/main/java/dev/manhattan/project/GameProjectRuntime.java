@@ -131,6 +131,9 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
             Project fleetProject = dev.manhattan.fleet.FleetProtocol.GSON.fromJson(json, Project.class);
             if (fleetProject == null) return;
             fleetProject.ensureInitialized();
+            if (fleetProject.places != null && fleetProject.places.areas != null && !fleetProject.places.areas.isEmpty()) {
+                QueueMod.importFleetAreas(fleetProject.places.areas);
+            }
             if (grant.assignedBed != null && grant.assignedBed.length == 3) {
                 fleetProject.places.bed = grant.assignedBed.clone();
                 dev.survivalkit.Api.setBedPos(grant.assignedBed);

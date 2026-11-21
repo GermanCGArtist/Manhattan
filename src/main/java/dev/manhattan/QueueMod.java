@@ -1188,6 +1188,10 @@ public class QueueMod implements ClientModInitializer {
                 }
             }
             if (boxes == null || boxes.isEmpty()) continue;
+            if (task.areaName != null && !task.areaName.isBlank() && project.places != null) {
+                project.places.ensureInitialized();
+                project.places.areas.put(task.areaName, boxes);
+            }
             List<ChunkGrid.ColumnBox> cols = ChunkGrid.split(boxes, cfg.chunkSize, chunkSizeY, gap);
             for (ChunkGrid.ColumnBox c : cols) {
                 String key = ChunkRunner.chunkKey(task.id, c);
@@ -1205,6 +1209,16 @@ public class QueueMod implements ClientModInitializer {
             if (saved != null && !saved.isEmpty()) return saved;
         }
         return List.of();
+    }
+
+    /** Imports embedded areas from a Fleet Server Project into local memory so workers resolve task areas automatically. */
+    public static void importFleetAreas(Map<String, List<int[]>> areas) {
+        if (areas == null || areas.isEmpty()) return;
+        for (Map.Entry<String, List<int[]>> e : areas.entrySet()) {
+            if (e.getKey() != null && !e.getKey().isBlank() && e.getValue() != null && !e.getValue().isEmpty()) {
+                cfg.areas.put(e.getKey(), new ArrayList<>(e.getValue()));
+            }
+        }
     }
 
     public static PriorityScheduler.ActionHandle projectCreateClearAreaHandle(

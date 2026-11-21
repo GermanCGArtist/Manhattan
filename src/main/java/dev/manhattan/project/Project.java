@@ -54,6 +54,8 @@ public final class Project {
         public int[] scaffoldChest;
         public List<int[]> materialChests = new ArrayList<>();
         public Map<String, List<int[]>> protectedAreas = new LinkedHashMap<>();
+        /** Saved task areas embedded when submitting a Project to a Fleet Server so workers inherit area bounds automatically. */
+        public Map<String, List<int[]>> areas = new LinkedHashMap<>();
 
         public BasePlaces() {
         }
@@ -62,6 +64,7 @@ public final class Project {
             if (bedPool == null) bedPool = new ArrayList<>();
             if (materialChests == null) materialChests = new ArrayList<>();
             if (protectedAreas == null) protectedAreas = new LinkedHashMap<>();
+            if (areas == null) areas = new LinkedHashMap<>();
         }
     }
 
