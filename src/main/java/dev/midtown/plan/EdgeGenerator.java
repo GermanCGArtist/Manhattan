@@ -348,7 +348,7 @@ public final class EdgeGenerator {
         double pen = hazards.passThroughPenalty(world, x, ny, z);
         if (Double.isInfinite(pen)) return;
 
-        double cost = 7.5 + ctx.placeCostTicks() + pen;
+        double cost = 16.0 + ctx.placeCostTicks() * 1.5 + pen;
         out.add(x, ny, z, cost, EDGE_PILLAR, (byte) 0, BlockPos.asLong(x, y, z), Long.MIN_VALUE, placedSoFar + 1);
     }
 

@@ -475,7 +475,7 @@ public final class CalculationContext {
         private int maxNodesExpanded = DEFAULT_MAX_NODES;
         private int breakDelayTicks = 5;
         private int itemSaverThreshold = DEFAULT_ITEM_SAVER_THRESHOLD;
-        private double placeCostTicks = 6.0;
+        private double placeCostTicks = 28.0;
         private double parkourCostPenalty = 2.0;  // distance and gap * 1.5 are paid on top; 6 made a fall + pillar out cheaper
         private HazardCost hazardCost = HazardCost.DEFAULT;
         private DeathMemory.DeathField deathField = DeathMemory.DeathField.EMPTY;
