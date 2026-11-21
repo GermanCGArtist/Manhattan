@@ -56,6 +56,10 @@ final class Config {
     /** UI scale: 1.0f, 1.25f, 1.5f. */
     float uiScale = 1.0f;
 
+    /** Fleet multi-bot client mode ("LOCAL", "EDITOR", "WORKER", "BOTH") and worker pool tags. */
+    public String fleetMode = "LOCAL";
+    public List<String> fleetTags = new ArrayList<>();
+
     /** Spatial chunking settings for large area/schematic tasks. */
     public boolean chunkEnabled = true;
     public int chunkSize = 32;
@@ -114,6 +118,8 @@ final class Config {
                         cfg.chunkOrder = "serpentine";
                     }
                     if (cfg.lastArea == null) cfg.lastArea = new ArrayList<>();
+                    if (cfg.fleetMode == null || cfg.fleetMode.isBlank()) cfg.fleetMode = "LOCAL";
+                    if (cfg.fleetTags == null) cfg.fleetTags = new ArrayList<>();
                 }
                 if (cfg.scriptVersion < 2) migrate();
                 if (cfg.presetsVersion < Presets.VERSION) {   // new default presets: untouched old ones are replaced

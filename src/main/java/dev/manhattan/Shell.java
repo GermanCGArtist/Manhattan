@@ -25,7 +25,7 @@ final class Shell {
     enum Mode { CLOSED, EDIT, MONITOR }
 
     enum Drawer {
-        NONE(""), PROJECTS("Projects"), PRESETS("Presets"), CHESTS("Chests"), AREAS("Areas"), CAPTURE("Capture"), LOG("Log");
+        NONE(""), PROJECTS("Projects"), FLEET("Fleet"), PRESETS("Presets"), CHESTS("Chests"), AREAS("Areas"), CAPTURE("Capture"), LOG("Log");
         final String title;
         Drawer(String title) { this.title = title; }
     }
@@ -169,7 +169,7 @@ final class Shell {
 
     // ------------------------------------------------------------------ activity bar and status bar
 
-    private enum Act { EDITOR, MONITOR, PROJECTS, PRESETS, CHESTS, AREAS, CAPTURE, LOG }
+    private enum Act { EDITOR, MONITOR, PROJECTS, FLEET, PRESETS, CHESTS, AREAS, CAPTURE, LOG }
 
     private static void activityBar(float H, float s) {
         float w = activityW(s);
@@ -189,6 +189,7 @@ final class Shell {
                 case EDITOR -> mode == Mode.EDIT && drawer == Drawer.NONE;
                 case MONITOR -> mode == Mode.MONITOR && drawer == Drawer.NONE;
                 case PROJECTS -> drawer == Drawer.PROJECTS;
+                case FLEET -> drawer == Drawer.FLEET;
                 case PRESETS -> drawer == Drawer.PRESETS;
                 case CHESTS -> drawer == Drawer.CHESTS;
                 case AREAS -> drawer == Drawer.AREAS;
@@ -201,6 +202,7 @@ final class Shell {
                     case EDITOR -> { ImGuiManager.openShell(Mode.EDIT); drawer = Drawer.NONE; }
                     case MONITOR -> { ImGuiManager.openShell(Mode.MONITOR); drawer = Drawer.NONE; }
                     case PROJECTS -> toggleDrawer(Drawer.PROJECTS);
+                    case FLEET -> toggleDrawer(Drawer.FLEET);
                     case PRESETS -> toggleDrawer(Drawer.PRESETS);
                     case CHESTS -> toggleDrawer(Drawer.CHESTS);
                     case AREAS -> toggleDrawer(Drawer.AREAS);
@@ -223,6 +225,7 @@ final class Shell {
             case EDITOR -> "Edit: script editor (J toggles the workspace)";
             case MONITOR -> "Monitor: run telemetry around the game";
             case PROJECTS -> "Projects & Task Queue";
+            case FLEET -> "Multi-Bot Fleet Coordinator";
             case PRESETS -> "Presets";
             case CHESTS -> "Chests";
             case AREAS -> "Areas";
@@ -391,6 +394,7 @@ final class Shell {
             if (ImGui.beginChild("##drawerBody", 0f, 0f, false, ImGuiWindowFlags.HorizontalScrollbar)) {
                 switch (drawer) {
                     case PROJECTS -> ProjectPanel.render();
+                    case FLEET -> FleetPanel.render();
                     case PRESETS -> DockedPanels.renderPresetsPanel();
                     case CHESTS -> DockedPanels.renderChestsPanel();
                     case AREAS -> DockedPanels.renderAreasPanel();

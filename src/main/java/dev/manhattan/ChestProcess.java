@@ -102,6 +102,13 @@ final class ChestProcess {
 
     /** Notes what the chest holds now (what was taken or put included), saves the index and closes the chest. */
     private void closeAndNote(Minecraft mc) {
+        if (chest != null) {
+            dev.manhattan.fleet.FleetClient fc = dev.manhattan.fleet.FleetClient.instance();
+            if (noItem) fc.reportChestState(chest, "EMPTY");
+            else if (full) fc.reportChestState(chest, "FULL");
+            else if (planned) fc.reportChestState(chest, "AVAILABLE");
+            fc.releaseChestLock(chest);
+        }
         if (mc.player != null && mc.player.containerMenu != mc.player.inventoryMenu) {
             if (planned) dev.survivalkit.Api.noteOpenChest(chest);
             mc.player.closeContainer();
@@ -190,6 +197,12 @@ final class ChestProcess {
                 if (++timer > pathLimit) fail("Could not reach the chest " + op.chest + " in time.");
             }
             case OPENING -> {
+                if (!dev.manhattan.fleet.FleetClient.instance().acquireChestLock(chest)) {
+                    if (++timer > OPEN_TIMEOUT * 4) {
+                        fail("Chest " + op.chest + " is locked by another fleet bot.");
+                    }
+                    return;
+                }
                 if (!isStorage(mc.level.getBlockState(chest).getBlock())) {
                     dev.survivalkit.Api.forgetChest(chest);   // not a chest any more: out of the index
                     fail("There is no chest, barrel or shulker box at " + chest.toShortString() + ". Is the position right?");

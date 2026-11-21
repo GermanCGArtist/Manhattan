@@ -64,6 +64,15 @@ final class ProjectPanel {
     private static final ImDouble numDoubleBuf = new ImDouble();
     private static final ImInt numIntBuf = new ImInt();
 
+    // Fleet submission form state
+    private static dev.manhattan.fleet.FleetProtocol.AssignmentMode fleetAssignMode =
+            dev.manhattan.fleet.FleetProtocol.AssignmentMode.AUTO_POOL;
+    private static final java.util.Set<String> fleetSelectedBots = new java.util.LinkedHashSet<>();
+    private static final ImString fleetPoolTag = new ImString("", 64);
+    private static final ImInt fleetMaxBots = new ImInt(2);
+    private static final ImInt fleetMaxDist = new ImInt(500);
+    private static final ImInt fleetPriority = new ImInt(0);
+
     static void render() {
         float s = ImGuiManager.getUiScale();
         GameProjectRuntime rt;
@@ -105,6 +114,10 @@ final class ProjectPanel {
             }
             if (ImGui.beginTabItem("Base & Survival###ProjTabBase")) {
                 renderBaseAndSurvivalTab(rt, active, s);
+                ImGui.endTabItem();
+            }
+            if (ImGui.beginTabItem("Fleet Submit###ProjTabFleet")) {
+                renderFleetSubmitTab(active, s);
                 ImGui.endTabItem();
             }
             ImGui.endTabBar();
@@ -844,6 +857,7 @@ final class ProjectPanel {
 
         Widgets.label("Base Places");
         renderPlaceRow(rt, "Bed", "bed", places.bed, p -> places.bed = p, s);
+        renderBedPoolEditor(rt, places, s);
         renderPlaceRow(rt, "Tool Chest", "toolChest", places.toolChest, p -> places.toolChest = p, s);
         renderPlaceRow(rt, "Return Chest", "returnChest", places.returnChest, p -> places.returnChest = p, s);
         renderPlaceRow(rt, "Dump Chest", "dumpChest", places.dumpChest, p -> places.dumpChest = p, s);
@@ -1010,6 +1024,112 @@ final class ProjectPanel {
                 itemBuf.set("");
                 rt.saveActive();
                 setNotice("Added " + item + " to " + idPrefix + ".", false);
+            }
+        }
+    }
+
+    private static void renderBedPoolEditor(GameProjectRuntime rt, Project.BasePlaces places, float s) {
+        if (places.bedPool == null) places.bedPool = new ArrayList<>();
+        UiTheme.textColored(DIM, "Bed Pool (" + places.bedPool.size() + " camp beds for multi-bot fleet):");
+        ImGui.sameLine();
+        if (Widgets.button("+ Add Here##bedPoolAdd", 0)) {
+            net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+            if (mc != null && mc.player != null) {
+                net.minecraft.core.BlockPos pos = mc.player.blockPosition();
+                places.bedPool.add(new int[]{pos.getX(), pos.getY(), pos.getZ()});
+                rt.saveActive();
+                setNotice("Added bed pool spot at " + pos.toShortString() + ".", false);
+            }
+        }
+        int removeIdx = -1;
+        for (int i = 0; i < places.bedPool.size(); i++) {
+            int[] b = places.bedPool.get(i);
+            if (b == null || b.length != 3) continue;
+            UiTheme.textColored(FG, "  #" + (i + 1) + ": " + b[0] + ", " + b[1] + ", " + b[2]);
+            ImGui.sameLine();
+            if (Widgets.button("x##rmBed_" + i, 2)) {
+                removeIdx = i;
+            }
+        }
+        if (removeIdx >= 0) {
+            places.bedPool.remove(removeIdx);
+            rt.saveActive();
+        }
+    }
+
+    private static void renderFleetSubmitTab(Project active, float s) {
+        dev.manhattan.fleet.FleetClient fc = dev.manhattan.fleet.FleetClient.instance();
+        if (!fc.isConnected()) {
+            UiTheme.textColored(DIM, "Not connected to a Fleet Server. Open the Fleet drawer to configure your mode.");
+            return;
+        }
+        if (!fc.isEditorAllowed()) {
+            UiTheme.textColored(WARN, "Switch to Editor or Editor+Worker mode in the Fleet drawer (and ensure server authorization).");
+            return;
+        }
+
+        Widgets.label("Bot Assignment Policy");
+        if (ImGui.radioButton("Auto / Pool##fleetModeAuto",
+                fleetAssignMode == dev.manhattan.fleet.FleetProtocol.AssignmentMode.AUTO_POOL)) {
+            fleetAssignMode = dev.manhattan.fleet.FleetProtocol.AssignmentMode.AUTO_POOL;
+        }
+        ImGui.sameLine();
+        if (ImGui.radioButton("Specific Bots##fleetModeExplicit",
+                fleetAssignMode == dev.manhattan.fleet.FleetProtocol.AssignmentMode.EXPLICIT)) {
+            fleetAssignMode = dev.manhattan.fleet.FleetProtocol.AssignmentMode.EXPLICIT;
+        }
+
+        if (fleetAssignMode == dev.manhattan.fleet.FleetProtocol.AssignmentMode.EXPLICIT) {
+            dev.manhattan.fleet.FleetProtocol.FleetSnapshot snap = fc.snapshot();
+            if (snap == null || snap.bots.isEmpty()) {
+                UiTheme.textColored(DIM, "No fleet bots seen yet.");
+            } else {
+                ImBoolean cb = new ImBoolean();
+                for (dev.manhattan.fleet.FleetProtocol.BotInfo bot : snap.bots) {
+                    if ("EDITOR".equals(bot.mode) || "LOCAL".equals(bot.mode)) continue;
+                    cb.set(fleetSelectedBots.contains(bot.name));
+                    String label = bot.name + (bot.online ? " [ON]" : " [OFF]") + "##pickBot_" + bot.name;
+                    if (ImGui.checkbox(label, cb)) {
+                        if (cb.get()) fleetSelectedBots.add(bot.name);
+                        else fleetSelectedBots.remove(bot.name);
+                    }
+                }
+            }
+        } else {
+            ImGui.setNextItemWidth(160f * s);
+            ImGui.inputText("Pool Tag (optional)##fleetPoolTag", fleetPoolTag);
+            ImGui.setNextItemWidth(90f * s);
+            ImGui.inputInt("Max Bots##fleetMaxBots", fleetMaxBots);
+            if (fleetMaxBots.get() < 1) fleetMaxBots.set(1);
+            ImGui.setNextItemWidth(110f * s);
+            ImGui.inputInt("Max Distance (0=any)##fleetMaxDist", fleetMaxDist);
+            if (fleetMaxDist.get() < 0) fleetMaxDist.set(0);
+        }
+
+        ImGui.setNextItemWidth(90f * s);
+        ImGui.inputInt("Priority##fleetPrio", fleetPriority);
+
+        ImGui.spacing();
+        List<dev.manhattan.fleet.FleetProtocol.ChunkSpec> chunks = QueueMod.collectProjectChunkSpecs(active);
+        UiTheme.textColored(DIM, "Project '" + active.name + "' -> " + chunks.size() + " chunk(s) ready to distribute.");
+
+        if (Widgets.button("Submit Project to Fleet##fleetSubmitBtn", 1)) {
+            dev.manhattan.fleet.FleetProtocol.AssignmentPolicy pol = new dev.manhattan.fleet.FleetProtocol.AssignmentPolicy();
+            pol.mode = fleetAssignMode;
+            pol.explicitBots = new ArrayList<>(fleetSelectedBots);
+            pol.poolTag = fleetPoolTag.get().trim();
+            pol.maxBots = Math.max(1, fleetMaxBots.get());
+            pol.maxDistance = Math.max(0, fleetMaxDist.get());
+            pol.priority = fleetPriority.get();
+
+            net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+            String dim = (mc != null && mc.level != null)
+                    ? mc.level.dimension().identifier().toString()
+                    : "minecraft:overworld";
+            if (fc.submitProject(active, dim, pol, chunks)) {
+                setNotice("Submitted '" + active.name + "' to Fleet Server (" + chunks.size() + " chunks).", false);
+            } else {
+                setNotice(fc.lastNotice(), true);
             }
         }
     }

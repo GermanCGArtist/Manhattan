@@ -46,6 +46,8 @@ public final class Project {
      */
     public static final class BasePlaces {
         public int[] bed;
+        /** Optional multi-bot camp bed pool ({@code [x, y, z]} entries) for Fleet Server bed assignment. */
+        public List<int[]> bedPool = new ArrayList<>();
         public int[] toolChest;
         public int[] returnChest;
         public int[] dumpChest;
@@ -57,6 +59,7 @@ public final class Project {
         }
 
         public void ensureInitialized() {
+            if (bedPool == null) bedPool = new ArrayList<>();
             if (materialChests == null) materialChests = new ArrayList<>();
             if (protectedAreas == null) protectedAreas = new LinkedHashMap<>();
         }

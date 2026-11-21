@@ -57,6 +57,17 @@ final class Icons {
                 dl.addLine(x0, cy, x1, cy, col, t);
                 dl.addLine(x0, y1 - r * 0.3f, cx + r * 0.2f, y1 - r * 0.3f, col, t);
             }
+            case "FLEET" -> {   // 3 connected nodes (hub + 2 workers)
+                float topY = y0 + r * 0.35f;
+                float botY = y1 - r * 0.35f;
+                float leftX = x0 + r * 0.35f;
+                float rightX = x1 - r * 0.35f;
+                dl.addLine(cx, topY, leftX, botY, col, t);
+                dl.addLine(cx, topY, rightX, botY, col, t);
+                dl.addCircleFilled(cx, topY, t * 1.5f, col);
+                dl.addCircleFilled(leftX, botY, t * 1.5f, col);
+                dl.addCircleFilled(rightX, botY, t * 1.5f, col);
+            }
             default -> dl.addCircle(cx, cy, r * 0.6f, col, 0, t);
         }
     }

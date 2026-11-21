@@ -75,6 +75,7 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
             return;
         }
         if (!running()) {
+            tickFleetWorkerIdle();
             return;
         }
 
@@ -106,6 +107,36 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
                 default -> isRecovering() ? RuntimeEvent.Category.WAIT : RuntimeEvent.Category.WORK;
             };
             RuntimeBus.sampleCategory(cat);
+        }
+    }
+
+    /**
+     * Autonomous Fleet Worker loop: when connected in WORKER/BOTH mode and idle, polls the Fleet Server
+     * for a chunk lease and automatically starts the assigned Project without requiring an Editor online.
+     */
+    private void tickFleetWorkerIdle() {
+        dev.manhattan.fleet.FleetClient fc = dev.manhattan.fleet.FleetClient.instance();
+        if (!fc.isWorkerActive()) return;
+        dev.manhattan.fleet.FleetProtocol.WorkGrant grant = fc.activeGrant();
+        if (grant == null || grant.idle) {
+            fc.requestWorkIfIdle();
+            return;
+        }
+        String json = grant.projectJson != null ? grant.projectJson : fc.cachedProjectJson(grant.projectHash);
+        if (json == null || json.isBlank()) {
+            fc.requestWorkIfIdle();
+            return;
+        }
+        try {
+            Project fleetProject = dev.manhattan.fleet.FleetProtocol.GSON.fromJson(json, Project.class);
+            if (fleetProject == null) return;
+            fleetProject.ensureInitialized();
+            if (grant.assignedBed != null && grant.assignedBed.length == 3) {
+                fleetProject.places.bed = grant.assignedBed.clone();
+                dev.survivalkit.Api.setBedPos(grant.assignedBed);
+            }
+            startQueue(fleetProject);
+        } catch (Exception ignored) {
         }
     }
 
@@ -629,6 +660,11 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
     @Override
     public boolean isBedTime() {
         if (sleepCooldownTicks > 0) return false;
+        dev.manhattan.fleet.FleetClient fc = dev.manhattan.fleet.FleetClient.instance();
+        if (fc.isConnected() && fc.mode().canWork()) {
+            // Coordinated 1-player sleep: only the single bot designated by the Fleet Server sleeps.
+            return fc.isDesignatedSleeper();
+        }
         return dev.survivalkit.Api.bedTime();
     }
 
@@ -800,11 +836,21 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
     @Override
     public PriorityScheduler.ActionHandle startSleep() {
         if (sleepCooldownTicks > 0) return null;
+        dev.manhattan.fleet.FleetClient fc = dev.manhattan.fleet.FleetClient.instance();
+        boolean fleetManaged = fc.isConnected() && fc.mode().canWork();
+        if (fleetManaged) {
+            int[] bed = fc.assignedBedPos();
+            if (bed != null && bed.length == 3) {
+                dev.survivalkit.Api.setBedPos(bed);
+            }
+        }
         String err = dev.survivalkit.Api.sleepNow(true);
         if (err != null) {
             sleepCooldownTicks = 80;
+            if (fleetManaged) fc.reportSleepStatus("FAILED");
             return null;
         }
+        if (fleetManaged) fc.reportSleepStatus("STARTED");
         return new PriorityScheduler.ActionHandle() {
             private boolean done;
             private int ticks;
@@ -812,7 +858,11 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
             @Override public boolean isDone() { return done; }
             @Override public String error() { return null; }
             @Override public int remainingWork() { return 0; }
-            @Override public void cancel() { dev.survivalkit.Api.stopSleeping(); done = true; }
+            @Override public void cancel() {
+                dev.survivalkit.Api.stopSleeping();
+                if (fleetManaged && !done) fc.reportSleepStatus("FAILED");
+                done = true;
+            }
             @Override public void suspend() { dev.survivalkit.Api.stopSleeping(); }
             @Override public void resume() { if (!done) dev.survivalkit.Api.sleepNow(true); }
 
@@ -821,8 +871,12 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
                 if (done) return;
                 ticks++;
                 if (ticks >= 2 && !dev.survivalkit.Api.sleeping()) {
-                    if (isBedTime()) {
+                    boolean stillNight = dev.survivalkit.Api.bedTime();
+                    if (stillNight) {
                         sleepCooldownTicks = 120;
+                        if (fleetManaged) fc.reportSleepStatus("FAILED");
+                    } else if (fleetManaged) {
+                        fc.reportSleepStatus("COMPLETED");
                     }
                     done = true;
                 }

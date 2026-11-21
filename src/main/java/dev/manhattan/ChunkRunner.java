@@ -201,6 +201,9 @@ public class ChunkRunner extends Actions.Action {
     private int waitLoadTicks;
     private boolean walkIssued;
     private boolean needsCheckedForAttempt;
+    private dev.manhattan.fleet.ChunkLeaseProvider leaseProvider;
+    private final Map<String, ChunkGrid.ColumnBox> chunkByKey = new LinkedHashMap<>();
+    private String currentLeaseKey;
 
     public ChunkRunner(ChunkWorkload workload) {
         this(workload, Config.cfg.chunkSize, ChunkGrid.OrderStrategy.parse(Config.cfg.chunkOrder));
@@ -231,6 +234,18 @@ public class ChunkRunner extends Actions.Action {
     public ChunkRunner withTaskPrefix(String taskIdPrefix) {
         this.taskIdPrefix = (taskIdPrefix == null || taskIdPrefix.isBlank()) ? null : taskIdPrefix.trim();
         return this;
+    }
+
+    /** Attaches a Fleet Server lease provider so chunks are claimed/reported remotely instead of locally. */
+    public ChunkRunner withLeaseProvider(dev.manhattan.fleet.ChunkLeaseProvider provider) {
+        this.leaseProvider = provider;
+        return this;
+    }
+
+    /** Canonical chunk key shared between local Ledger and Fleet Server leases. */
+    public static String chunkKey(String taskPrefix, ChunkGrid.ColumnBox c) {
+        String base = c.minX() + "," + c.minZ() + (c.ySlices() > 1 ? "," + c.minY() : "");
+        return (taskPrefix != null && !taskPrefix.isBlank()) ? taskPrefix.trim() + "/" + base : base;
     }
 
     public Map<String, Integer> latestDeficit() {
@@ -271,6 +286,8 @@ public class ChunkRunner extends Actions.Action {
 
         clippedByChunk.clear();
         nodeByChunk.clear();
+        chunkByKey.clear();
+        currentLeaseKey = null;
         skippedByUser.clear();
         verifiedOnce.clear();
         primaryQueue.clear();
@@ -290,6 +307,7 @@ public class ChunkRunner extends Actions.Action {
         Ledger ledger = Jobs.ledger();
         for (ChunkGrid.ColumnBox c : chunks) {
             clippedByChunk.put(c.index(), c.clip(fullBounds));
+            chunkByKey.put(chunkKey(taskIdPrefix, c), c);
             Jobs.Node node = Jobs.chunk(actionNode, c);
             nodeByChunk.put(c.index(), node);
 
@@ -331,6 +349,31 @@ public class ChunkRunner extends Actions.Action {
     }
 
     private void tickPickChunk() {
+        if (leaseProvider != null) {
+            dev.manhattan.fleet.ChunkLeaseProvider.ClaimResult claim = leaseProvider.pollNextChunk();
+            if (claim == null || claim.status() == dev.manhattan.fleet.ChunkLeaseProvider.ClaimStatus.WAITING) {
+                return;
+            }
+            if (claim.status() == dev.manhattan.fleet.ChunkLeaseProvider.ClaimStatus.NO_WORK) {
+                finishCleanly(computeTotalRemaining());
+                return;
+            }
+            ChunkGrid.ColumnBox next = chunkByKey.get(claim.chunkKey());
+            if (next == null) {
+                leaseProvider.reportChunk(claim.chunkKey(), "FAILED", "Unknown chunk key");
+                return;
+            }
+            currentLeaseKey = claim.chunkKey();
+            if (nothingToDo(next)) {
+                tickOffEmpty(next);
+                leaseProvider.reportChunk(currentLeaseKey, "DONE", "already empty");
+                currentLeaseKey = null;
+                return;
+            }
+            beginChunk(next, false);
+            return;
+        }
+
         if (phase == Phase.PRIMARY) {
             if (!primaryQueue.isEmpty()) {
                 ChunkGrid.ColumnBox next = ChunkGrid.pickNext(primaryQueue, env.playerBlockPos(), strategy);
@@ -558,9 +601,14 @@ public class ChunkRunner extends Actions.Action {
         }
 
         Jobs.Node node = nodeByChunk.get(finishedChunk.index());
+        String leaseKey = currentLeaseKey;
+        currentLeaseKey = null;
         if (actionError != null) {
             if (node != null) {
                 Jobs.set(node, Ledger.State.FAILED, node.tries + 1, node.left, actionError, signature);
+            }
+            if (leaseProvider != null && leaseKey != null) {
+                leaseProvider.reportChunk(leaseKey, "FAILED", actionError);
             }
             currentChunk = null;
             currentClipped = null;
@@ -577,6 +625,13 @@ public class ChunkRunner extends Actions.Action {
                         ? rem + " left after verification"
                         : rem + " left";
                 Jobs.set(node, Ledger.State.DEFERRED, node.tries + 1, rem, reason, signature);
+            }
+        }
+        if (leaseProvider != null && leaseKey != null) {
+            if (rem == 0) {
+                leaseProvider.reportChunk(leaseKey, "DONE", "");
+            } else {
+                leaseProvider.reportChunk(leaseKey, "DEFERRED", rem + " left");
             }
         }
         if (actionNode != null) {

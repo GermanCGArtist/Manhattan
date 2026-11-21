@@ -26,6 +26,21 @@ public final class Api {
         return cfg.logoffOnMissingBed;
     }
 
+    /** Returns the currently configured bed coordinates {@code [x, y, z]} or {@code null}. */
+    public static int[] bedPos() {
+        return cfg.bed != null && cfg.bed.length == 3 ? cfg.bed.clone() : null;
+    }
+
+    /** Overrides the active bed coordinates in memory (used by Fleet bed-pool assignment). */
+    public static void setBedPos(int[] pos) {
+        cfg.bed = (pos != null && pos.length == 3) ? pos.clone() : null;
+    }
+
+    /** True while SurvivalKit is recovering from a death. */
+    public static boolean recovering() {
+        return "true".equals(System.getProperty("survivalkit.recovering"));
+    }
+
     /**
      * Intentionally disconnects from the current world/server, suppressing auto-reconnect
      * and cancelling any active pathing. Safe to call from any thread or in headless tests.

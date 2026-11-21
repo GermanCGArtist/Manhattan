@@ -136,7 +136,13 @@ tasks.register('telemetryIncidentTest', JavaExec) {
     classpath = sourceSets.test.runtimeClasspath
     mainClass = 'dev.midtown.TelemetryIncidentTest'
 }
-tasks.named('check') { dependsOn 'langTest', 'parseScripts', 'midtownTest', 'midtownBodyTest', 'projectQueueTest', 'telemetryIncidentTest', 'chunkGridTest', 'chunkRunnerTest', 'nativesTest' }
+tasks.register('fleetClientTest', JavaExec) {
+    group = 'verification'
+    description = 'Runs Fleet client protocol, bedPool, and ChunkRunner lease provider offline unit tests.'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.manhattan.FleetClientTest'
+}
+tasks.named('check') { dependsOn 'langTest', 'parseScripts', 'midtownTest', 'midtownBodyTest', 'projectQueueTest', 'telemetryIncidentTest', 'chunkGridTest', 'chunkRunnerTest', 'fleetClientTest', 'nativesTest' }
 tasks.named('test') { failOnNoDiscoveredTests = false }   // the tests above are plain programs, not JUnit
 
 java {

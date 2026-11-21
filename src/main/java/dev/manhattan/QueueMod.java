@@ -63,6 +63,8 @@ public class QueueMod implements ClientModInitializer {
     public void onInitializeClient() {
         dev.midtown.api.EngineSelector.register("midtown", dev.midtown.exec.MidtownEngine::new);
         Config.load();
+        dev.manhattan.fleet.FleetClient.instance().initialize(
+                dev.manhattan.fleet.FleetMode.parse(cfg.fleetMode), cfg.fleetTags);
         dev.midtown.exec.MidtownEngine.configureDeathStorage(projectConfigDir().resolve("manhattan-deaths"), QueueMod::projectWorld);
         LevelRenderEvents.BEFORE_GIZMOS.register(ctx -> {
             Areas.renderWireframe();
@@ -499,6 +501,11 @@ public class QueueMod implements ClientModInitializer {
             t.printStackTrace();
             Util.warn("tick-error", "The script runner hit an error (" + t + "). Details are in the game log.");
             runner.reset();
+        }
+        try {
+            dev.manhattan.fleet.FleetClient.instance().tick(mc);
+        } catch (Throwable t) {
+            t.printStackTrace();
         }
         try {
             GameProjectRuntime.instance().tick(mc);
@@ -1147,6 +1154,59 @@ public class QueueMod implements ClientModInitializer {
         };
     }
 
+    private static void attachFleetLease(ChunkRunner runner) {
+        dev.manhattan.fleet.FleetClient fc = dev.manhattan.fleet.FleetClient.instance();
+        if (fc.isWorkerActive()) {
+            dev.manhattan.fleet.FleetProtocol.WorkGrant grant = fc.activeGrant();
+            if (grant != null && !grant.idle && grant.jobId != null) {
+                runner.withLeaseProvider(fc.createLeaseProvider(grant.jobId));
+            }
+        }
+    }
+
+    /** Computes canonical Fleet Server chunk specs for all enabled spatial tasks in a Project. */
+    public static List<dev.manhattan.fleet.FleetProtocol.ChunkSpec> collectProjectChunkSpecs(Project project) {
+        List<dev.manhattan.fleet.FleetProtocol.ChunkSpec> out = new ArrayList<>();
+        if (project == null || project.tasks == null) return out;
+        for (ProjectTask task : project.tasks) {
+            if (task == null || !task.enabled || task.kind == null) continue;
+            List<int[]> boxes = null;
+            int chunkSizeY = 0;
+            int gap = -1;
+            if (task.kind == ProjectTask.Kind.CLEAR_AREA) {
+                boxes = resolveProjectBoxes(task);
+                chunkSizeY = cfg.chunkSizeY;
+                gap = cfg.chunkGap;
+            } else if (task.kind == ProjectTask.Kind.FILL_WATER || task.kind == ProjectTask.Kind.DRAIN) {
+                boxes = resolveProjectBoxes(task);
+            } else if (task.kind == ProjectTask.Kind.SCHEM_BUILD) {
+                String[] err = new String[1];
+                List<SchemSource.Placement> pls = SchemCmd.select(
+                        task.placement == null || task.placement.isBlank() ? null : task.placement, err);
+                if (pls != null && !pls.isEmpty()) {
+                    boxes = SchemProcess.placementBounds(pls);
+                }
+            }
+            if (boxes == null || boxes.isEmpty()) continue;
+            List<ChunkGrid.ColumnBox> cols = ChunkGrid.split(boxes, cfg.chunkSize, chunkSizeY, gap);
+            for (ChunkGrid.ColumnBox c : cols) {
+                String key = ChunkRunner.chunkKey(task.id, c);
+                BlockPos center = c.centerXZ(c.minY());
+                out.add(new dev.manhattan.fleet.FleetProtocol.ChunkSpec(
+                        key, c.gridX(), c.gridZ(), center.getX(), center.getZ()));
+            }
+        }
+        return out;
+    }
+
+    private static List<int[]> resolveProjectBoxes(ProjectTask task) {
+        if (task.areaName != null && !task.areaName.isBlank()) {
+            List<int[]> saved = cfg.areas.get(task.areaName);
+            if (saved != null && !saved.isEmpty()) return saved;
+        }
+        return List.of();
+    }
+
     public static PriorityScheduler.ActionHandle projectCreateClearAreaHandle(
             int layers, List<int[]> boxes, String taskId) {
         Shaft.current = Shaft.find(boxes);
@@ -1168,6 +1228,7 @@ public class QueueMod implements ClientModInitializer {
                     return mc == null || mc.level == null ? 0 : ClearProcess.countSolid(mc.level, clippedBoxes);
                 }
             }).withGeometry(cfg.chunkSizeY, cfg.chunkGap).withTaskPrefix(taskId);
+            attachFleetLease((ChunkRunner) act);
         } else {
             act = GameBuiltins.clearFeature(layers, boxes);
         }
@@ -1211,6 +1272,7 @@ public class QueueMod implements ClientModInitializer {
                     return waterCount > 0 ? Map.of(resolvedName, waterCount) : Map.of();
                 }
             }).withTaskPrefix(taskId);
+            attachFleetLease((ChunkRunner) act);
         } else {
             act = GameBuiltins.fillWaterChunkAction(it, resolvedName, materialChestPos, chestLabel, 512, boxes);
         }
@@ -1243,6 +1305,7 @@ public class QueueMod implements ClientModInitializer {
                     return mc == null || mc.level == null ? 0 : dev.buildtools.DrainProcess.countFluid(mc.level, clippedBoxes);
                 }
             }).withTaskPrefix(taskId);
+            attachFleetLease((ChunkRunner) act);
         } else {
             act = GameBuiltins.drainFeature(boxes);
         }
@@ -1295,6 +1358,7 @@ public class QueueMod implements ClientModInitializer {
                     return mc == null || mc.level == null ? Map.of() : SchemProcess.requiredItemsIn(mc.level, chunk);
                 }
             }).withTaskPrefix(taskId);
+            attachFleetLease((ChunkRunner) act);
         } else {
             schem.setChunkBounds(null);
             act = GameBuiltins.schemFeature(pls, finalMode, null);
