@@ -26,6 +26,7 @@ import imgui.ImGuiIO;
 import imgui.ImVec4;
 import imgui.type.ImInt;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.Projection;
 import net.minecraft.client.renderer.ProjectionMatrixBuffer;
 import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.resources.Identifier;
@@ -60,6 +61,7 @@ final class ImGuiRenderPearlRenderer {
     private static GpuTexture fontTexture;
     private static GpuTextureView fontTextureView;
     private static GpuSampler linearSampler;
+    private static Projection guiProjection;
     private static ProjectionMatrixBuffer projBuffer;
 
     private static GpuBuffer vertexBuffer;
@@ -103,6 +105,9 @@ final class ImGuiRenderPearlRenderer {
             linearSampler = dev.createSampler(
                     AddressMode.CLAMP_TO_EDGE, AddressMode.CLAMP_TO_EDGE,
                     FilterMode.LINEAR, FilterMode.LINEAR, 1, OptionalDouble.empty());
+        }
+        if (guiProjection == null) {
+            guiProjection = new Projection();
         }
         if (projBuffer == null) {
             projBuffer = new ProjectionMatrixBuffer("Manhattan ImGui");
@@ -264,10 +269,10 @@ final class ImGuiRenderPearlRenderer {
         enc.writeToBuffer(vertexBuffer.slice(0, totalVtxBytes), stagingVtx);
         enc.writeToBuffer(indexBuffer.slice(0, totalIdxBytes), stagingIdx);
 
-        // 3. Configure ortho projection & default uniforms, then issue RenderPass draws.
+        // 3. Configure Vulkan/RenderPearl ortho projection & default uniforms, then issue RenderPass draws.
         RenderSystem.backupProjectionMatrix();
-        Matrix4f ortho = new Matrix4f().setOrtho(0f, displayW, displayH, 0f, -1000f, 1000f, true);
-        RenderSystem.setProjectionMatrix(projBuffer.getBuffer(ortho), ProjectionType.ORTHOGRAPHIC);
+        guiProjection.setupOrtho(-1000.0f, 1000.0f, displayW, displayH, true);
+        RenderSystem.setProjectionMatrix(projBuffer.getBuffer(guiProjection), ProjectionType.ORTHOGRAPHIC);
         GpuBufferSlice dynTransform = RenderSystem.getDynamicUniforms().writeTransform(new Matrix4f().identity());
 
         float clipOffX = drawData.getDisplayPosX();
@@ -284,7 +289,7 @@ final class ImGuiRenderPearlRenderer {
             if (drawGameQuad) {
                 pass.disableScissor();
                 pass.setUniform("Sampler0", gameCopyView, linearSampler);
-                pass.drawIndexed(0, 0, 6, 1, 0);
+                pass.drawIndexed(6, 1, 0, 0, 0);
             }
 
             for (int i = 0; i < lists; i++) {
@@ -313,9 +318,9 @@ final class ImGuiRenderPearlRenderer {
                     int idxOffset = listIdxBase[i] + drawData.getCmdListCmdBufferIdxOffset(i, c);
                     int vtxOffset = listVtxBase[i] + drawData.getCmdListCmdBufferVtxOffset(i, c);
 
-                    pass.enableScissor(sx, fbH - ey, sw, sh);
+                    pass.enableScissor(sx, sy, sw, sh);
                     pass.setUniform("Sampler0", texView, linearSampler);
-                    pass.drawIndexed(vtxOffset, idxOffset, elemCount, 1, 0);
+                    pass.drawIndexed(elemCount, 1, idxOffset, vtxOffset, 0);
                 }
             }
         } finally {
