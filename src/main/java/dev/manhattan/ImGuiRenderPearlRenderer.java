@@ -59,9 +59,10 @@ final class ImGuiRenderPearlRenderer {
             .withDepthStencilState(Optional.empty())
             .build();
 
-    /** Opaque (no alpha-blend) pipeline for the docked game viewport so sky / Distant Horizons alpha=0 pixels stay opaque. */
+    /** Opaque (no alpha-blend, no alpha==0 discard) pipeline for the docked game viewport so sky & Distant Horizons render cleanly. */
     private static final RenderPipeline GAME_QUAD_PIPELINE = RenderPipeline.builder(RenderPipelines.GUI_TEXTURED_SNIPPET)
             .withLocation(Identifier.fromNamespaceAndPath("manhattan", "pipeline/imgui_game_quad"))
+            .withFragmentShader(Identifier.fromNamespaceAndPath("manhattan", "core/imgui_game_quad"))
             .withVertexBinding(0, DefaultVertexFormat.POSITION_TEX_COLOR)
             .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
             .withColorTargetState(ColorTargetState.DEFAULT)
@@ -336,7 +337,8 @@ final class ImGuiRenderPearlRenderer {
                     int idxOffset = listIdxBase[i] + drawData.getCmdListCmdBufferIdxOffset(i, c);
                     int vtxOffset = listVtxBase[i] + drawData.getCmdListCmdBufferVtxOffset(i, c);
 
-                    pass.enableScissor(sx, sy, sw, sh);
+                    // RenderPass.enableScissor uses bottom-left Y (fbH - ey), matching GuiRenderer.enableScissor.
+                    pass.enableScissor(sx, fbH - ey, sw, sh);
                     pass.setUniform("Sampler0", texView, linearSampler);
                     pass.drawIndexed(elemCount, 1, idxOffset, vtxOffset, 0);
                 }
