@@ -92,11 +92,29 @@ acts on its own: the script starts them. The packages talk through small `Api` c
   `Api.setOwnBreak` changes the player's own wish, applied after leaving.
 
 ## Area clearing (`dev.baritonequeue.ClearProcess`)
-Its own executor (Baritone process, priority 11): top-down passes 3 layers thick, lanes 6 apart, stops every 3
+Its own executor (longer walks go through Midtown): top-down passes 3 layers thick, lanes 6 apart, stops every 3
 blocks, highest-then-nearest visible block first, drops picked up along the way, a time report at the end.
 
+## Jobs, chunks and the ledger (`Jobs`, `Ledger`, `ChunkGrid`, `ChunkRunner`)
+- `job "name" ... end` (`Ast.Job`): skipped when the ledger says DONE (its assigned variables are restored from the
+  ledger); FAILED on an uncaught error; left RUNNING by stop/return/break, so the next run does it again.
+- `ChunkGrid` splits a selection longer than `chunk.size` (default 32) in x or z into column boxes, ordered
+  serpentine or nearest-first. `ChunkRunner` runs a `ChunkWorkload` (`fill_water`, `clear_area`, `drain`,
+  `schem_build`) per chunk: walk → wait for the chunk to load → check needs → run, in three phases (PRIMARY,
+  DEFERRED_RETRY, VERIFICATION), and registers the chunks with `MapLayers`.
+- Ids: `<job>/<action>@<line>(<args>)#<n>/<x0>,<z0>`; outside a job the job is `script`. `Ledger` writes
+  `config/manhattan-jobs/<world>_<script>.json` (temp file + move). `/queue jobs | reset [job] | retry <job>`
+  (`QueueMod.ledgerChange`) call `Jobs.describe/reset/retry` on the running script's ledger, or the editor tab's
+  (`Jobs.useCommandScript`); reset and retry refuse while a script runs. The ledger is never cleared by itself.
+
+## Legacy `#` lines (`Actions.BaritoneCommand`)
+Baritone is gone at runtime; `#` lines are a shim onto the current `PathEngine` (`EngineSelector`, both names map
+to `MidtownEngine`): goto, mine, stop/cancel, pause/resume, set, sel pos1/pos2/set/clear/ca/replace … air, and engine
+settings. Baritone-only settings (`buildInLayers`, `acceptableThrowawayItems`, `allowInventory`, `layerOrder`) are
+accepted and ignored.
+
 ## Build, test, install
-- `build.bat` – builds `build/libs/baritonequeue-<version>.jar` and runs the offline checks
+- `build.bat` – builds `build/libs/manhattan-<version>.jar` and runs the offline checks
   (`src/test/.../LangTest.java`: the language through the real parser and interpreter; `ParseFile`: every
   `scripts/*.txt` parses).
 - `tests\ingame

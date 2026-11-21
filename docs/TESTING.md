@@ -33,8 +33,8 @@ tests\ingame\run.bat --attach           use the testing instance that is already
 ```
 
 Needs: Python 3.9+ (standard library only), the Modrinth App with Minecraft 26.1.1 + Fabric Loader 0.20.1 already
-downloaded once (its `meta` folder; any 26.1.1 Fabric 0.20.1 profile that has been started once is enough), and the
-`26.1.1 AFK` profile's `mods` folder for the Baritone jars.
+downloaded once (its `meta` folder; any 26.1.1 Fabric 0.20.1 profile that has been started once is enough).
+Baritone is not used any more; Litematica and MaLiLib are copied from the `Bestes_projekt_1.26.0` profile if it is there.
 
 Nothing to do by hand: there is **no Microsoft login**. The test starts the game itself in offline mode (user
 `ManhattanTest`, single-player only), not through the Modrinth App.
@@ -113,11 +113,11 @@ keeps exactly this in its `mods` folder, copying only when a file changed:
 | jar | from |
 |---|---|
 | `fabric-api-0.145.4+26.1.1.jar` | the Gradle cache (downloaded from maven.fabricmc.net for building this mod) |
-| `baritone-api-fabric-1.18.0.jar`, `baritoneui-1.10.1.jar` | the `26.1.1 AFK` profile's `mods` folder (read only) |
-| `baritonequeue-<version>.jar` | `build\libs` |
+| `litematica-fabric-*.jar`, `malilib-fabric-*.jar` | the `Bestes_projekt_1.26.0` profile's `mods` folder (read only; skipped if missing) |
+| `manhattan-<version>.jar` | `build\libs` |
 | `manhattan-testbridge-<version>.jar` | `build\libs` (test only, see below) |
 
-Every game also starts with the mod's own settings reset (`config/baritonequeue.json`, `buildtools.json`, `loadchest.json`,
+Every game also starts with the mod's own settings reset (`config/manhattan.json`, `buildtools.json`, `loadchest.json`,
 `survivalkit.json`, `manhattan-chests/`: want-list, safe areas, chest index), so one run's `want(...)` cannot change the next run.
 The queue is scheduled longest first from `tmp/ingame/durations.json` (the last duration of every test, updated after each run;
 unknown tests count as long). Tests that need the shared flat world switch back to it if the game is in another test's world.
@@ -127,7 +127,7 @@ real-time path calculation, not game ticks, and the tree tests got less reliable
 (`trees_forest_spruce|jungle|dark|mixed`) so that they run on four games at once.
 Test commands wait for the server to have run them (`Ctx.sync`, a `/time query` answer), not for a fixed time.
 
-Older `baritonequeue-*` / `manhattan-testbridge-*` / `fabric-api-*` jars there are deleted; the old `survivalkit`,
+Older `baritonequeue-*` / `manhattan-*` / `manhattan-testbridge-*` / `fabric-api-*` jars and any Baritone jars there are deleted; the old `survivalkit`,
 `buildtools` and `loadchest` jars are never installed (and removed if found). It also sets a few `options.txt`
 values for unattended runs: no pause when the window loses focus, sound off, no accessibility first-start screen,
 render distance 6.
