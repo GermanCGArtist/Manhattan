@@ -42,9 +42,14 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
     }
 
     private final PriorityScheduler scheduler;
+    private final ProjectLayerScheduler layerScheduler;
     private String loadedWorld;
     private Project activeProject;
     private TaskQueue.TaskLedger activeLedger;
+    private Project runningProject;
+    private ProjectQueue projectQueue;
+    private final Map<String, Project> projectCache = new LinkedHashMap<>();
+    private final Map<String, TaskQueue.TaskLedger> ledgerCache = new LinkedHashMap<>();
     private ProjectActivationSnapshot activationSnapshot;
     private OverrideSnapshot overrideSnapshot;
     private int eatCooldownTicks;
@@ -55,6 +60,7 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
 
     private GameProjectRuntime() {
         this.scheduler = new PriorityScheduler(this);
+        this.layerScheduler = new ProjectLayerScheduler(this, new LayerHost());
     }
 
     // ------------------------------------------------------------------ public API contract
@@ -68,7 +74,7 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
         if (mc == null || mc.player == null || mc.level == null) {
             return;
         }
-        if (!scheduler.isRunning()) {
+        if (!running()) {
             return;
         }
 
@@ -79,12 +85,17 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
             return;
         }
 
-        scheduler.tick();
+        if (layerScheduler.isRunning()) {
+            layerScheduler.tick();
+        } else {
+            scheduler.tick();
+        }
 
-        if (scheduler.isRunning()) {
-            PriorityScheduler.Telemetry tel = scheduler.telemetry();
-            RuntimeBus.setCurrentStep(tel.detail());
-            RuntimeEvent.Category cat = switch (tel.lane()) {
+        if (running()) {
+            PriorityScheduler.Telemetry tel = telemetry();
+            RuntimeBus.setCurrentStep(tel != null ? tel.detail() : null);
+            PriorityScheduler.Lane lane = tel != null && tel.lane() != null ? tel.lane() : PriorityScheduler.Lane.IDLE;
+            RuntimeEvent.Category cat = switch (lane) {
                 case P0_EMERGENCY, P1_COMBAT, P2_VITALS -> RuntimeEvent.Category.SURVIVAL;
                 case P3_LOGISTICS -> RuntimeEvent.Category.LOGISTICS;
                 case P4_WORK -> EngineSelector.current().status() == dev.midtown.api.EngineStatus.STUCK
@@ -103,6 +114,17 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
         return activeProject;
     }
 
+    /** Returns the project currently executing in the scheduler (or {@code null} when idle). */
+    public Project runningProject() {
+        if (layerScheduler.isRunning()) {
+            return layerScheduler.currentProject();
+        }
+        if (scheduler.isRunning()) {
+            return runningProject != null ? runningProject : activeProject;
+        }
+        return null;
+    }
+
     public List<String> projectIds() {
         String world = currentWorld();
         return ProjectStore.list(projectsDir(), world);
@@ -110,47 +132,58 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
 
     public void selectProject(String id) {
         if (id == null || id.isBlank()) return;
+        ensureLoaded();
         String world = currentWorld();
         String cleanId = ProjectStore.sanitizeId(id);
-        Project loaded = ProjectStore.load(projectsDir(), world, cleanId);
+        Project loaded = loadProjectCached(cleanId);
         if (loaded == null) {
             return;
         }
-        if (scheduler.isRunning()) {
+        if (!layerScheduler.isRunning() && scheduler.isRunning()) {
             stopQueue("Switched active project to '" + cleanId + "'.");
         }
         this.loadedWorld = world;
         this.activeProject = loaded;
-        this.activeLedger = QueueMod.projectOpenLedger(world, loaded.id);
+        this.activeLedger = loadLedgerCached(loaded.id);
         ProjectStore.setActiveId(projectsDir(), world, loaded.id);
     }
 
     public Project createProject(String id, String name) {
+        ensureLoaded();
         String world = currentWorld();
         Project created = ProjectStore.createDefault(world, id, name);
         ProjectStore.save(projectsDir(), created);
-        if (scheduler.isRunning()) {
+        if (!layerScheduler.isRunning() && scheduler.isRunning()) {
             stopQueue("Created and switched to project '" + created.id + "'.");
         }
         this.loadedWorld = world;
+        projectCache.put(created.id, created);
         this.activeProject = created;
-        this.activeLedger = QueueMod.projectOpenLedger(world, created.id);
+        this.activeLedger = loadLedgerCached(created.id);
         ProjectStore.setActiveId(projectsDir(), world, created.id);
         return created;
     }
 
     public boolean deleteProject(String id) {
         if (id == null || id.isBlank()) return false;
+        ensureLoaded();
         String world = currentWorld();
         String cleanId = ProjectStore.sanitizeId(id);
-        if (activeProject != null && cleanId.equals(activeProject.id) && scheduler.isRunning()) {
+        if (!layerScheduler.isRunning() && activeProject != null && cleanId.equals(activeProject.id) && scheduler.isRunning()) {
             stopQueue("Deleted active project '" + cleanId + "'.");
         }
         boolean deleted = ProjectStore.delete(projectsDir(), world, cleanId);
-        if (deleted && activeProject != null && cleanId.equals(activeProject.id)) {
-            activeProject = null;
-            activeLedger = null;
-            ensureLoaded();
+        if (deleted) {
+            projectCache.remove(cleanId);
+            ledgerCache.remove(cleanId);
+            if (projectQueue != null) {
+                projectQueue.remove(cleanId);
+            }
+            if (activeProject != null && cleanId.equals(activeProject.id)) {
+                activeProject = null;
+                activeLedger = null;
+                ensureLoaded();
+            }
         }
         return deleted;
     }
@@ -164,8 +197,197 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
         if (activeProject.id == null || activeProject.id.isBlank()) {
             activeProject.id = "default";
         }
+        projectCache.put(activeProject.id, activeProject);
         ProjectStore.save(projectsDir(), activeProject);
         ProjectStore.setActiveId(projectsDir(), activeProject.world, activeProject.id);
+    }
+
+    // ------------------------------------------------------------------ multi-project layer queue API
+
+    public ProjectQueue projectQueue() {
+        ensureLoaded();
+        return projectQueue;
+    }
+
+    public void saveProjectQueue() {
+        ensureLoaded();
+        if (projectQueue == null) projectQueue = new ProjectQueue();
+        ProjectStore.saveQueue(projectsDir(), loadedWorld, projectQueue);
+    }
+
+    public boolean addProjectLayer(String projectId) {
+        ensureLoaded();
+        if (projectId == null || projectId.isBlank()) return false;
+        String cleanId = ProjectStore.sanitizeId(projectId);
+        if (loadProjectCached(cleanId) == null) return false;
+        boolean added = projectQueue.add(cleanId);
+        if (added) saveProjectQueue();
+        return added;
+    }
+
+    public boolean insertProjectLayer(int index, String projectId) {
+        ensureLoaded();
+        if (projectId == null || projectId.isBlank()) return false;
+        String cleanId = ProjectStore.sanitizeId(projectId);
+        if (loadProjectCached(cleanId) == null) return false;
+        boolean added = projectQueue.insertAt(index, cleanId);
+        if (added) saveProjectQueue();
+        return added;
+    }
+
+    public boolean removeProjectLayer(String projectId) {
+        ensureLoaded();
+        boolean removed = projectQueue.remove(projectId);
+        if (removed) saveProjectQueue();
+        return removed;
+    }
+
+    public boolean moveProjectLayer(int fromIdx, int toIdx) {
+        ensureLoaded();
+        boolean moved = projectQueue.move(fromIdx, toIdx);
+        if (moved) saveProjectQueue();
+        return moved;
+    }
+
+    public boolean moveProjectLayerToTop(String projectId) {
+        ensureLoaded();
+        boolean moved = projectQueue.moveToTop(projectId);
+        if (moved) saveProjectQueue();
+        return moved;
+    }
+
+    public boolean setProjectLayerEnabled(String projectId, boolean enabled) {
+        ensureLoaded();
+        boolean changed = projectQueue.setEnabled(projectId, enabled);
+        if (changed) saveProjectQueue();
+        return changed;
+    }
+
+    public void setStopOnProjectError(boolean stop) {
+        ensureLoaded();
+        projectQueue.stopOnProjectError = stop;
+        saveProjectQueue();
+    }
+
+    public void setLogoffWhenAllDone(boolean logoff) {
+        ensureLoaded();
+        projectQueue.logoffWhenAllDone = logoff;
+        saveProjectQueue();
+    }
+
+    public ProjectLayerScheduler.LayerStatus layerStatus(ProjectQueue.Layer layer) {
+        ensureLoaded();
+        return layerScheduler.layerStatus(layer);
+    }
+
+    public ProjectLayerScheduler.LayerTelemetry layerTelemetry() {
+        return layerScheduler.telemetry();
+    }
+
+    public boolean layerQueueRunning() {
+        return layerScheduler.isRunning();
+    }
+
+    public Project loadProjectCached(String projectId) {
+        if (projectId == null || projectId.isBlank()) return null;
+        ensureWorldCacheValid();
+        String cleanId = ProjectStore.sanitizeId(projectId);
+        Project cached = projectCache.get(cleanId);
+        if (cached != null) return cached;
+        Project loaded = ProjectStore.load(projectsDir(), loadedWorld, cleanId);
+        if (loaded != null) {
+            projectCache.put(cleanId, loaded);
+        }
+        return loaded;
+    }
+
+    public TaskQueue.TaskLedger loadLedgerCached(String projectId) {
+        if (projectId == null || projectId.isBlank()) return null;
+        ensureWorldCacheValid();
+        String cleanId = ProjectStore.sanitizeId(projectId);
+        TaskQueue.TaskLedger cached = ledgerCache.get(cleanId);
+        if (cached != null) return cached;
+        TaskQueue.TaskLedger opened = QueueMod.projectOpenLedger(loadedWorld, cleanId);
+        if (opened != null) {
+            ledgerCache.put(cleanId, opened);
+        }
+        return opened;
+    }
+
+    /** Returns {@code {doneTasks, totalEnabledTasks}} for the given project id. */
+    public int[] projectProgress(String projectId) {
+        Project p = loadProjectCached(projectId);
+        if (p == null) return new int[]{0, 0};
+        TaskQueue.TaskLedger ledger = loadLedgerCached(p.id);
+        TaskQueue tq = new TaskQueue(p, ledger);
+        return new int[]{tq.doneCount(), tq.totalEnabledCount()};
+    }
+
+    public void resetProjectLedger(String projectId) {
+        if (projectId == null || projectId.isBlank()) return;
+        ensureLoaded();
+        String cleanId = ProjectStore.sanitizeId(projectId);
+        Project p = loadProjectCached(cleanId);
+        TaskQueue.TaskLedger ledger = loadLedgerCached(cleanId);
+        if (p == null || ledger == null) return;
+        PriorityScheduler cur = scheduler();
+        if (cur.queue() != null && cur.queue().project() == p) {
+            cur.resetQueue(null);
+        } else {
+            new TaskQueue(p, ledger).reset(null);
+        }
+        layerScheduler.clearFailed(cleanId);
+    }
+
+    public void retryProjectLedger(String projectId) {
+        if (projectId == null || projectId.isBlank()) return;
+        ensureLoaded();
+        String cleanId = ProjectStore.sanitizeId(projectId);
+        Project p = loadProjectCached(cleanId);
+        TaskQueue.TaskLedger ledger = loadLedgerCached(cleanId);
+        if (p == null || ledger == null) return;
+        PriorityScheduler cur = scheduler();
+        if (cur.queue() != null && cur.queue().project() == p) {
+            cur.retryTask(null);
+        } else {
+            new TaskQueue(p, ledger).retry(null);
+        }
+        layerScheduler.clearFailed(cleanId);
+    }
+
+    public String startLayerQueue() {
+        ensureLoaded();
+        if (running()) {
+            return "Project queue is already running.";
+        }
+        if (QueueMod.projectRunnerRunning()) {
+            return "A standalone script is already running. Stop it first.";
+        }
+        Minecraft mc = Minecraft.getInstance();
+        if (mc == null || mc.player == null || mc.level == null) {
+            return "Not in a world.";
+        }
+
+        resetRuntimeCooldowns();
+        RuntimeBus.setPaused(false);
+        RuntimeBus.setScriptActive(true);
+        RuntimeBus.setRecoveryGaveUpReason(null);
+        RuntimeBus.startRunTelemetry(
+                QueueMod.projectGameDir().resolve("manhattan-telemetry"),
+                "project-layers-" + System.currentTimeMillis());
+        RuntimeBus.emit(RuntimeEvent.Type.RUN_START, RuntimeEvent.Category.SYSTEM,
+                "GameProjectRuntime", "Started project layer queue (" + projectQueue.enabledCount() + " enabled layers)");
+        dev.survivalkit.Api.onBeforeDisconnect = () -> {
+            if (running()) stopQueue("Disconnected.");
+        };
+
+        String err = layerScheduler.start(projectQueue);
+        if (err != null) {
+            RuntimeBus.stopRunTelemetry();
+            RuntimeBus.setScriptActive(QueueMod.projectRunnerRunning());
+            return err;
+        }
+        return null;
     }
 
     public String startQueue() {
@@ -180,7 +402,7 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
         if (project == null) {
             return "Project is null.";
         }
-        if (scheduler.isRunning()) {
+        if (running()) {
             return "Project queue is already running.";
         }
         if (QueueMod.projectRunnerRunning()) {
@@ -202,15 +424,12 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
         project.id = ProjectStore.sanitizeId(project.id);
 
         this.loadedWorld = world;
+        projectCache.put(project.id, project);
         this.activeProject = project;
-        this.activeLedger = QueueMod.projectOpenLedger(project.world, project.id);
+        this.runningProject = project;
+        this.activeLedger = loadLedgerCached(project.id);
 
-        eatCooldownTicks = 0;
-        sleepCooldownTicks = 0;
-        baseTripCooldownTicks = 0;
-        baseTripFailStreak = 0;
-        emergencyCooldownTicks = 0;
-        dev.survivalkit.Api.resetRestockBackoff();
+        resetRuntimeCooldowns();
 
         activateProject(project);
         RuntimeBus.setPaused(false);
@@ -230,11 +449,18 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
     }
 
     public void stopQueue(String reason) {
+        boolean wasRunning = running();
         boolean abnormal = reason != null && !reason.toLowerCase(Locale.ROOT).contains("stopped by user");
-        if (abnormal && scheduler.isRunning()) {
+        if (abnormal && wasRunning) {
             IncidentBundle.captureAndWrite("queue_halted", reason);
         }
-        scheduler.stop(reason);
+        if (layerScheduler.isRunning()) {
+            layerScheduler.stop(reason);
+        }
+        if (scheduler.isRunning()) {
+            scheduler.stop(reason);
+        }
+        runningProject = null;
         RuntimeBus.emit(RuntimeEvent.Type.RUN_END, RuntimeEvent.Category.SYSTEM,
                 "GameProjectRuntime", reason == null ? "Stopped" : reason);
         RuntimeBus.stopRunTelemetry();
@@ -246,24 +472,29 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
     }
 
     public void skipCurrent() {
-        scheduler.skipCurrent();
+        if (layerScheduler.isRunning()) {
+            layerScheduler.skipCurrent();
+        } else {
+            scheduler.skipCurrent();
+        }
     }
 
     public boolean running() {
-        return scheduler.isRunning();
+        return layerScheduler.isRunning() || scheduler.isRunning();
     }
 
     public PriorityScheduler.Telemetry telemetry() {
-        return scheduler.telemetry();
+        return layerScheduler.isRunning() ? layerScheduler.scheduler().telemetry() : scheduler.telemetry();
     }
 
     public PriorityScheduler scheduler() {
-        return scheduler;
+        return layerScheduler.isRunning() ? layerScheduler.scheduler() : scheduler;
     }
 
     public TaskQueue.TaskLedger.State taskState(String taskId) {
         if (taskId == null) return TaskQueue.TaskLedger.State.PENDING;
-        TaskQueue q = scheduler.queue();
+        PriorityScheduler cur = scheduler();
+        TaskQueue q = cur.queue();
         if (q != null && q.project() == activeProject) {
             return q.stateOf(taskId);
         }
@@ -276,8 +507,9 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
     public void enqueueTask(ProjectTask task) {
         if (task == null) return;
         ensureLoaded();
-        if (scheduler.queue() != null && scheduler.queue().project() == activeProject) {
-            scheduler.enqueue(task);
+        PriorityScheduler cur = scheduler();
+        if (cur.queue() != null && cur.queue().project() == activeProject) {
+            cur.enqueue(task);
         } else {
             new TaskQueue(activeProject, activeLedger).add(task);
         }
@@ -287,8 +519,9 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
     public void removeTask(String taskId) {
         if (taskId == null) return;
         ensureLoaded();
-        if (scheduler.queue() != null && scheduler.queue().project() == activeProject) {
-            scheduler.remove(taskId);
+        PriorityScheduler cur = scheduler();
+        if (cur.queue() != null && cur.queue().project() == activeProject) {
+            cur.remove(taskId);
         } else {
             new TaskQueue(activeProject, activeLedger).remove(taskId);
         }
@@ -297,8 +530,9 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
 
     public void moveTask(int fromIdx, int toIdx) {
         ensureLoaded();
-        if (scheduler.queue() != null && scheduler.queue().project() == activeProject) {
-            scheduler.move(fromIdx, toIdx);
+        PriorityScheduler cur = scheduler();
+        if (cur.queue() != null && cur.queue().project() == activeProject) {
+            cur.move(fromIdx, toIdx);
         } else {
             new TaskQueue(activeProject, activeLedger).move(fromIdx, toIdx);
         }
@@ -308,8 +542,9 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
     public void skipTask(String taskId) {
         if (taskId == null) return;
         ensureLoaded();
-        if (scheduler.queue() != null && scheduler.queue().project() == activeProject) {
-            scheduler.skipTask(taskId);
+        PriorityScheduler cur = scheduler();
+        if (cur.queue() != null && cur.queue().project() == activeProject) {
+            cur.skipTask(taskId);
         } else {
             new TaskQueue(activeProject, activeLedger).skip(taskId);
         }
@@ -317,19 +552,27 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
 
     public void retryTask(String taskId) {
         ensureLoaded();
-        if (scheduler.queue() != null && scheduler.queue().project() == activeProject) {
-            scheduler.retryTask(taskId);
+        PriorityScheduler cur = scheduler();
+        if (cur.queue() != null && cur.queue().project() == activeProject) {
+            cur.retryTask(taskId);
         } else {
             new TaskQueue(activeProject, activeLedger).retry(taskId);
+        }
+        if (activeProject != null) {
+            layerScheduler.clearFailed(activeProject.id);
         }
     }
 
     public void resetQueue(String taskIdOrNull) {
         ensureLoaded();
-        if (scheduler.queue() != null && scheduler.queue().project() == activeProject) {
-            scheduler.resetQueue(taskIdOrNull);
+        PriorityScheduler cur = scheduler();
+        if (cur.queue() != null && cur.queue().project() == activeProject) {
+            cur.resetQueue(taskIdOrNull);
         } else {
             new TaskQueue(activeProject, activeLedger).reset(taskIdOrNull);
+        }
+        if (activeProject != null) {
+            layerScheduler.clearFailed(activeProject.id);
         }
     }
 
@@ -395,7 +638,8 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
         if (mc == null || mc.level == null) return -1;
         if (mc.level.dimension() != Level.OVERWORLD) return -1;
         if (mc.level.isDarkOutside()) return 0;
-        if (activeProject != null && activeProject.survival.sleepWeather && mc.level.isThundering()) return 0;
+        Project exec = currentExecutionProject();
+        if (exec != null && exec.survival.sleepWeather && mc.level.isThundering()) return 0;
         long time = mc.level.getOverworldClockTime() % 24000L;
         if (time >= 12542L && time < 23460L) return 0;
         if (time < 12542L) return (int) (12542L - time);
@@ -589,7 +833,7 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
     @Override
     public PriorityScheduler.ActionHandle startBaseTrip(LogisticsPlanner.BaseTripPlan plan) {
         if (plan == null || plan.isEmpty() || baseTripCooldownTicks > 0) return null;
-        Project proj = activeProject;
+        Project proj = currentExecutionProject();
         if (proj == null) return null;
         proj.ensureInitialized();
 
@@ -683,7 +927,7 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
     public PriorityScheduler.ActionHandle startTask(ProjectTask task, ScopedOverrides overrides) {
         if (task == null) return null;
         task.ensureInitialized();
-        Project proj = activeProject;
+        Project proj = currentExecutionProject();
         if (proj == null) return null;
         RuntimeBus.emit(RuntimeEvent.Type.TASK_START, RuntimeEvent.Category.WORK,
                 "GameProjectRuntime", task.kind + ": " + task.displayLabel());
@@ -773,6 +1017,7 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
 
     @Override
     public void onQueueComplete(boolean success, String summary, boolean logoff) {
+        runningProject = null;
         if (!success) {
             IncidentBundle.captureAndWrite("queue_failed", summary);
         }
@@ -983,7 +1228,7 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
         QueueMod.projectSetOption("buildtools.treeZoneDiameter", (double) Math.max(3, p.survival.treeZoneDiameter));
         QueueMod.projectSetOption("buildtools.showTreeZones", p.survival.showTreeZones);
         QueueMod.projectSetOption("loadchest.auto", false);
-        QueueMod.projectSetOption("loadchest.pickup", false);
+        QueueMod.projectSetOption("loadchest.pickup", p.survival.pickupEnabled);
 
         // Sync survival thresholds & recovery options
         QueueMod.projectSetOption("survival.eatBelow", (double) p.survival.eatFoodBelow);
@@ -1082,28 +1327,93 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
 
     // ------------------------------------------------------------------ internals & helpers
 
-    private void ensureLoaded() {
+    private void ensureWorldCacheValid() {
         String world = currentWorld();
-        if (activeProject != null && world.equals(loadedWorld)) {
+        if (!world.equals(loadedWorld)) {
+            loadedWorld = world;
+            projectCache.clear();
+            ledgerCache.clear();
+            projectQueue = ProjectStore.loadQueue(projectsDir(), world);
+            activeProject = null;
+            activeLedger = null;
+        }
+    }
+
+    private void ensureLoaded() {
+        ensureWorldCacheValid();
+        if (projectQueue == null) {
+            projectQueue = ProjectStore.loadQueue(projectsDir(), loadedWorld);
+        }
+        if (activeProject != null) {
             return;
         }
-        loadedWorld = world;
+        String world = loadedWorld;
         Path dir = projectsDir();
         String activeId = ProjectStore.activeId(dir, world);
-        Project p = activeId != null ? ProjectStore.load(dir, world, activeId) : null;
+        Project p = activeId != null ? loadProjectCached(activeId) : null;
         if (p == null) {
             List<String> ids = ProjectStore.list(dir, world);
             if (!ids.isEmpty()) {
-                p = ProjectStore.load(dir, world, ids.get(0));
+                p = loadProjectCached(ids.get(0));
             }
         }
         if (p == null) {
             p = ProjectStore.createDefault(world, "default", "Default");
             ProjectStore.save(dir, p);
+            projectCache.put(p.id, p);
         }
         ProjectStore.setActiveId(dir, world, p.id);
         this.activeProject = p;
-        this.activeLedger = QueueMod.projectOpenLedger(world, p.id);
+        this.activeLedger = loadLedgerCached(p.id);
+    }
+
+    private Project currentExecutionProject() {
+        Project r = runningProject();
+        return r != null ? r : activeProject;
+    }
+
+    private void resetRuntimeCooldowns() {
+        eatCooldownTicks = 0;
+        sleepCooldownTicks = 0;
+        baseTripCooldownTicks = 0;
+        baseTripFailStreak = 0;
+        emergencyCooldownTicks = 0;
+        dev.survivalkit.Api.resetRestockBackoff();
+    }
+
+    private final class LayerHost implements ProjectLayerScheduler.Host {
+        @Override
+        public Project loadProject(String projectId) {
+            return loadProjectCached(projectId);
+        }
+
+        @Override
+        public TaskQueue.TaskLedger loadLedger(String projectId) {
+            return loadLedgerCached(projectId);
+        }
+
+        @Override
+        public void activateProject(Project project) {
+            runningProject = project;
+            resetRuntimeCooldowns();
+            GameProjectRuntime.this.activateProject(project);
+        }
+
+        @Override
+        public void deactivateProject(Project project) {
+            runningProject = null;
+            GameProjectRuntime.this.deactivateProject();
+        }
+
+        @Override
+        public void onAllComplete(boolean success, String summary, boolean logoff) {
+            onQueueComplete(success, summary, logoff);
+        }
+
+        @Override
+        public void onLog(String message) {
+            GameProjectRuntime.this.onLog(message);
+        }
     }
 
     private static Path projectsDir() {
