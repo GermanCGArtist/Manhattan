@@ -117,7 +117,7 @@ public class ChunkRunnerTest {
     }
 
     private static Path freshLedger(String name) throws Exception {
-        Path dir = Files.createTempDirectory("manhattan-chunk-test");
+        Path dir = TestDirs.create("manhattan-chunk-test");
         Path file = dir.resolve(name + ".json");
         Jobs.useLedger(Ledger.load(file));
         Jobs.startRun("test");

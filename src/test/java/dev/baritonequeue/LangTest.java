@@ -105,7 +105,7 @@ public class LangTest {
     /** The ledger file: save, load, states, reset, retry; the job queue's description and ids. */
     static void ledger() {
         try {
-            java.nio.file.Path dir = java.nio.file.Files.createTempDirectory("manhattan-ledger");
+            java.nio.file.Path dir = TestDirs.create("manhattan-ledger");
             java.nio.file.Path f = Ledger.fileFor(dir, "my_world", "main");
             Ledger l = Ledger.load(f);
             same("ledger starts empty", l.size(), 0);
@@ -152,7 +152,7 @@ public class LangTest {
     /** job "name" ... end: skip when done, restore variables, FAILED on error, duplicate-name warning. */
     static void jobs() {
         try {
-            java.nio.file.Path dir = java.nio.file.Files.createTempDirectory("manhattan-jobs");
+            java.nio.file.Path dir = TestDirs.create("manhattan-jobs");
             java.nio.file.Path f = dir.resolve("jobs.json");
             Jobs.useLedger(Ledger.load(f));
             Jobs.startRun();
