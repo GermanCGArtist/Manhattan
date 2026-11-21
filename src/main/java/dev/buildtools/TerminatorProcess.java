@@ -152,7 +152,7 @@ public final class TerminatorProcess extends Feature {
                 }
             }
         } else {
-            boxes.addAll(dev.baritonequeue.Areas.read());
+            boxes.addAll(dev.manhattan.Areas.read());
             if (boxes.isEmpty() && Config.cfg.corner1 != null && Config.cfg.corner2 != null) {
                 boxes.add(new int[]{
                         Math.min(Config.cfg.corner1[0], Config.cfg.corner2[0]), Math.min(Config.cfg.corner1[1], Config.cfg.corner2[1]), Math.min(Config.cfg.corner1[2], Config.cfg.corner2[2]),

@@ -4,7 +4,7 @@ import net.minecraft.world.item.Item;
 
 import static dev.buildtools.Config.cfg;
 
-/** What the script (dev.baritonequeue) may call. Each start method returns an error text, or null when it started. */
+/** What the script (dev.manhattan) may call. Each start method returns an error text, or null when it started. */
 public final class Api {
     private Api() {}
 

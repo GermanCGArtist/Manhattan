@@ -1,6 +1,6 @@
 {
   "required": true,
-  "package": "dev.baritonequeue.mixin",
+  "package": "dev.manhattan.mixin",
   "compatibilityLevel": "JAVA_25",
   "client": [
     "RenderSystemMixin",

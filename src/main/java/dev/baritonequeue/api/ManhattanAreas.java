@@ -1,6 +1,6 @@
 package dev.baritonequeue.api;
 
-import dev.baritonequeue.Areas;
+import dev.manhattan.Areas;
 import dev.buildtools.Api;
 import net.minecraft.client.Minecraft;
 
@@ -15,6 +15,9 @@ import java.util.function.BiConsumer;
  * Public API for Heavymatica (optional addon) to push, query, select, and remove named areas in Manhattan.
  * <p>
  * All methods must be called on the Minecraft client thread.
+ * <p>
+ * This class keeps its old package {@code dev.baritonequeue.api} although the rest of the mod moved to
+ * {@code dev.manhattan}: Heavymatica finds it by reflection under exactly this name. Do not move it.
  */
 public final class ManhattanAreas {
 

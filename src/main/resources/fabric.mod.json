@@ -9,7 +9,7 @@
   "license": "MIT",
   "environment": "client",
   "entrypoints": {
-    "client": ["dev.baritonequeue.QueueMod", "dev.survivalkit.SurvivalKitMod", "dev.buildtools.BuildToolsMod", "dev.loadchest.LoadChestMod"]
+    "client": ["dev.manhattan.QueueMod", "dev.survivalkit.SurvivalKitMod", "dev.buildtools.BuildToolsMod", "dev.loadchest.LoadChestMod"]
   },
   "mixins": [
     "manhattan.mixins.json"

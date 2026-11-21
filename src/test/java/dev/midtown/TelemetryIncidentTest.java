@@ -1,8 +1,8 @@
 package dev.midtown;
 
-import dev.baritonequeue.IncidentBundle;
-import dev.baritonequeue.project.Project;
-import dev.baritonequeue.project.ProjectTask;
+import dev.manhattan.IncidentBundle;
+import dev.manhattan.project.Project;
+import dev.manhattan.project.ProjectTask;
 import dev.midtown.api.RuntimeBus;
 import dev.midtown.api.RuntimeEvent;
 import dev.midtown.api.TelemetryProfiler;

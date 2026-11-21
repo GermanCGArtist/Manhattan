@@ -99,7 +99,7 @@ public class LoadChestMod implements ClientModInitializer {
 
     static LoadChestMod INSTANCE;
 
-    // ------------------------------------------------------------------ for the script (dev.baritonequeue)
+    // ------------------------------------------------------------------ for the script (dev.manhattan)
 
     /** Walks to the LoadChest chest (or the given one, or the nearest) and empties the inventory. False if it could not start. */
     public static boolean unloadNow(String filter, BlockPos at) {
@@ -909,7 +909,7 @@ public class LoadChestMod implements ClientModInitializer {
                 || dev.survivalkit.Api.eating()
                 || dev.survivalkit.Api.busy()
                 || dev.buildtools.Api.busy()
-                || dev.baritonequeue.ClearProcess.isClearWorking()
+                || dev.manhattan.ClearProcess.isClearWorking()
                 || dev.midtown.api.RuntimeBus.currentStep() != null
                 || dev.midtown.api.RuntimeBus.isRecovering()
                 || (mc != null && mc.screen != null);

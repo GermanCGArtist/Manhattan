@@ -1,6 +1,6 @@
 package dev.buildtools;
 
-import dev.baritonequeue.ClearProcess;
+import dev.manhattan.ClearProcess;
 import dev.midtown.api.EngineSelector;
 import dev.midtown.api.EngineStatus;
 import dev.midtown.api.GoalSpec;

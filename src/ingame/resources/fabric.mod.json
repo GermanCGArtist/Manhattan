@@ -8,7 +8,7 @@
   "environment": "client",
   "entrypoints": {
     "client": [
-      "dev.baritonequeue.TestBridge"
+      "dev.manhattan.TestBridge"
     ]
   },
   "depends": {

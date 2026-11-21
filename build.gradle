@@ -83,13 +83,13 @@ tasks.register('langTest', JavaExec) {
     group = 'verification'
     description = 'Runs the script language through the real parser and interpreter.'
     classpath = sourceSets.test.runtimeClasspath
-    mainClass = 'dev.baritonequeue.LangTest'
+    mainClass = 'dev.manhattan.LangTest'
 }
 tasks.register('parseScripts', JavaExec) {
     group = 'verification'
     description = 'Checks that every scripts/*.txt parses.'
     classpath = sourceSets.test.runtimeClasspath
-    mainClass = 'dev.baritonequeue.ParseFile'
+    mainClass = 'dev.manhattan.ParseFile'
     def scripts = fileTree('scripts') { include '*.txt' }
     inputs.files scripts
     argumentProviders.add({ scripts.files.collect { it.absolutePath } } as CommandLineArgumentProvider)
@@ -104,19 +104,19 @@ tasks.register('chunkGridTest', JavaExec) {
     group = 'verification'
     description = 'Runs ChunkGrid offline unit tests.'
     classpath = sourceSets.test.runtimeClasspath
-    mainClass = 'dev.baritonequeue.ChunkGridTest'
+    mainClass = 'dev.manhattan.ChunkGridTest'
 }
 tasks.register('chunkRunnerTest', JavaExec) {
     group = 'verification'
     description = 'Runs ChunkRunner offline unit tests.'
     classpath = sourceSets.test.runtimeClasspath
-    mainClass = 'dev.baritonequeue.ChunkRunnerTest'
+    mainClass = 'dev.manhattan.ChunkRunnerTest'
 }
 tasks.register('nativesTest', JavaExec) {
     group = 'verification'
     description = 'Checks the ImGui native library mapping, bundling and loading.'
     classpath = sourceSets.test.runtimeClasspath
-    mainClass = 'dev.baritonequeue.ImGuiNativesTest'
+    mainClass = 'dev.manhattan.ImGuiNativesTest'
 }
 tasks.register('midtownBodyTest', JavaExec) {
     group = 'verification'
@@ -128,7 +128,7 @@ tasks.register('projectQueueTest', JavaExec) {
     group = 'verification'
     description = 'Runs Project, TaskQueue, LogisticsPlanner, and PriorityScheduler offline unit tests.'
     classpath = sourceSets.test.runtimeClasspath
-    mainClass = 'dev.baritonequeue.ProjectQueueTest'
+    mainClass = 'dev.manhattan.ProjectQueueTest'
 }
 tasks.register('telemetryIncidentTest', JavaExec) {
     group = 'verification'

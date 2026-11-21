@@ -124,7 +124,7 @@ public final class DrainProcess extends Feature {
         if (explicitBoxes != null && !explicitBoxes.isEmpty()) {
             return explicitBoxes;
         }
-        List<int[]> boxes = new ArrayList<>(dev.baritonequeue.Areas.read());
+        List<int[]> boxes = new ArrayList<>(dev.manhattan.Areas.read());
         if (boxes.isEmpty() && cfg.corner1 != null && cfg.corner2 != null) {
             boxes.add(new int[]{
                     Math.min(cfg.corner1[0], cfg.corner2[0]), Math.min(cfg.corner1[1], cfg.corner2[1]), Math.min(cfg.corner1[2], cfg.corner2[2]),
@@ -141,7 +141,7 @@ public final class DrainProcess extends Feature {
         Level level = mc.level;
         List<int[]> boxes = boxes(p);
         boolean hasSelection = (explicitBoxes != null && !explicitBoxes.isEmpty())
-                || dev.baritonequeue.Areas.any()
+                || dev.manhattan.Areas.any()
                 || (cfg.corner1 != null && cfg.corner2 != null);
         List<Task> dams = new ArrayList<>();
         List<Task> plugs = new ArrayList<>();

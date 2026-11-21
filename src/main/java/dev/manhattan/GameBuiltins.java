@@ -1,0 +1,1328 @@
+package dev.manhattan;
+
+import dev.manhattan.Values.Pos;
+import dev.buildtools.DrainProcess;
+import dev.buildtools.FillProcess;
+import dev.buildtools.TerminatorProcess;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.resources.Identifier;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
+
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import static dev.manhattan.Builtins.def;
+import static dev.manhattan.Builtins.getter;
+import static dev.manhattan.Builtins.toPos;
+import static dev.manhattan.Config.cfg;
+import static dev.manhattan.Values.error;
+import static dev.manhattan.Values.str;
+import static dev.manhattan.Values.toInt;
+import static dev.manhattan.Values.toNum;
+
+/** The script functions that look at or act in the game. The ones that take time wait until they are finished. */
+final class GameBuiltins {
+    private GameBuiltins() {}
+
+    /** {selection or null, mode, "skip"|"strict"} from schem_*(n, "mode", "strict") in any order. */
+    private static String[] schemArgs(List<Object> a, String fn, int line, String defaultMode) {
+        String sel = null, mode = defaultMode, missing = "skip";
+        for (Object o : a) {
+            if (o == null) continue;
+            String s = o instanceof Double d ? String.valueOf((int) Math.floor(d)) : str(o);
+            if (Schem.Mode.of(s) != null) mode = s.toLowerCase();
+            else if (s.equalsIgnoreCase("all") || s.matches("[0-9]+")) sel = s;
+            else if (s.equalsIgnoreCase("skip") || s.equalsIgnoreCase("strict")) missing = s.toLowerCase();
+            else if (sel == null && !s.isBlank()) sel = s;   // a placement name
+            else throw error(fn + ": '" + s + "' is neither a placement (number or name), \"all\", a mode (add, fix, exact), nor \"skip\" / \"strict\".", line);
+        }
+        return new String[]{sel, mode, missing};
+    }
+
+    private static void schem() {
+        String g = "schem";
+        def(g, "schem_list", 0, 0, "schem_list()", "list the Litematica placements in chat; returns how many there are", (in, a, l) -> (double) SchemCmd.list());
+        def(g, "schem_materials", 0, 2, "schem_materials([n | \"name\" | \"all\"] [, mode])", "print the items still needed for the placement (minus what is built); returns how many items the inventory lacks", (in, a, l) -> {
+            String[] sm = schemArgs(a, "schem_materials()", l, "fix");
+            return (double) SchemCmd.materials(sm[0], Schem.Mode.of(sm[1]));
+        });
+        def(g, "schem_needed", 0, 2, "schem_needed([n | \"name\" | \"all\"] [, mode])", "the items the placement still needs (minus what is built, not minus the inventory): a map item -> count", (in, a, l) -> {
+            String[] sm = schemArgs(a, "schem_needed()", l, "fix");
+            String[] err = new String[1];
+            var pls = SchemCmd.select(sm[0], err);
+            if (pls == null) throw error(err[0], l);
+            Schem.Plan plan = Schem.plan(pls, err);
+            if (plan == null) throw error(err[0], l);
+            Schem.Counts c = Schem.count(plan, Schem.Mode.of(sm[1]), level(l));
+            Map<Object, Object> out = Values.newMap();
+            c.items.forEach((it, n) -> out.put(Schem.itemName(it), (double) n));
+            return out;
+        });
+        def(g, "schem_check", 0, 2, "schem_check([n | \"name\" | \"all\"] [, mode])", "print what differs between the schematic and the world; returns the blocks that still need work", (in, a, l) -> {
+            String[] sm = schemArgs(a, "schem_check()", l, "fix");
+            return (double) SchemCmd.check(sm[0], Schem.Mode.of(sm[1]));
+        });
+        def(g, "schem_left", 0, 1, "schem_left([\"reset\"])", "print how many blocks of the schematics built so far are still NOT there, over all schem_build() calls (also in sections no longer loaded), grouped by reason (no material, water in the cell, nothing to place against, not reached); returns that number (0 = everything is built). \"reset\" forgets the list", (in, a, l) ->
+                (double) QueueMod.schem.reportLeft(!a.isEmpty() && "reset".equals(a.get(0))));
+        def(g, "schem_stop", 0, 0, "schem_stop()", "stop the running schematic build", (in, a, l) -> (double) SchemCmd.stop());
+    }
+
+    private static LocalPlayer player(int line) {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc == null || mc.player == null) throw error("Not in a world.", line);
+        return mc.player;
+    }
+
+    private static Level level(int line) {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc == null || mc.level == null) throw error("Not in a world.", line);
+        return mc.level;
+    }
+
+    static Item item(Object v, String fn, int line) {
+        if (!(v instanceof String s)) throw error(fn + " needs an item name in quotes, for example \"dirt\".", line);
+        Item it = ChestOp.itemOf(s);
+        if (it == null) throw error("'" + s + "' is not an item name (for example \"dirt\", \"cobblestone\", \"oak_log\").", line);
+        return it;
+    }
+
+    static Block block(String s, int line) {
+        String w = s.toLowerCase().trim();
+        Identifier id = Identifier.tryParse(w.contains(":") ? w : "minecraft:" + w);
+        if (id == null || !BuiltInRegistries.BLOCK.containsKey(id)) throw error("'" + s + "' is not a block name.", line);
+        return BuiltInRegistries.BLOCK.getValue(id);
+    }
+
+    /** A chest given as pos(...) or as the name of a chest saved with /queue chest set. */
+    private static Object[] chest(Object v, String fn, int line) {
+        if (v instanceof Pos p) return new Object[]{p.block(), "at " + p};
+        if (v instanceof String name) {
+            int[] c = cfg.chests.get(name.toLowerCase());
+            if (c == null) throw error("There is no saved chest '" + name + "'. Use a position instead: let " + name + " = pos(x, y, z)  (Pick block in the editor fills it in).", line);
+            return new Object[]{new BlockPos(c[0], c[1], c[2]), "'" + name + "' (" + c[0] + " " + c[1] + " " + c[2] + ")"};
+        }
+        throw error(fn + " needs the chest first: a position like pos(100, 64, -20).", line);
+    }
+
+    private static int count(LocalPlayer p, String what) {
+        int n = 0;
+        String w = what.toLowerCase();
+        if (w.equals("food") || w.equals("@food")) {   // anything edible, like want("food") and hotbar(9, "food")
+            for (int k = 0; k < 36; k++) if (matchesItem(p.getInventory().getItem(k), "food")) n += p.getInventory().getItem(k).getCount();
+            return n;
+        }
+        for (int k = 0; k < 36; k++) {
+            ItemStack st = p.getInventory().getItem(k);
+            if (st.isEmpty()) continue;
+            var id = BuiltInRegistries.ITEM.getKey(st.getItem());
+            if (w.contains(":") ? id.toString().equals(w) : id.getPath().equals(w)) n += st.getCount();
+        }
+        if (n == 0 && !w.contains(":") && ChestOp.itemOf(w) == null) {   // "log" counts every kind of log
+            for (int k = 0; k < 36; k++) {
+                ItemStack st = p.getInventory().getItem(k);
+                if (!st.isEmpty() && BuiltInRegistries.ITEM.getKey(st.getItem()).getPath().contains(w)) n += st.getCount();
+            }
+        }
+        return n;
+    }
+
+    /** "food" = anything edible; otherwise the item id contains the word ("pickaxe", "diamond_sword"). */
+    private static boolean matchesItem(ItemStack st, String want) {
+        if (st.isEmpty()) return false;
+        if (want.equals("food")) return st.has(net.minecraft.core.component.DataComponents.FOOD);
+        String id = BuiltInRegistries.ITEM.getKey(st.getItem()).toString();
+        return want.contains(":") ? id.equals(want) : id.substring(id.indexOf(':') + 1).contains(want);
+    }
+
+    private static boolean night() {
+        Level level = Minecraft.getInstance().level;
+        if (level == null || level.dimension() != Level.OVERWORLD) return false;
+        long t = level.getOverworldClockTime() % 24000L;
+        return t >= 12542 && t < 23460;
+    }
+
+    private static List<Object> strings(List<Object> a, int from) {
+        List<Object> out = new ArrayList<>();
+        for (int i = from; i < a.size(); i++) {
+            if (a.get(i) instanceof List<?> l) out.addAll(l);
+            else out.add(a.get(i));
+        }
+        return out;
+    }
+
+    /** Every cell of the selection, a slice per tick, counting those that match. */
+    private static double countInSelection(Interp in, java.util.function.Predicate<net.minecraft.world.level.block.state.BlockState> test, int line) {
+        Level level = level(line);
+        List<int[]> sels = Areas.read();
+        if (sels.isEmpty()) throw error("There is no selection. Select an area first: area(\"name\") or select(corner1, corner2).", line);
+        long n = 0, seen = 0;
+        BlockPos.MutableBlockPos m = new BlockPos.MutableBlockPos();
+        for (int[] s : sels) {
+            for (int x = s[0]; x <= s[3]; x++) {
+                for (int z = s[2]; z <= s[5]; z++) {
+                    for (int y = s[1]; y <= s[4]; y++) {
+                        m.set(x, y, z);
+                        if (++seen % 40000 == 0) in.yieldTick();
+                        if (level.hasChunkAt(m) && test.test(level.getBlockState(m))) n++;
+                    }
+                }
+            }
+        }
+        return (double) n;
+    }
+
+    static void register() {
+        info();
+        actions();
+        chests();
+        areas();
+        helpers();
+        settings();
+        schem();
+        projects();
+    }
+
+    // ------------------------------------------------------------------ what the player and the world look like
+
+    private static void info() {
+        String g = "world";
+        def(g, "pos", 0, 3, "pos(x, y, z) | pos()", "a position; pos() alone is where you stand", (in, a, l) -> {
+            if (a.isEmpty()) return Pos.of(player(l).blockPosition());
+            if (a.size() != 3) throw error("pos needs x, y and z: pos(100, 64, -20)", l);
+            return new Pos(toInt(a.get(0), "x", l), toInt(a.get(1), "y", l), toInt(a.get(2), "z", l));
+        });
+        getter(g, "here", "where you stand, as a position", (in, a, l) -> Pos.of(player(l).blockPosition()));
+        getter(g, "health", "your health, 0 to 20", (in, a, l) -> (double) player(l).getHealth());
+        getter(g, "food", "your food bar, 0 to 20", (in, a, l) -> (double) player(l).getFoodData().getFoodLevel());
+        getter(g, "night", "true at night (in the overworld)", (in, a, l) -> night());
+        getter(g, "day", "true by day (always outside the overworld)", (in, a, l) -> !night());
+        getter(g, "raining", "true while it rains", (in, a, l) -> level(l).isRaining());
+        getter(g, "thundering", "true during a thunderstorm", (in, a, l) -> level(l).isThundering());
+        getter(g, "daytime", "the time of day in ticks, 0 to 23999 (0 = morning, 13000 = dusk)", (in, a, l) -> (double) (level(l).getOverworldClockTime() % 24000L));
+        getter(g, "dimension", "\"overworld\", \"the_nether\" or \"the_end\"", (in, a, l) -> {
+            var d = level(l).dimension();
+            return d == Level.OVERWORLD ? "overworld" : d == Level.NETHER ? "the_nether" : d == Level.END ? "the_end" : String.valueOf(d);
+        });
+        getter(g, "full", "true when no inventory slot is free", (in, a, l) -> {
+            LocalPlayer p = player(l);
+            for (int k = 0; k < 36; k++) if (p.getInventory().getItem(k).isEmpty()) return false;
+            return true;
+        });
+        getter(g, "free_slots", "how many inventory slots are empty", (in, a, l) -> {
+            LocalPlayer p = player(l);
+            int n = 0;
+            for (int k = 0; k < 36; k++) if (p.getInventory().getItem(k).isEmpty()) n++;
+            return (double) n;
+        });
+        getter(g, "busy", "true while Baritone works on a task", (in, a, l) -> Util.baritoneBusy());
+        getter(g, "mobs", "hostile mobs within 7 blocks that are worth fighting", (in, a, l) -> (double) dev.survivalkit.Api.threats(7));
+        def(g, "mobs_near", 1, 1, "mobs_near(blocks)", "hostile mobs within that many blocks", (in, a, l) -> (double) dev.survivalkit.Api.threats(toNum(a.get(0), "mobs_near()", l)));
+        getter(g, "restock_needed", "true when a tool is worn out or something on the want-list is below half", (in, a, l) -> dev.survivalkit.Api.restockNeeded());
+        getter(g, "bed_time", "true at night or in a thunderstorm, or when it is time to leave to reach the bed before dusk", (in, a, l) -> dev.survivalkit.Api.bedTime());
+        getter(g, "looking", "the block you look at, as a position (null if none)", (in, a, l) -> {
+            var hit = Minecraft.getInstance().hitResult;
+            return hit instanceof BlockHitResult b && hit.getType() == HitResult.Type.BLOCK ? Pos.of(b.getBlockPos()) : null;
+        });
+        def(g, "count", 1, 1, "count(\"item\")", "how many of it you carry (\"log\" counts every log)", (in, a, l) -> (double) count(player(l), str(a.get(0))));
+        def(g, "has", 1, 2, "has(\"item\" [, n])", "true if you carry at least n (default 1)", (in, a, l) ->
+                count(player(l), str(a.get(0))) >= (a.size() > 1 ? toNum(a.get(1), "has()", l) : 1));
+        def(g, "block", 1, 3, "block(position)", "the block there, like \"stone\" or \"water\"", (in, a, l) -> {
+            Pos p = toPos(a, 0, "block()", l);
+            Level level = level(l);
+            if (!level.hasChunkAt(p.block())) return null;
+            return BuiltInRegistries.BLOCK.getKey(level.getBlockState(p.block()).getBlock()).getPath();
+        });
+        def(g, "is_wet", 1, 3, "is_wet(position)", "true if the cell holds water and is not solid (water, seagrass, kelp ...)", (in, a, l) -> {
+            Pos p = toPos(a, 0, "is_wet()", l);
+            return dev.buildtools.Api.wet(level(l), p.block());
+        });
+        def(g, "dist", 1, 2, "dist(a [, b])", "blocks from you to a (or from a to b)", (in, a, l) -> {
+            Pos p = toPos(a, 0, "dist()", l);
+            if (a.size() > 1) {
+                Pos q = toPos(a, 1, "dist()", l);
+                return Math.sqrt(p.block().distSqr(q.block()));
+            }
+            var pl = player(l);
+            return Math.sqrt(pl.distanceToSqr(p.x() + 0.5, p.y() + 0.5, p.z() + 0.5));
+        });
+        def(g, "count_blocks", 1, -1, "count_blocks(\"block\", ...)", "how many of these blocks are in the selection", (in, a, l) -> {
+            Set<Block> wanted = new HashSet<>();
+            for (Object o : strings(a, 0)) wanted.add(block(str(o), l));
+            return countInSelection(in, st -> wanted.contains(st.getBlock()), l);
+        });
+        def(g, "water_left", 0, 0, "water_left()", "wet cells in the selection (water, seagrass, kelp ...)", (in, a, l) -> {
+            return countInSelection(in, st -> st.getFluidState().is(net.minecraft.tags.FluidTags.WATER) && !st.blocksMotion(), l);
+        });
+    }
+
+    // ------------------------------------------------------------------ things that take time
+
+    private static void actions() {
+        String g = "actions";
+        def(g, "wait", 1, 1, "wait(seconds)", "do nothing for a while (also: wait 30, wait until day)", (in, a, l) -> {
+            double s = toNum(a.get(0), "wait()", l);
+            return in.await(() -> new Actions.Wait(s), "wait " + Values.num(s) + " s", l);
+        });
+        def(g, "baritone", 1, -1, "baritone(\"command\")", "run a Baritone command and wait for it (same as a # line)", (in, a, l) -> {
+            List<String> parts = new ArrayList<>();
+            for (Object o : a) parts.add(str(o));
+            String c = String.join(" ", parts).trim();
+            if (c.startsWith("#")) c = c.substring(1).trim();
+            String cmd = c;
+            return in.await(() -> new Actions.BaritoneCommand(cmd), cmd, l);
+        });
+        def(g, "chat", 1, 1, "chat(\"/command\")", "run a chat command and wait for it (same as a / line)", (in, a, l) -> {
+            String c = str(a.get(0)).trim();
+            if (c.startsWith("/")) c = c.substring(1);
+            String cmd = c;
+            return in.await(() -> new Actions.ChatCommand(cmd), "/" + cmd, l);
+        });
+        def(g, "goto", 1, 3, "goto(position | x, z)", "walk to a position or (x, z) column with Midtown", (in, a, l) -> {
+            if (a.size() == 2 && !(a.get(0) instanceof Pos)) {
+                int x = toInt(a.get(0), "goto(x, z)", l);
+                int z = toInt(a.get(1), "goto(x, z)", l);
+                String cmd = "goto " + x + " " + z;
+                return in.await(() -> new Actions.BaritoneCommand(cmd), cmd, l);
+            }
+            Pos p = toPos(a, 0, "goto()", l);
+            String cmd = "goto " + p;
+            return in.await(() -> new Actions.BaritoneCommand(cmd), cmd, l);
+        });
+        def(g, "mine", 1, -1, "mine(\"block\", ...)", "mine matching blocks with Midtown", (in, a, l) -> {
+            List<String> targets = new ArrayList<>();
+            for (Object o : a) targets.add(str(o));
+            String cmd = "mine " + String.join(" ", targets);
+            return in.await(() -> new Actions.BaritoneCommand(cmd), cmd, l);
+        });
+        def(g, "follow", 0, 1, "follow([\"name\"])", "walk to the nearest entity (optionally matching name) with Midtown", (in, a, l) -> {
+            LocalPlayer me = player(l);
+            Level lvl = level(l);
+            String filter = a.isEmpty() ? null : str(a.get(0)).toLowerCase();
+            net.minecraft.world.entity.Entity best = null;
+            double bestD = Double.MAX_VALUE;
+            for (var e : lvl.getEntities(me, me.getBoundingBox().inflate(32, 16, 32))) {
+                if (!e.isAlive()) continue;
+                if (filter != null && !e.getName().getString().toLowerCase().contains(filter)) continue;
+                double d = e.distanceToSqr(me);
+                if (d < bestD) { bestD = d; best = e; }
+            }
+            if (best == null) throw error("No matching entity nearby for follow().", l);
+            BlockPos dest = best.blockPosition();
+            String cmd = "goto " + dest.getX() + " " + dest.getY() + " " + dest.getZ();
+            return in.await(() -> new Actions.BaritoneCommand(cmd), "follow " + best.getName().getString(), l);
+        });
+        def(g, "tunnel", 0, 1, "tunnel([blocks])", "dig a tunnel forward (default 16 blocks) with Midtown", (in, a, l) -> {
+            LocalPlayer me = player(l);
+            int dist = a.isEmpty() ? 16 : Math.max(1, toInt(a.get(0), "tunnel()", l));
+            net.minecraft.core.Direction dir = me.getDirection();
+            BlockPos dest = me.blockPosition().relative(dir, dist);
+            dev.midtown.api.EngineSelector.current().setAllowBreak(true);
+            String cmd = "goto " + dest.getX() + " " + dest.getY() + " " + dest.getZ();
+            return in.await(() -> new Actions.BaritoneCommand(cmd), "tunnel " + dist, l);
+        });
+        def(g, "cancel", 0, 0, "cancel()", "stop whatever the path engine is doing (like #stop, but the script goes on)", (in, a, l) -> {
+            dev.midtown.api.EngineSelector.current().cancel();
+            return null;
+        });
+        def(g, "disconnect", 0, 1, "disconnect([reason])", "stop the script cleanly and disconnect from the server", (in, a, l) -> {
+            String reason = a.isEmpty() || a.get(0) == null ? "Script disconnected." : str(a.get(0));
+            if (in.runner() != null) {
+                in.runner().reset();
+            }
+            dev.survivalkit.Api.disconnect(reason);
+            return null;
+        });
+
+        // --- water
+        def(g, "fill_water", 0, 3, "fill_water([\"block\" [, chest [, per_trip]]])", "fill the water of the selection from dry ground, every column from the bottom up; with a chest it fetches more blocks whenever they run out (per_trip, default 512); returns the water left (0 = all done)", (in, a, l) -> {
+            Item it = a.isEmpty() || a.get(0) == null ? null : item(a.get(0), "fill_water()", l);
+            Object[] chest = a.size() > 1 && a.get(1) != null ? chest(a.get(1), "fill_water()", l) : null;
+            if (chest != null && it == null) throw error("fill_water with a chest needs the block too: fill_water(\"dirt\", chest)", l);
+            int trip = a.size() > 2 ? Math.max(1, toInt(a.get(2), "per_trip", l)) : 512;
+            String text = "fill_water" + (it == null ? "" : " " + ChestOp.name(it));
+            List<int[]> initialBoxes = Areas.read();
+            if (ChunkGrid.shouldChunk(initialBoxes, cfg.chunkSize, cfg.chunkEnabled)) {
+                String blockName = it == null ? null : ChestOp.name(it);
+                BlockPos chestPos = chest == null ? null : (BlockPos) chest[0];
+                String chestLabel = chest == null ? null : (String) chest[1];
+                Object r = in.await(() -> new ChunkRunner(new ChunkRunner.ChunkWorkload() {
+                    @Override public String actionKind() { return "fill_water"; }
+                    @Override public boolean usesSelectionNarrowing() { return false; }
+                    @Override public List<int[]> fullBounds() { return initialBoxes; }
+                    @Override public Actions.Action createChunkAction(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
+                        Minecraft mc = Minecraft.getInstance();
+                        if (mc != null && mc.level != null && TerminatorProcess.countWater(mc.level, clippedBoxes) == 0) {
+                            return new Actions.Now(() -> 0.0);
+                        }
+                        return fillWaterChunkAction(it, blockName, chestPos, chestLabel, trip, clippedBoxes);
+                    }
+                    @Override public int countRemaining(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
+                        Minecraft mc = Minecraft.getInstance();
+                        return mc == null || mc.level == null ? 0 : TerminatorProcess.countWater(mc.level, clippedBoxes);
+                    }
+                    @Override public Map<String, Integer> requiredItems(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
+                        if (blockName == null) return Map.of();
+                        Minecraft mc = Minecraft.getInstance();
+                        int waterCount = mc == null || mc.level == null ? 0 : TerminatorProcess.countWater(mc.level, clippedBoxes);
+                        return waterCount > 0 ? Map.of(blockName, waterCount) : Map.of();
+                    }
+                }), text, l);
+                if (r instanceof Double d) return d;
+                Minecraft mc = Minecraft.getInstance();
+                return mc == null || mc.level == null ? 0.0 : (double) TerminatorProcess.countWater(mc.level, initialBoxes);
+            }
+            int trips = 0, rounds = 0;
+            while (true) {
+                if (chest != null && count(player(l), ChestOp.name(it)) == 0) {   // nothing to fill with: fetch first
+                    ChestOp op = new ChestOp((String) chest[1], ChestOp.Kind.GET, it, trip, true);
+                    Object got;
+                    try {
+                        got = in.await(() -> new Actions.Chest(op, (BlockPos) chest[0]), "fetch " + ChestOp.name(it), l);
+                    } catch (Values.ScriptError e) {
+                        Util.msg("fill_water: could not fetch more " + ChestOp.name(it) + " (" + e.getMessage() + ")");
+                        return (double) dev.buildtools.Api.lastFill()[1];
+                    }
+                    if (got instanceof Double d && d == 0 && count(player(l), ChestOp.name(it)) == 0) {
+                        Util.msg("fill_water: the chest gave no " + ChestOp.name(it) + ".");
+                        return (double) dev.buildtools.Api.lastFill()[1];
+                    }
+                    trips++;
+                }
+                Object r = in.await(() -> new Actions.Feature(
+                        () -> dev.buildtools.Api.fillWater(it),
+                        dev.buildtools.Api::fillingWater,
+                        dev.buildtools.Api::stopFillingWater,
+                        () -> (double) dev.buildtools.Api.lastFill()[1]).withEstimate(Estimate.water()), text, l);
+                double left = r instanceof Double d ? d : 0;
+                if (left == 0) return left;
+                if (dev.buildtools.Api.fillRanOut()) {
+                    if (chest == null || trips > 200) return left;
+                    Util.msg("Out of " + ChestOp.name(it) + " with " + Values.num(left) + " water left: fetching more.");
+                    continue;
+                }
+                // not out of blocks: what got filled may have opened new ways; go again while a round gets anything done
+                if (dev.buildtools.Api.lastFill()[0] == 0 || ++rounds > 30) {
+                    Util.msg("fill_water: " + Values.num(left) + " water cells left that it cannot get at.");
+                    return left;
+                }
+                Util.msg("Another round: " + Values.num(left) + " water left.");
+            }
+        });
+        def(g, "schem_build", 0, 3, "schem_build([n | \"name\" | \"all\"] [, \"add\" | \"fix\" | \"exact\"] [, \"skip\" | \"strict\"])", "build the Litematica placement n (or all enabled ones) with Baritone's builder, phase by phase (clear, full blocks, shaped, attached, redstone, power); add = only fill empty spots, fix = also replace wrong blocks, exact = also dig out schematic air; skip (default) = blocks you have no item for are left out and the rest is built, strict = stop when an item is missing; waits; returns the blocks still wrong (0 = done)", (in, a, l) -> {
+            String[] sm = schemArgs(a, "schem_build()", l, "add");
+            QueueMod.schem.skipMissing(!"strict".equals(sm[2]));
+            Schem.Mode mode = Schem.Mode.of(sm[1]);
+            Object r = in.await(() -> {
+                String[] err = new String[1];
+                var pls = SchemCmd.select(sm[0], err);
+                if (pls == null) {
+                    return new Actions.Feature(
+                            () -> err[0],
+                            QueueMod.schem::working,
+                            QueueMod.schem::cancel,
+                            () -> QueueMod.schem.failure() != null ? new Modules.Failure(QueueMod.schem.failure()) : (Object) QueueMod.schem.result())
+                            .resumable(QueueMod.schem::suspendRun, QueueMod.schem::carryOn);
+                }
+                SchemProcess.prepare(pls, mode);
+                List<int[]> bounds = SchemProcess.placementBounds(pls);
+                if (!ChunkGrid.shouldChunk(bounds, cfg.chunkSize, cfg.chunkEnabled)) {
+                    QueueMod.schem.setChunkBounds(null);
+                    return schemFeature(pls, mode, null);
+                }
+                return new ChunkRunner(new ChunkRunner.ChunkWorkload() {
+                    @Override public String actionKind() { return "schem_build"; }
+                    @Override public List<int[]> fullBounds() { return bounds; }
+                    @Override public boolean usesSelectionNarrowing() { return false; }
+                    @Override public void onChunkStart(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
+                        QueueMod.schem.setChunkBounds(chunk);
+                    }
+                    @Override public void onChunkEnd(ChunkGrid.ColumnBox chunk) {
+                        QueueMod.schem.setChunkBounds(null);
+                    }
+                    @Override public Actions.Action createChunkAction(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
+                        return schemFeature(pls, mode, chunk);
+                    }
+                    @Override public int countRemaining(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
+                        Minecraft mc = Minecraft.getInstance();
+                        return mc == null || mc.level == null ? 0 : SchemProcess.countRemainingIn(mc.level, chunk);
+                    }
+                    @Override public Map<String, Integer> requiredItems(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
+                        Minecraft mc = Minecraft.getInstance();
+                        return mc == null || mc.level == null ? Map.of() : SchemProcess.requiredItemsIn(mc.level, chunk);
+                    }
+                });
+            }, "schem_build", l);
+            return r instanceof Double d ? d : 0.0;
+        });
+        def(g, "clear_area", 0, 1, "clear_area([layers])", "mine out the selection from the top, 3 layers per pass (or 2: clear_area(2)), everything in reach at each stop, picking up drops on the way; returns the blocks left (finish those with #sel ca)", (in, a, l) -> {
+            int layers = a.isEmpty() ? 3 : toInt(a.get(0), "The layers of clear_area()", l);
+            return in.await(() -> {
+                List<int[]> boxes = Areas.read();
+                Shaft.current = Shaft.find(boxes);   // the stair shaft of this dig, if a "stairs" area lies in it
+                if (Shaft.current != null) Util.msg("Stair shaft '" + Shaft.current.name() + "' stays standing; its steps are carved as the hole gets deeper.");
+                if (!ChunkGrid.shouldChunk(boxes, cfg.chunkSize, cfg.chunkSizeY, cfg.chunkGap, cfg.chunkEnabled)) {
+                    return clearFeature(layers, null);
+                }
+                return new ChunkRunner(new ChunkRunner.ChunkWorkload() {
+                    @Override public String actionKind() { return "clear_area"; }
+                    @Override public boolean usesSelectionNarrowing() { return false; }
+                    @Override public boolean skipWhenEmpty() { return true; }
+                    @Override public List<int[]> fullBounds() { return boxes; }
+                    @Override public Actions.Action createChunkAction(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
+                        return clearFeature(layers, clippedBoxes);
+                    }
+                    @Override public int countRemaining(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
+                        Minecraft mc = Minecraft.getInstance();
+                        return mc == null || mc.level == null ? 0 : ClearProcess.countSolid(mc.level, clippedBoxes);
+                    }
+                }).withGeometry(cfg.chunkSizeY, cfg.chunkGap);
+            }, "clear_area", l);
+        });
+        def(g, "clear_trees", 0, 1, "clear_trees([chest])", "mine every tree in the selection, one by one, nearest first (logs, mangrove roots, huge mushrooms, vines, bee nests; leaves are left to decay), picking up the drops and taking the scaffolding down after each tree, then sweeping for saplings; with a chest, a full inventory and the end go into it; returns what was gained (item -> count)", (in, a, l) -> {
+            Object[] c = a.isEmpty() || a.get(0) == null ? null : chest(a.get(0), "clear_trees()", l);
+            return TreeClear.run(in, l, c == null ? null : (BlockPos) c[0], c == null ? null : (String) c[1]);
+        });
+        def(g, "drain", 0, 0, "drain()", "remove the flowing water that blocks the builder (selection, or 8 blocks around you)", (in, a, l) ->
+                in.await(() -> {
+                    List<int[]> boxes = Areas.read();
+                    if (!ChunkGrid.shouldChunk(boxes, cfg.chunkSize, cfg.chunkEnabled)) {
+                        return drainFeature(null);
+                    }
+                    return new ChunkRunner(new ChunkRunner.ChunkWorkload() {
+                        @Override public String actionKind() { return "drain"; }
+                        @Override public boolean usesSelectionNarrowing() { return false; }
+                        @Override public List<int[]> fullBounds() { return boxes; }
+                        @Override public Actions.Action createChunkAction(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
+                            return drainFeature(clippedBoxes);
+                        }
+                        @Override public int countRemaining(ChunkGrid.ColumnBox chunk, List<int[]> clippedBoxes) {
+                            Minecraft mc = Minecraft.getInstance();
+                            return mc == null || mc.level == null ? 0 : DrainProcess.countFluid(mc.level, clippedBoxes);
+                        }
+                    });
+                }, "drain", l));
+        def(g, "flood", 0, 0, "flood()", "fill the selection WITH water, using buckets (seals the open sides first)", (in, a, l) ->
+                // never chunked: sealing the open sides per chunk would wall off the water at chunk boundaries
+                in.await(GameBuiltins::floodFeature, "flood", l));
+        def(g, "collect_scaffold", 0, 0, "collect_scaffold()", "take down the blocks Baritone placed to reach things, and pick them up", (in, a, l) ->
+                in.await(() -> new Actions.Feature(dev.buildtools.Api::collectScaffoldNow, dev.buildtools.Api::collectingScaffold, dev.buildtools.Api::stopCollectingScaffold, () -> true), "collect_scaffold", l));
+
+        // --- survival
+        def(g, "sleep", 0, 0, "sleep()", "go to the saved bed and sleep (only at night)", (in, a, l) ->
+                in.await(() -> new Actions.Feature(dev.survivalkit.Api::sleepNow, dev.survivalkit.Api::sleeping, dev.survivalkit.Api::stopSleeping, () -> true), "sleep", l));
+        def(g, "defend", 0, 0, "defend()", "fight every hostile mob nearby until none is left (backs away from a creeper about to blow); false if there was none", (in, a, l) ->
+                in.await(() -> new Actions.Feature(dev.survivalkit.Api::defendNow, dev.survivalkit.Api::fighting, dev.survivalkit.Api::stopDefending, () -> true), "defend", l));
+        def(g, "restock", 0, 0, "restock()", "go to the supply chest and take what the want-list says", (in, a, l) ->
+                in.await(() -> new Actions.Feature(dev.survivalkit.Api::restockNow, dev.survivalkit.Api::restocking, dev.survivalkit.Api::stopRestocking, () -> true), "restock", l));
+        def(g, "eat", 0, 0, "eat()", "eat now (if the food bar is not full)", (in, a, l) ->
+                in.await(() -> new Actions.Feature(dev.survivalkit.Api::eatNow, dev.survivalkit.Api::eating, null, () -> true), "eat", l));
+        def(g, "unload", 0, 2, "unload([chest] [, \"filter\"])", "walk to a chest and put the inventory in, as LoadChest did (its keep rules apply)", (in, a, l) -> {
+            BlockPos at = a.isEmpty() || a.get(0) == null ? null : (BlockPos) chest(a.get(0), "unload()", l)[0];
+            String filter = a.size() > 1 && a.get(1) != null ? str(a.get(1)) : "";
+            return in.await(() -> new Actions.Feature(
+                    () -> dev.loadchest.LoadChestMod.unloadNow(filter, at) ? null : "Could not start the chest trip (no chest found? see the message above).",
+                    dev.loadchest.LoadChestMod::unloading, dev.loadchest.LoadChestMod::stopUnloading, () -> true), "unload", l);
+        });
+        def(g, "pickup", 0, 0, "pickup()", "pick up every dropped item nearby", (in, a, l) ->
+                in.await(() -> new Actions.Feature(() -> { dev.loadchest.LoadChestMod.pickupNow(); return null; },
+                        dev.loadchest.LoadChestMod::pickingUp, null, () -> true), "pickup", l));
+    }
+
+    static Actions.Action clearFeature(int layers, List<int[]> explicitBoxes) {
+        return new Actions.Feature(
+                () -> QueueMod.clear.begin(layers, explicitBoxes),
+                QueueMod.clear::working,
+                QueueMod.clear::cancel,
+                () -> QueueMod.clear.failure() != null ? new Modules.Failure(QueueMod.clear.failure()) : (Object) QueueMod.clear.result())
+                .resumable(QueueMod.clear::suspendRun, QueueMod.clear::carryOn)
+                .withEstimate(Estimate.solid());
+    }
+
+    static Actions.Action drainFeature(List<int[]> explicitBoxes) {
+        return new Actions.Feature(
+                () -> explicitBoxes == null ? dev.buildtools.Api.drainNow() : dev.buildtools.Api.drainNow(explicitBoxes),
+                dev.buildtools.Api::draining,
+                dev.buildtools.Api::stopDraining,
+                () -> true);
+    }
+
+    static Actions.Action floodFeature() {
+        return floodFeature(null);
+    }
+
+    static Actions.Action floodFeature(List<int[]> explicitBoxes) {
+        return new Actions.Feature(
+                () -> explicitBoxes == null ? dev.buildtools.Api.floodNow() : dev.buildtools.Api.floodNow(explicitBoxes),
+                dev.buildtools.Api::flooding,
+                dev.buildtools.Api::stopFlooding,
+                () -> {   // a stop with a reason (no water to refill from, cells out of reach ...) fails the script
+                    String why = dev.buildtools.Api.floodFailure();
+                    return why == null ? (Object) Boolean.TRUE : new Modules.Failure(why);
+                }).resumable(dev.buildtools.Api::pauseFlooding, dev.buildtools.Api::resumeFlooding);
+    }
+
+    static Actions.Action schemFeature(List<SchemSource.Placement> pls, Schem.Mode mode, ChunkGrid.ColumnBox bounds) {
+        return new Actions.Feature(
+                () -> {
+                    QueueMod.schem.setChunkBounds(bounds);
+                    return QueueMod.schem.begin(pls, mode);
+                },
+                QueueMod.schem::working,
+                QueueMod.schem::cancel,
+                () -> QueueMod.schem.failure() != null ? new Modules.Failure(QueueMod.schem.failure()) : (Object) QueueMod.schem.result())
+                .resumable(QueueMod.schem::suspendRun, QueueMod.schem::carryOn);
+    }
+
+    static Actions.Action fillWaterChunkAction(Item it, String blockName, BlockPos chestPos, String chestLabel, int trip, List<int[]> explicitBoxes) {
+        Actions.Action simple = new Actions.Feature(
+                () -> explicitBoxes == null ? dev.buildtools.Api.fillWater(it) : dev.buildtools.Api.fillWater(it, explicitBoxes),
+                dev.buildtools.Api::fillingWater,
+                dev.buildtools.Api::stopFillingWater,
+                () -> (double) dev.buildtools.Api.lastFill()[1]).withEstimate(Estimate.water());
+        if (chestPos == null || it == null || blockName == null) return simple;
+        return new Actions.Action() {
+            private Actions.Action current;
+            private int trips;
+
+            @Override
+            void start() {
+                Minecraft mc = Minecraft.getInstance();
+                LocalPlayer p = mc == null ? null : mc.player;
+                if (p == null) { fail("Not in a world."); return; }
+                if (count(p, blockName) == 0) {
+                    startFetch();
+                } else {
+                    startFill();
+                }
+            }
+
+            private void startFetch() {
+                ChestOp op = new ChestOp(chestLabel, ChestOp.Kind.GET, it, trip, true);
+                current = new Actions.Chest(op, chestPos);
+                current.start();
+            }
+
+            private void startFill() {
+                current = new Actions.Feature(
+                        () -> explicitBoxes == null ? dev.buildtools.Api.fillWater(it) : dev.buildtools.Api.fillWater(it, explicitBoxes),
+                        dev.buildtools.Api::fillingWater,
+                        dev.buildtools.Api::stopFillingWater,
+                        () -> (double) dev.buildtools.Api.lastFill()[1]).withEstimate(Estimate.water());
+                current.start();
+            }
+
+            @Override
+            void tick() {
+                if (current == null) { finish(0.0); return; }
+                current.ticks++;
+                current.tick();
+                if (!current.done) return;
+                if (current instanceof Actions.Chest) {
+                    trips++;
+                    if (current.error != null) { fail(current.error); return; }
+                    Minecraft mc = Minecraft.getInstance();
+                    LocalPlayer p = mc == null ? null : mc.player;
+                    if (p == null || count(p, blockName) == 0) {
+                        finish((double) dev.buildtools.Api.lastFill()[1]);
+                        return;
+                    }
+                    startFill();
+                    return;
+                }
+                if (current.error != null) { fail(current.error); return; }
+                double left = current.result instanceof Double d ? d : 0.0;
+                if (left > 0 && dev.buildtools.Api.fillRanOut() && trips < 200) {
+                    Util.msg("Out of " + blockName + " with " + Values.num(left) + " water left: fetching more.");
+                    startFetch();
+                    return;
+                }
+                finish(left);
+            }
+
+            @Override
+            void cancel() {
+                if (current != null) current.cancel();
+            }
+
+            @Override
+            void suspend() {
+                if (current != null) current.suspend();
+            }
+
+            @Override
+            void resume() {
+                done = false;
+                ticks = 0;
+                if (current != null) current.resume();
+                else start();
+            }
+        };
+    }
+
+    // ------------------------------------------------------------------ chests
+
+    /** A list of chests (positions or saved names), or null when the argument is a single chest. */
+    private static List<Object[]> chestList(Object v, String fn, int line) {
+        if (!(v instanceof List<?> list)) return null;
+        List<Object[]> out = new ArrayList<>();
+        for (Object o : list) {
+            Object[] c = chest(o, fn, line);
+            boolean dup = false;
+            for (Object[] x : out) if (x[0].equals(c[0])) { dup = true; break; }
+            if (!dup) out.add(c);
+        }
+        return out;
+    }
+
+    private static String itemId(Item it) {
+        return BuiltInRegistries.ITEM.getKey(it).toString();
+    }
+
+    private static int freeSlots(LocalPlayer p) {
+        int n = 0;
+        for (int k = 0; k < 36; k++) if (p.getInventory().getItem(k).isEmpty()) n++;
+        return n;
+    }
+
+    /** Hands a chest op to the game thread; null = skipped or failed (a failure is reported, not thrown). */
+    private static Double softAwait(Interp in, ChestOp op, BlockPos at, String text, int line, boolean[] stopped) {
+        Actions.Action act = in.awaitRaw(() -> new Actions.Chest(op, at), text, line);
+        if (act == null) { stopped[0] = true; return null; }
+        if (act.error != null) {
+            Util.msg("Chest " + op.chest + ": " + act.error);
+            return null;
+        }
+        return act.result instanceof Double d ? d : 0.0;
+    }
+
+    /**
+     * take/take_upto over several chests, by the chest index: first the chests known to hold the item (nearest to
+     * where the player is now), then, if that was not enough, the unknown or stale ones (each opened once, which
+     * refreshes the index). Chests that are known to be empty of it, and fresh, are not visited at all.
+     */
+    private static Object listTake(Interp in, List<Object[]> cs, Item it, int n, boolean upto, int keepFree, int line) {
+        String name = ChestOp.name(it), id = itemId(it);
+        List<Object[]> left = new ArrayList<>(cs);
+        int total = 0, visited = 0;
+        boolean[] stopped = {false};
+        while (!left.isEmpty() && !stopped[0]) {
+            LocalPlayer p = player(line);
+            int have = count(p, name);
+            int need = upto ? n - have : n < 0 ? Integer.MAX_VALUE : n - total;
+            if (need <= 0) break;
+            if (keepFree > 0 && freeSlots(p) <= keepFree) break;
+            BlockPos me = p.blockPosition();
+            Object[] best = null;
+            int bestRank = 9;
+            double bestDist = 0;
+            for (Object[] c : left) {
+                var info = dev.survivalkit.Api.chestInfo((BlockPos) c[0], id);
+                if (info.known() && info.fresh() && info.count() == 0) continue;   // seen lately, none of it in there
+                int rank = info.known() && info.count() > 0 ? 0 : 1;
+                double d = ((BlockPos) c[0]).distSqr(me);
+                if (best == null || rank < bestRank || (rank == bestRank && d < bestDist)) { best = c; bestRank = rank; bestDist = d; }
+            }
+            if (best == null) break;
+            left.remove(best);
+            visited++;
+            ChestOp op = new ChestOp((String) best[1], ChestOp.Kind.GET, it, upto ? n : need, upto, true);
+            Double got = softAwait(in, op, (BlockPos) best[0], "take " + name, line, stopped);
+            if (got != null) total += got.intValue();
+            if (QueueMod.chest.full()) break;
+        }
+        if (visited == 0 && count(player(line), name) < (upto ? n : 1)) {
+            Util.msg("No " + name + " in the " + cs.size() + " chests (as far as the chest index knows, seen within "
+                    + (int) dev.survivalkit.Api.indexRefresh() + " min): not walking anywhere.");
+        }
+        return (double) total;
+    }
+
+    /** put over several chests: only those the index knows to hold the item, nearest first, until it is all in. */
+    private static Object listPut(Interp in, List<Object[]> cs, Item it, int n, int line) {
+        String name = ChestOp.name(it), id = itemId(it);
+        List<Object[]> left = new ArrayList<>(cs);
+        int total = 0;
+        boolean[] stopped = {false};
+        while (!left.isEmpty() && !stopped[0]) {
+            LocalPlayer p = player(line);
+            if (count(p, name) == 0 || (n >= 0 && total >= n)) break;
+            BlockPos me = p.blockPosition();
+            Object[] best = null;
+            double bestDist = 0;
+            for (Object[] c : left) {
+                var info = dev.survivalkit.Api.chestInfo((BlockPos) c[0], id);
+                if (!info.known() || info.count() == 0) continue;
+                double d = ((BlockPos) c[0]).distSqr(me);
+                if (best == null || d < bestDist) { best = c; bestDist = d; }
+            }
+            if (best == null) break;
+            left.remove(best);
+            ChestOp op = new ChestOp((String) best[1], ChestOp.Kind.PUT, it, n < 0 ? -1 : n - total, false, true);
+            Double put = softAwait(in, op, (BlockPos) best[0], "put " + name, line, stopped);
+            if (put != null) total += put.intValue();
+        }
+        return (double) total;
+    }
+
+    private static void chests() {
+        String g = "chests";
+        def(g, "take", 2, 3, "take(chest | chests, \"item\" [, count | \"all\"])", "walk to the chest and take items (default one stack); returns how many. Given a list of chests it uses the chest index: only chests known to hold the item, nearest first, until it has that many; unknown or stale chests are opened once to look", (in, a, l) -> {
+            List<Object[]> many = chestList(a.get(0), "take()", l);
+            Item it = item(a.get(1), "take()", l);
+            int n = 0;
+            if (a.size() > 2) n = "all".equals(a.get(2)) ? -1 : Math.max(1, toInt(a.get(2), "The count", l));
+            if (many != null) return listTake(in, many, it, n == 0 ? new ItemStack(it).getMaxStackSize() : n, false, 0, l);
+            Object[] c = chest(a.get(0), "take()", l);
+            ChestOp op = new ChestOp((String) c[1], ChestOp.Kind.GET, it, n, false);
+            return in.await(() -> new Actions.Chest(op, (BlockPos) c[0]), "take " + ChestOp.name(it), l);
+        });
+        def(g, "take_upto", 3, 4, "take_upto(chest | chests, \"item\", count [, keep_free])", "take only as many as needed to carry that many in all; returns how many were taken. Given a list of chests it uses the chest index (see take); keep_free = stop when only that many inventory slots are empty", (in, a, l) -> {
+            List<Object[]> many = chestList(a.get(0), "take_upto()", l);
+            Item it = item(a.get(1), "take_upto()", l);
+            int n = Math.max(1, toInt(a.get(2), "The count", l));
+            if (many != null) return listTake(in, many, it, n, true, a.size() > 3 ? Math.max(0, toInt(a.get(3), "keep_free", l)) : 0, l);
+            if (a.size() > 3) throw error("keep_free only works with a list of chests.", l);
+            Object[] c = chest(a.get(0), "take_upto()", l);
+            ChestOp op = new ChestOp((String) c[1], ChestOp.Kind.GET, it, n, true);
+            return in.await(() -> new Actions.Chest(op, (BlockPos) c[0]), "take up to " + n + " " + ChestOp.name(it), l);
+        });
+        def(g, "put", 2, 3, "put(chest | chests, \"item\" [, count])", "walk to the chest and put that item in (default all of it); returns how many. Given a list of chests it goes only to those the index knows to hold that item, nearest first, until all is in", (in, a, l) -> {
+            List<Object[]> many = chestList(a.get(0), "put()", l);
+            Item it = item(a.get(1), "put()", l);
+            int n = a.size() > 2 && !"all".equals(a.get(2)) ? Math.max(1, toInt(a.get(2), "The count", l)) : -1;
+            if (many != null) return listPut(in, many, it, n, l);
+            Object[] c = chest(a.get(0), "put()", l);
+            ChestOp op = new ChestOp((String) c[1], ChestOp.Kind.PUT, it, n, false);
+            return in.await(() -> new Actions.Chest(op, (BlockPos) c[0]), "put " + ChestOp.name(it), l);
+        });
+        def(g, "dump", 1, 1, "dump(chest)", "put everything in except tools, armour, food, buckets and the keep rules; returns how many", (in, a, l) -> {
+            Object[] c = chest(a.get(0), "dump()", l);
+            ChestOp op = new ChestOp((String) c[1], ChestOp.Kind.DUMP, null, -1, false);
+            return in.await(() -> new Actions.Chest(op, (BlockPos) c[0]), "dump", l);
+        });
+        def(g, "chest", 1, 1, "chest(\"name\")", "the position of a chest saved with /queue chest set <name>", (in, a, l) -> {
+            Object[] c = chest(str(a.get(0)), "chest()", l);
+            return Pos.of((BlockPos) c[0]);
+        });
+        def(g, "find_item", 1, 1, "find_item(\"item\")", "chests that hold it, as far as they were seen open: a list of {pos, count}, nearest first", (in, a, l) -> {
+            List<Object> out = new ArrayList<>();
+            for (int[] e : dev.survivalkit.Api.findItem(str(a.get(0)).toLowerCase())) {
+                Map<Object, Object> m = Values.newMap();
+                m.put("pos", new Pos(e[0], e[1], e[2]));
+                m.put("count", (double) e[3]);
+                out.add(m);
+            }
+            return out;
+        });
+        def(g, "index_refresh", 0, 1, "index_refresh([minutes])", "how old a chest index entry may get before take/take_upto/put with a list of chests open that chest again (default 30; 0 = always); with a number it sets it; returns the value", (in, a, l) -> {
+            if (!a.isEmpty()) dev.survivalkit.Api.setIndexRefresh(toNum(a.get(0), "The minutes", l));
+            return dev.survivalkit.Api.indexRefresh();
+        });
+        def(g, "chest_age", 1, 3, "chest_age(chest)", "minutes since the chest was last seen open (null if never seen); never walks anywhere", (in, a, l) -> {
+            Pos p = toPos(a, 0, "chest_age()", l);
+            var info = dev.survivalkit.Api.chestInfo(p.block(), "minecraft:air");
+            return info.known() ? (Object) info.ageMinutes() : null;
+        });
+        def(g, "chest_contents", 1, 3, "chest_contents(chest)", "what the chest held when it was last open: a map item -> count (null if never seen); reads the chest index, never walks anywhere", (in, a, l) -> {
+            Pos p = toPos(a, 0, "chest_contents()", l);
+            var m = dev.survivalkit.Api.chestContents(p.block());
+            if (m == null) return null;
+            Map<Object, Object> out = Values.newMap();
+            m.forEach((k, v) -> out.put(k.replace("minecraft:", ""), (double) v));
+            return out;
+        });
+    }
+
+    // ------------------------------------------------------------------ the selection
+
+    private static void areas() {
+        String g = "areas";
+        def(g, "area", 1, 1, "area(\"name\")", "select a saved area (save one with /queue area save <name>)", (in, a, l) -> {
+            String err = Areas.load(str(a.get(0)));
+            if (err != null) throw error(err, l);
+            return null;
+        });
+        def(g, "area_box", 3, 3, "area_box(\"name\", corner1, corner2)", "an area written in the script: the first area_box of a name replaces what was saved under it, more of the same name add boxes; area(\"name\") selects it", (in, a, l) -> {
+            Pos p = toPos(a, 1, "area_box()", l), q = toPos(a, 2, "area_box()", l);
+            String err = Areas.box(str(a.get(0)), p.x(), p.y(), p.z(), q.x(), q.y(), q.z());
+            if (err != null) throw error(err, l);
+            return null;
+        });
+        def(g, "stairs", 3, 3, "stairs(\"name\", corner1, corner2)", "the stair shaft of a dig: a saved area (at least 2 x 2 blocks) inside the area clear_area() digs out. It is never mined; a spiral staircase is carved along its outer ring, a step deeper with every layer, and the bot leaves the hole by it (food, chests, the bed). Heavymatica sends one as a region with the role STAIRS", (in, a, l) -> {
+            Pos p = toPos(a, 1, "stairs()", l), q = toPos(a, 2, "stairs()", l);
+            int[] box = {Math.min(p.x(), q.x()), Math.min(p.y(), q.y()), Math.min(p.z(), q.z()), Math.max(p.x(), q.x()), Math.max(p.y(), q.y()), Math.max(p.z(), q.z())};
+            if (!Shaft.valid(box)) throw error("The stair shaft needs at least 2 x 2 blocks of floor (a spiral needs something to go around, or a ring of four cells).", l);
+            String err = Areas.box(str(a.get(0)), box[0], box[1], box[2], box[3], box[4], box[5], "stairs");
+            if (err != null) throw error(err, l);
+            return null;
+        });
+        def(g, "select", 2, 6, "select(corner1, corner2)", "make the selection this box (replaces the selection)", (in, a, l) -> {
+            Pos p = toPos(a, 0, "select()", l), q = toPos(a, a.get(0) instanceof Pos ? 1 : 3, "select()", l);
+            Areas.setSingleBox(new BlockPos(p.x(), p.y(), p.z()), new BlockPos(q.x(), q.y(), q.z()));
+            return null;
+        });
+        def(g, "add_box", 2, 6, "add_box(corner1, corner2)", "add a box to the selection", (in, a, l) -> {
+            Pos p = toPos(a, 0, "add_box()", l), q = toPos(a, a.get(0) instanceof Pos ? 1 : 3, "add_box()", l);
+            Areas.addBox(new BlockPos(p.x(), p.y(), p.z()), new BlockPos(q.x(), q.y(), q.z()));
+            return null;
+        });
+        Builtins.alias("select_add", "add_box");
+        def(g, "clear_selection", 0, 0, "clear_selection()", "no selection any more", (in, a, l) -> {
+            Areas.clearSelection();
+            return null;
+        });
+        def(g, "save_area", 1, 1, "save_area(\"name\")", "save the selection under a name", (in, a, l) -> {
+            String err = Areas.save(str(a.get(0)));
+            if (err != null) throw error(err, l);
+            return null;
+        });
+        def(g, "selection", 0, 0, "selection()", "the boxes of the selection: a list of [corner1, corner2]", (in, a, l) -> {
+            List<Object> out = new ArrayList<>();
+            for (int[] b : Areas.read()) out.add(new ArrayList<>(List.of(new Pos(b[0], b[1], b[2]), new Pos(b[3], b[4], b[5]))));
+            return out;
+        });
+        def(g, "expand_selection", 1, 3, "expand_selection(dx [, dy [, dz]])", "expand (+N) or inset (-N) every box in the current selection (1 arg = horizontal X & Z; 2 args = X/Z and Y; 3 args = X, Y, Z)", (in, a, l) -> {
+            List<int[]> cur = Areas.read();
+            if (cur.isEmpty()) throw error("There is no selection to expand. Select an area first: area(\"name\") or select(corner1, corner2).", l);
+            int dx = toInt(a.get(0), "dx", l);
+            int dy = a.size() >= 2 ? toInt(a.get(1), "dy", l) : 0;
+            int dz = a.size() >= 3 ? toInt(a.get(2), "dz", l) : dx;
+            List<int[]> expanded = new ArrayList<>(cur.size());
+            for (int[] b : cur) {
+                int x1 = b[0] - dx, y1 = b[1] - dy, z1 = b[2] - dz;
+                int x2 = b[3] + dx, y2 = b[4] + dy, z2 = b[5] + dz;
+                if (x1 <= x2 && y1 <= y2 && z1 <= z2) {
+                    expanded.add(new int[]{x1, y1, z1, x2, y2, z2});
+                }
+            }
+            if (expanded.isEmpty()) throw error("expand_selection() inset collapsed the selection to empty.", l);
+            Areas.apply(expanded);
+            List<Object> out = new ArrayList<>(expanded.size());
+            for (int[] b : expanded) out.add(new ArrayList<>(List.of(new Pos(b[0], b[1], b[2]), new Pos(b[3], b[4], b[5]))));
+            return out;
+        });
+        def(g, "areas", 0, 0, "areas()", "the names of the saved areas", (in, a, l) -> new ArrayList<Object>(cfg.areas.keySet()));
+        def(g, "protect", 1, 3, "protect(\"name\" [, corner1, corner2])", "a safe area: Baritone never breaks or places blocks there (no corners: the selection)", (in, a, l) -> {
+            String name = str(a.get(0));
+            String err;
+            if (a.size() == 1) err = dev.buildtools.Api.protectSelection(name);
+            else {
+                Pos p = toPos(a, 1, "protect()", l), q = toPos(a, 2, "protect()", l);
+                err = dev.buildtools.Api.protect(name, p.x(), p.y(), p.z(), q.x(), q.y(), q.z());
+            }
+            if (err != null) throw error(err, l);
+            return null;
+        });
+        def(g, "unprotect", 1, 1, "unprotect(\"name\")", "remove a safe area; true if it existed", (in, a, l) -> dev.buildtools.Api.unprotect(str(a.get(0))));
+    }
+
+    // ------------------------------------------------------------------ helper rules
+
+    private static void helpers() {
+        String g = "helpers";
+        def(g, "want", 2, 2, "want(\"item\", count)", "restock() keeps this many with you (\"food\" = any food); 0 removes the rule", (in, a, l) -> {
+            String it = str(a.get(0));
+            if (!it.equalsIgnoreCase("food") && ChestOp.itemOf(it) == null && !it.contains("_")) {
+                // fragments like "pickaxe" are fine: they match every pickaxe
+            }
+            dev.survivalkit.Api.want(it, toInt(a.get(1), "want()", l));
+            return null;
+        });
+        def(g, "work_item", 1, 1, "work_item(\"rule\")", "a tool with enchantments to keep, like /survival workitem (e.g. \"diamond_pickaxe 2 efficiency 5\")", (in, a, l) -> {
+            String err = dev.survivalkit.Api.workItem(str(a.get(0)));
+            if (err != null) throw error(err, l);
+            return null;
+        });
+        def(g, "hotbar", 2, 2, "hotbar(slot, \"item\")", "put that item into hotbar slot 1-9 (\"food\" = any food, \"pickaxe\" = any pickaxe); false if there is none", (in, a, l) -> {
+            int slot = toInt(a.get(0), "The hotbar slot", l);
+            if (slot < 1 || slot > 9) throw error("A hotbar slot is 1 to 9.", l);
+            LocalPlayer p = player(l);
+            String want = str(a.get(1)).toLowerCase();
+            HotbarTools.pinned.put(slot - 1, want);   // wanted tools moving into the hotbar leave this slot alone
+            dev.midtown.body.HotbarController.reserveSlot(slot - 1);
+            var inv = p.getInventory();
+            if (matchesItem(inv.getItem(slot - 1), want)) return true;   // already there
+            int from = -1;
+            for (int i = 9; i < 36 && from < 0; i++) if (matchesItem(inv.getItem(i), want)) from = i;
+            for (int i = 0; i < 9 && from < 0; i++) if (i != slot - 1 && matchesItem(inv.getItem(i), want)) from = i;
+            if (from < 0) return false;
+            var mc = Minecraft.getInstance();
+            if (p.containerMenu != p.inventoryMenu || mc.gameMode == null) return false;   // a chest is open: later
+            int menuSlot = from < 9 ? 36 + from : from;
+            mc.gameMode.handleContainerInput(p.inventoryMenu.containerId, menuSlot, slot - 1, net.minecraft.world.inventory.ContainerInput.SWAP, p);
+            return true;
+        });
+        def(g, "keep", 2, 2, "keep(\"item\", count)", "unload() and dump() leave this many in the inventory (-1 = all of it); \"food\" = any food", (in, a, l) -> {
+            String it = str(a.get(0)).toLowerCase();
+            if (it.equals("food")) it = "@food";
+            int n = toInt(a.get(1), "keep()", l);
+            if (n == 0) dev.loadchest.LoadChestMod.keepRules().remove(it);
+            else dev.loadchest.LoadChestMod.keepRules().put(it, n);
+            dev.loadchest.LoadChestMod.saveSettings();
+            return null;
+        });
+        def(g, "disable", 0, -1, "disable(\"feature\", ...)", "keep helpers from acting by themselves while this script runs (none = all)", (in, a, l) -> {
+            List<String> names = new ArrayList<>();
+            for (Object o : strings(a, 0)) names.add(str(o).toLowerCase());
+            in.runner().switchOff(names);
+            return null;
+        });
+        def(g, "enable", 0, -1, "enable(\"feature\", ...)", "let helpers act by themselves while this script runs: eat, sleep, defence, restock, escape, drain, scaffold, pickup, autoempty (none = all)", (in, a, l) -> {
+            List<String> names = new ArrayList<>();
+            for (Object o : strings(a, 0)) names.add(str(o).toLowerCase());
+            in.runner().switchOn(names);
+            return null;
+        });
+    }
+
+    // ------------------------------------------------------------------ settings
+
+    private static Object settingValue(Object v) {
+        if (v instanceof Boolean || v instanceof String) return v;
+        if (v instanceof Number n) return n.doubleValue();
+        if (v instanceof List<?> l) {
+            List<Object> out = new ArrayList<>();
+            for (Object o : l) out.add(settingValue(o));
+            return out;
+        }
+        if (v instanceof Item it) return ChestOp.name(it);
+        if (v instanceof Block b) return BuiltInRegistries.BLOCK.getKey(b).getPath();
+        return String.valueOf(v);
+    }
+
+    private static void settings() {
+        String g = "settings";
+        def(g, "set", 2, 2, "set(\"setting\", value)", "change an engine setting", (in, a, l) -> {
+            String name = str(a.get(0));
+            Object v = a.get(1);
+            if (name.equalsIgnoreCase("allowBreak") && v instanceof Boolean b) {
+                dev.buildtools.Api.setOwnBreak(b);
+                return null;
+            }
+            String text = v instanceof List<?> list ? String.join(",", list.stream().map(Values::str).toList()) : str(v);
+            if (!dev.midtown.api.EngineSelector.current().setSetting(name, text)) {
+                throw error("Engine did not accept " + name + " = " + text + ".", l);
+            }
+            return null;
+        });
+        def(g, "setting", 1, 1, "setting(\"setting\")", "the value of an engine setting", (in, a, l) -> {
+            String name = str(a.get(0));
+            String val = dev.midtown.api.EngineSelector.current().getSetting(name);
+            if (val == null) throw error("'" + name + "' is not a known engine setting.", l);
+            return settingValue(val);
+        });
+        def(g, "option", 1, 2, "option(\"group.name\" [, value])", "read or change a helper option, e.g. option(\"survival.eatBelow\", 10), option(\"survival.bed\", pos(...)), option(\"loadchest.auto\", true)", (in, a, l) -> {
+            if (a.size() == 1) return Modules.get(str(a.get(0)), l);
+            Modules.set(str(a.get(0)), a.get(1), l);
+            return null;
+        });
+        def(g, "options", 0, 1, "options([\"group\"])", "print every helper option and its value (or those of one group)", (in, a, l) -> {
+            String group = a.isEmpty() ? "" : str(a.get(0)).toLowerCase() + ".";
+            Modules.all().forEach((k, v) -> { if (k.startsWith(group)) Util.msg(k + " = " + v); });
+            return null;
+        });
+        def(g, "timeout", 1, 1, "timeout(seconds | null)", "an action that takes longer is stopped and the script goes on (null: no limit)", (in, a, l) -> {
+            in.runner().setTimeout(a.get(0) == null ? 0 : toNum(a.get(0), "timeout()", l));
+            return null;
+        });
+        def(g, "stall", 1, 1, "stall(minutes | null)", "a Baritone task without progress for this long is skipped (null: never)", (in, a, l) -> {
+            cfg.stallMinutes = a.get(0) == null ? 0 : Math.max(0, toInt(a.get(0), "stall()", l));
+            Config.save();
+            return null;
+        });
+    }
+
+    // ------------------------------------------------------------------ projects & task queue
+
+    private static void projects() {
+        String g = "projects";
+        def(g, "project", 0, 1, "project([\"name\"])", "return the active project id, or switch to (creating if needed) the named project", (in, a, l) -> {
+            var rt = dev.manhattan.project.GameProjectRuntime.instance();
+            if (a.isEmpty() || a.get(0) == null) {
+                var active = rt.activeProject();
+                return active == null ? null : active.id;
+            }
+            String raw = str(a.get(0)).trim();
+            if (raw.isEmpty()) throw error("project() needs a non-empty project name.", l);
+            String id = dev.manhattan.project.ProjectStore.sanitizeId(raw);
+            if (!rt.projectIds().contains(id)) {
+                rt.createProject(id, raw);
+            } else {
+                rt.selectProject(id);
+            }
+            var active = rt.activeProject();
+            return active == null ? id : active.id;
+        });
+        def(g, "enqueue", 1, 2, "enqueue(\"kind\" [, optsMap])", "add a task to the active project queue and return its task id", (in, a, l) -> {
+            String rawKind = str(a.get(0)).trim().toUpperCase(java.util.Locale.ROOT);
+            dev.manhattan.project.ProjectTask.Kind kind;
+            try {
+                kind = dev.manhattan.project.ProjectTask.Kind.valueOf(rawKind);
+            } catch (IllegalArgumentException e) {
+                throw error("Unknown task kind '" + rawKind + "'. Expected one of: fill_water, clear_area, clear_trees, schem_build, flood, drain, mine, dump, restock, script.", l);
+            }
+            dev.manhattan.project.ProjectTask task = new dev.manhattan.project.ProjectTask(null, null, kind);
+            if (a.size() > 1 && a.get(1) != null) {
+                if (!(a.get(1) instanceof Map<?, ?> opts)) {
+                    throw error("enqueue() second argument must be a map of options.", l);
+                }
+                applyTaskOptions(task, opts, l);
+            }
+            var rt = dev.manhattan.project.GameProjectRuntime.instance();
+            rt.enqueueTask(task);
+            return task.id;
+        });
+        def(g, "enqueue_script", 1, 3, "enqueue_script(\"path\" [, paramsMap [, optsMap]])", "add a SCRIPT task to the active project queue and return its task id", (in, a, l) -> {
+            String path = str(a.get(0)).trim();
+            if (path.isEmpty()) throw error("enqueue_script() needs a script path.", l);
+            dev.manhattan.project.ProjectTask task = new dev.manhattan.project.ProjectTask(null, "Script: " + path, dev.manhattan.project.ProjectTask.Kind.SCRIPT);
+            task.scriptPath = path;
+            if (a.size() > 1 && a.get(1) != null) {
+                if (!(a.get(1) instanceof Map<?, ?> pm)) {
+                    throw error("enqueue_script() second argument (params) must be a map.", l);
+                }
+                for (var e : pm.entrySet()) {
+                    task.params.put(str(e.getKey()), fromScriptValue(e.getValue()));
+                }
+            }
+            if (a.size() > 2 && a.get(2) != null) {
+                if (!(a.get(2) instanceof Map<?, ?> opts)) {
+                    throw error("enqueue_script() third argument (opts) must be a map.", l);
+                }
+                applyTaskOptions(task, opts, l);
+            }
+            var rt = dev.manhattan.project.GameProjectRuntime.instance();
+            rt.enqueueTask(task);
+            return task.id;
+        });
+        def(g, "run_queue", 0, 0, "run_queue()", "run the active project queue to completion and wait for it", (in, a, l) ->
+                in.await(() -> new Actions.Action() {
+                    @Override
+                    void start() {
+                        var rt = dev.manhattan.project.GameProjectRuntime.instance();
+                        if (!rt.running()) {
+                            String err = rt.startQueue();
+                            if (err != null) { fail(err); return; }
+                        }
+                    }
+
+                    @Override
+                    void tick() {
+                        var rt = dev.manhattan.project.GameProjectRuntime.instance();
+                        if (!rt.running()) {
+                            var tel = rt.telemetry();
+                            if (tel.lastError() != null && !tel.lastError().isBlank()) {
+                                fail(tel.lastError());
+                            } else {
+                                finish(true);
+                            }
+                        }
+                    }
+
+                    @Override
+                    void cancel() {
+                        dev.manhattan.project.GameProjectRuntime.instance().stopQueue("Cancelled by script.");
+                    }
+
+                    @Override
+                    boolean timed() {
+                        return false;
+                    }
+                }, "run_queue", l));
+        def(g, "queue_clear", 0, 0, "queue_clear()", "clear all tasks and ledger progress in the active project", (in, a, l) -> {
+            var rt = dev.manhattan.project.GameProjectRuntime.instance();
+            var active = rt.activeProject();
+            if (active != null) {
+                if (rt.running()) rt.stopQueue("Queue cleared by script.");
+                active.tasks.clear();
+                rt.resetQueue(null);
+                rt.saveActive();
+            }
+            return null;
+        });
+        def(g, "base_trip", 0, 1, "base_trip([needsMap])", "run a batched base logistics trip (return worn tools, dump excess, restock, fetch needed materials)", (in, a, l) -> {
+            Map<String, Integer> needs = new java.util.LinkedHashMap<>();
+            if (!a.isEmpty() && a.get(0) != null) {
+                if (!(a.get(0) instanceof Map<?, ?> m)) {
+                    throw error("base_trip() argument must be a map of item -> count.", l);
+                }
+                for (var e : m.entrySet()) {
+                    int qty = toInt(e.getValue(), "base_trip() count", l);
+                    if (qty > 0) needs.put(str(e.getKey()), qty);
+                }
+            }
+            return in.await(() -> new Actions.Action() {
+                private dev.manhattan.project.PriorityScheduler.ActionHandle handle;
+
+                @Override
+                void start() {
+                    var rt = dev.manhattan.project.GameProjectRuntime.instance();
+                    var project = rt.activeProject();
+                    var plan = dev.manhattan.project.LogisticsPlanner.planBaseTrip(project, null, rt.inventoryView(), needs);
+                    if (plan.isEmpty()) {
+                        finish(false);
+                        return;
+                    }
+                    handle = rt.startBaseTrip(plan);
+                    if (handle == null) {
+                        finish(false);
+                    }
+                }
+
+                @Override
+                void tick() {
+                    if (handle == null) { finish(false); return; }
+                    if (!handle.isDone()) handle.tick();
+                    if (handle.isDone()) {
+                        if (handle.error() != null) fail(handle.error());
+                        else finish(true);
+                    }
+                }
+
+                @Override
+                void cancel() {
+                    if (handle != null) handle.cancel();
+                }
+
+                @Override
+                void suspend() {
+                    if (handle != null) handle.suspend();
+                }
+
+                @Override
+                void resume() {
+                    done = false;
+                    ticks = 0;
+                    if (handle != null) handle.resume();
+                }
+            }, "base_trip", l);
+        });
+    }
+
+    private static void applyTaskOptions(dev.manhattan.project.ProjectTask task, Map<?, ?> opts, int line) {
+        task.ensureInitialized();
+        for (var e : opts.entrySet()) {
+            String key = str(e.getKey()).trim().toLowerCase(java.util.Locale.ROOT);
+            Object val = e.getValue();
+            if (val == null) continue;
+            switch (key) {
+                case "id" -> task.id = str(val);
+                case "label" -> task.label = str(val);
+                case "enabled" -> task.enabled = Values.truthy(val);
+                case "area", "areaname", "area_name" -> task.areaName = str(val);
+                case "expand" -> task.expand = toInt(val, "expand", line);
+                case "block" -> task.block = str(val);
+                case "layers" -> task.layers = Math.max(1, Math.min(3, toInt(val, "layers", line)));
+                case "placement" -> task.placement = str(val);
+                case "mode", "schemmode", "schem_mode" -> task.schemMode = str(val);
+                case "missing", "schemmissing", "schem_missing" -> task.schemMissing = str(val);
+                case "blocks", "mineblocks", "mine_blocks" -> {
+                    task.mineBlocks.clear();
+                    if (val instanceof List<?> list) {
+                        for (Object item : list) task.mineBlocks.add(str(item));
+                    } else {
+                        task.mineBlocks.add(str(val));
+                    }
+                }
+                case "collect_scaffold", "collectscaffoldafter" -> task.collectScaffoldAfter = Values.truthy(val);
+                case "pickup", "pickupafter" -> task.pickupAfter = Values.truthy(val);
+                case "dump", "dumpafter" -> task.dumpAfter = Values.truthy(val);
+                case "tree_zone_diameter", "treezonediameter", "zone_diameter" -> {
+                    int d = toInt(val, "tree_zone_diameter", line);
+                    task.treeZoneDiameter = d <= 0 ? null : Math.max(3, d);
+                }
+                case "script", "scriptpath", "script_path" -> task.scriptPath = str(val);
+                case "inline", "inlinescript", "inline_script" -> task.inlineScript = str(val);
+                case "params" -> {
+                    if (val instanceof Map<?, ?> pm) {
+                        for (var pe : pm.entrySet()) {
+                            task.params.put(str(pe.getKey()), fromScriptValue(pe.getValue()));
+                        }
+                    }
+                }
+                case "partial", "partialpolicy", "partial_policy" -> {
+                    try {
+                        task.partialPolicy = dev.manhattan.project.ProjectTask.PartialPolicy.valueOf(
+                                str(val).trim().toUpperCase(java.util.Locale.ROOT));
+                    } catch (IllegalArgumentException ex) {
+                        throw error("Unknown partialPolicy '" + str(val) + "'.", line);
+                    }
+                }
+                case "partial_threshold", "partialthreshold" -> task.partialThreshold = Math.max(0, toInt(val, "partial_threshold", line));
+                case "error", "errorpolicy", "error_policy" -> {
+                    try {
+                        task.errorPolicy = dev.manhattan.project.ProjectTask.ErrorPolicy.valueOf(
+                                str(val).trim().toUpperCase(java.util.Locale.ROOT));
+                    } catch (IllegalArgumentException ex) {
+                        throw error("Unknown errorPolicy '" + str(val) + "'.", line);
+                    }
+                }
+                case "max_retries", "maxretries" -> task.maxRetries = Math.max(0, toInt(val, "max_retries", line));
+                case "overrides" -> {
+                    if (val instanceof Map<?, ?> om) {
+                        applyScopedOverrides(task.overrides, om, line);
+                    }
+                }
+                default -> { }
+            }
+        }
+    }
+
+    private static void applyScopedOverrides(dev.manhattan.project.ScopedOverrides ov, Map<?, ?> map, int line) {
+        ov.ensureInitialized();
+        for (var e : map.entrySet()) {
+            String key = str(e.getKey()).trim().toLowerCase(java.util.Locale.ROOT);
+            Object val = e.getValue();
+            if (val == null) continue;
+            switch (key) {
+                case "allowbreak", "allow_break" -> ov.allowBreak = Values.truthy(val);
+                case "allowplace", "allow_place" -> ov.allowPlace = Values.truthy(val);
+                case "keep" -> {
+                    if (val instanceof Map<?, ?> km) {
+                        for (var ke : km.entrySet()) ov.keep.put(str(ke.getKey()), toInt(ke.getValue(), "keep", line));
+                    }
+                }
+                case "want" -> {
+                    if (val instanceof Map<?, ?> wm) {
+                        for (var we : wm.entrySet()) ov.want.put(str(we.getKey()), toInt(we.getValue(), "want", line));
+                    }
+                }
+                case "suppresssurvival", "suppress_survival" -> {
+                    if (val instanceof List<?> sl) {
+                        for (Object s : sl) ov.suppressSurvival.add(str(s));
+                    } else {
+                        ov.suppressSurvival.add(str(val));
+                    }
+                }
+                default -> { }
+            }
+        }
+    }
+
+    private static Object fromScriptValue(Object v) {
+        if (v == null || v instanceof Boolean || v instanceof String || v instanceof Number) return v;
+        if (v instanceof Pos p) return new int[]{p.x(), p.y(), p.z()};
+        if (v instanceof List<?> list) {
+            List<Object> out = new ArrayList<>(list.size());
+            for (Object item : list) out.add(fromScriptValue(item));
+            return out;
+        }
+        if (v instanceof Map<?, ?> map) {
+            Map<String, Object> out = new java.util.LinkedHashMap<>();
+            for (var e : map.entrySet()) out.put(str(e.getKey()), fromScriptValue(e.getValue()));
+            return out;
+        }
+        return String.valueOf(v);
+    }
+}
