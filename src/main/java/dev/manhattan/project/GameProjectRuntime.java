@@ -131,6 +131,10 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
             Project fleetProject = dev.manhattan.fleet.FleetProtocol.GSON.fromJson(json, Project.class);
             if (fleetProject == null) return;
             fleetProject.ensureInitialized();
+            // Fleet workers stay connected and return to IDLE to claim the next job/chunk instead of disconnecting.
+            fleetProject.survival.logoffOnDone = false;
+            fleetProject.survival.logoffOnError = false;
+            fleetProject.survival.logoffOnMissingBed = false;
             if (fleetProject.places != null && fleetProject.places.areas != null && !fleetProject.places.areas.isEmpty()) {
                 QueueMod.importFleetAreas(fleetProject.places.areas);
             }
