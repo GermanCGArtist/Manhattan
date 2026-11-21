@@ -1,6 +1,6 @@
 # Manhattan changes for Heavymatica
 
-What Manhattan (`midtown-impl`, MC 26.1.1, mod id `manhattan`, formerly `baritonequeue`, which it still provides) needs so the Heavymatica addon can send its
+What Manhattan (`main`, MC 26.1.1, mod id `manhattan`, formerly `baritonequeue`, which it still provides) needs so the Heavymatica addon can send its
 areas in directly. Decisions this follows (from the Heavymatica plan review, 2026-11-14):
 
 | # | Decision |

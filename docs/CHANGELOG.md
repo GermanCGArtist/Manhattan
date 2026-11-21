@@ -12,8 +12,13 @@ Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
 - The mod is now called **manhattan** everywhere: mod id, `manhattan-<version>.jar`, `config/manhattan.json`,
   `config/manhattan-presets.txt`. An existing `config/baritonequeue.json` (and presets file) is copied over on the
   first start and left in place. The old id is still provided, so addons that name `baritonequeue` keep working.
-  The Java packages (`dev.baritonequeue`, including the Heavymatica API) and the internal system properties keep
-  their names. Keybinds and assets keep theirs too, so nothing has to be rebound.
+  The internal system properties, keybinds and assets keep their names, so nothing has to be rebound.
+- The Java package `dev.baritonequeue` is now `dev.manhattan`. Only the Heavymatica API,
+  `dev.baritonequeue.api.ManhattanAreas`, stays where it was, because Heavymatica finds it by that name.
+- The build no longer has the Baritone API jar (`libs/`, `baritone_version`); nothing used it any more.
+- Deming specs: the Baritone halves of the old A/B specs are gone (they ran Midtown twice), every spec points at the
+  current `manhattan-<version>.jar`, and `tests/deming/waves.py` runs all of them, up to 32 games at once.
+- The offline tests delete their temp folders when they exit (`ChunkRunnerTest` left 11 in `tmp/` per build).
 - New: a stair shaft for digging. `stairs("name", corner1, corner2)` (or the role STAIRS from Heavymatica, API version 2)
   marks a 2 x 2 or larger area inside the dig. `clear_area()` never mines it; it carves a spiral staircase along its
   ring, one step deeper with every layer, and when an `on` block fires inside the hole the bot first climbs out by

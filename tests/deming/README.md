@@ -1,27 +1,53 @@
-# Deming Benchmark Specs (`Midtown` vs. `Baritone`)
+# Deming benchmark specs
 
-These `TestJobSpec` JSON files are formatted for **Deming** (`GermanCGArtist/Deming`, `crates/deming-core/src/spec.rs`).
+`TestJobSpec` files for **Deming** (`GermanCGArtist/Deming`, `crates/deming-core/src/spec.rs`). Every instance is
+an isolated Fabric 26.1.1 client with `manhattan-<version>.jar` and `manhattan-testbridge-<version>.jar`, started
+with `-Dmanhattan.benchmark=<scenario>`: the test bridge opens a flat creative world, sets the scenario up, runs it
+and logs one `BENCHMARK_RESULT ... pass=true|false` line, which is the spec's `log_pattern` rule.
 
-Each spec launches two isolated Fabric `26.1.1` client instances in parallel:
-- `baritone`: `-Dmanhattan.engine=baritone`
-- `midtown`: `-Dmanhattan.engine=midtown`
+Midtown is the only path engine, so there are no A/B pairs any more (`-Dmanhattan.engine=baritone` is only an alias
+for Midtown).
 
-## Prerequisites
+| Spec | Games | What it covers |
+|---|---|---|
+| `bench-redesign-32.json` | 32 | the broad sweep: project queue, async replans, body interrupts, navigation, pillars and parkour, eating, chunked digging and water |
+| `bench-redesign-8.json` | 8 | projects (queue, script params, logistics, dusk and partial-stop gates), async replan, body interrupt |
+| `bench-chunk-matrix-16.json` | 16 | every chunk scenario of the three specs below in one run |
+| `bench-chunk-clear.json` | 7 | chunked `clear_area`: shapes, stragglers, deep trench, a colossal 4x4 |
+| `bench-chunk-water.json` | 5 | chunked `fill_water`, flood and drain, the needs hook |
+| `bench-chunk-advanced.json` | 4 | survival interrupts, protected transit, ledger resume, chunking switched off |
+| `bench-pillars-floating.json` | 5 | pillaring up, bridging off a pillar, mining and clearing floating pillars |
+| `bench-parkour-wall.json` | 4 | jumping gaps along a wall without placing blocks, plus pillar regressions |
+| `bench-trees-zones.json` | 3 | `clear_trees` with scaffold zones in a project, queue, selection kept |
+| `bench-eat-offhand.json` | 2 | eating food held in the off hand, also with a full hotbar |
+| `bench-interrupt-mid-action.json` | 1 | `clear_area` + `schem_build` interrupted by `eat()` and `defend()` |
+| `bench-nav-obstacle.json` | 1 | 120-block walk across walls, drops, water and lava |
+| `bench-nav-pillar-bridge.json` | 1 | bridging a gap and pillaring up |
+| `bench-schem-unsupported-reach.json` | 1 | a schematic with cells that need scaffolding |
+| `bench-survival-marathon.json` | 1 | dig, dump, restock, sleep and defend in one loop |
+| `bench-water-fill-tight.json` | 1 | `fill_water` on a tight pond with restock trips |
 
-1. Build Manhattan (`build.bat` / `./gradlew build`) so `build/libs/baritonequeue-2.11.3.jar` and `build/libs/manhattan-testbridge-2.11.3.jar` exist (matching `mod_version` in `gradle.properties`).
-2. Ensure `baritone-api-fabric-1.18.0.jar` is present at `libs/baritone-api-fabric-1.18.0.jar` for the legacy `baritone` instance (the `midtown` instance runs with zero Baritone jars installed).
-3. Have Deming installed (`cargo build --release` in `GermanCGArtist/Deming`).
+## Running
 
-## Running a Benchmark
+Build first (`build.bat`), so the jars in `build/libs` exist. One spec:
 
-```bash
+```
 deming run submit tests/deming/bench-nav-obstacle.json
-deming run submit tests/deming/bench-interrupt-mid-action.json
-deming run submit tests/deming/bench-nav-pillar-bridge.json
-deming run submit tests/deming/bench-water-fill-tight.json
-deming run submit tests/deming/bench-schem-unsupported-reach.json
-deming run submit tests/deming/bench-survival-marathon.json
-deming run submit tests/deming/bench-parkour-wall.json   # parkour along a wall: jump the gaps, place nothing
 ```
 
-See [docs/DEMING_BENCHMARKS.md](../../docs/DEMING_BENCHMARKS.md) for the `BENCHMARK_RESULT` log format and scoring rubric.
+All of them, up to 32 games at once (Deming's own default limit is 16):
+
+```
+python tests/deming/waves.py
+```
+
+`waves.py` packs the specs into waves of at most `--max` games (default 32), gives every game its own id, test
+bridge port and account so specs can share a wave, and runs the waves one after another with a Deming config that
+allows `--max` games and `--ram` MB (default 72000; games beyond it wait). Results: `tmp/deming-waves/result-N.json`
+and `summary.txt`; Deming keeps every run under `%LOCALAPPDATA%\deming\runs`. `--only <text>` picks specs,
+`--dry-run` only writes the wave files.
+
+After `mod_version` changes, `python tests/deming/waves.py --set-version` points every spec at the new jar names.
+
+See [docs/DEMING_BENCHMARKS.md](../../docs/DEMING_BENCHMARKS.md) for the `BENCHMARK_RESULT` line and how to read
+the results.

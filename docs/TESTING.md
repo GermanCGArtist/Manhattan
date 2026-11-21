@@ -1,11 +1,12 @@
 # Testing Manhattan
 
-Two levels:
+Three levels:
 
 | | what | needs Minecraft |
 |---|---|---|
-| `build.bat` | `langTest` (the language through the real parser and interpreter) and `parseScripts` (every `scripts/*.txt` parses) | no |
+| `build.bat` | the offline tests, run by `gradlew check`: `langTest` (the language through the real parser and interpreter), `parseScripts` (every `scripts/*.txt` parses), `midtownTest` and `midtownBodyTest` (planner, executor, body controller), `projectQueueTest`, `telemetryIncidentTest`, `chunkGridTest`, `chunkRunnerTest`, `nativesTest` (Dear ImGui natives load). Temp folders they make are deleted when they exit | no |
 | `tests\ingame\run.bat` | builds, installs into the **"Manhatten Testing"** Modrinth profile, starts the game, runs scripts in a flat test world, checks the results, closes the game | yes, started by the test |
+| `python tests\deming\waves.py` | the Deming benchmark scenarios, up to 32 games at once ([DEMING_BENCHMARKS.md](DEMING_BENCHMARKS.md)) | yes, started by Deming |
 
 ## In-game tests: one command
 
@@ -45,7 +46,7 @@ Nothing to do by hand: there is **no Microsoft login**. The test starts the game
 |---|---|
 | `smoke` | a script with variables, a list and `print` runs and prints; the workspace opens in the Edit layout (no vanilla screen) |
 | `workspace` | while a script runs: the closed-state overlay draws without taking input; J opens the workspace, E does not leak to the game while the panels have the keyboard; Ctrl+P opens the command palette and Esc closes it; palette commands switch to Monitor (remembered as the layout J opens), open a drawer and go back to Edit; resize to 960×540 and back; UI scale 125% (fonts rebuilt); the Now running Stop button stops the script; J closes the workspace and the game gets the whole window |
-| `viewport` | Edit layout: the game area top right, the image letterboxed to the window's aspect ratio; focus gating (a click on the panels keeps E away from the game, a click on the game gives it the keyboard), walking, Baritone mining, Pick block (middle-click in the game, and the editor's Pick block button inserting `pos(...)` at the cursor), a chest opened and slots clicked through the game area, resize, GUI scale, Monitor layout (game in the middle), closed (game fills the window) |
+| `viewport` | Edit layout: the game area top right, the image letterboxed to the window's aspect ratio; focus gating (a click on the panels keeps E away from the game, a click on the game gives it the keyboard), walking, mining, Pick block (middle-click in the game, and the editor's Pick block button inserting `pos(...)` at the cursor), a chest opened and slots clicked through the game area, resize, GUI scale, Monitor layout (game in the middle), closed (game fills the window) |
 | `monitor` | Monitor layout while a multi-step script with an `on food < 14` block runs: running step segment, step counts, the handler listed (`Runner.handlerInfos`), position telemetry; the top strip's Stop button stops the script |
 | `panels` | Editor: file tabs, `Suggest` completion (also in the middle of the script, only the word at the cursor changes), Ctrl+/ comment toggle, `ScriptCheck` Test button, Pick block, a preset put in at the cursor line, Run button and running line; Chests (`ChestIndexView` search, sort, category/low-stock filters, Show in world, Copy `pos(...)`, Go there); Capture (Fetch looked-at; Aim in world closes the workspace, J captures and brings it back on the Capture drawer); Log (`LogBuffer` filters, selection, Copy, Clear) |
 | `fill_water` | a 3×3 pool, 2 deep, next to the player; `fill_water("dirt")` returns 0, every cell is dry afterwards, dirt came out of the inventory, and **no top cell was filled while the cell under it was still wet** (checked twice a second while it runs) |
@@ -122,7 +123,7 @@ Every game also starts with the mod's own settings reset (`config/manhattan.json
 The queue is scheduled longest first from `tmp/ingame/durations.json` (the last duration of every test, updated after each run;
 unknown tests count as long). Tests that need the shared flat world switch back to it if the game is in another test's world.
 A failed test is run once more on a fresh world (`--retries N`, 0 = never); a pass is printed as "PASSED ON RETRY" with the first failure.
-`--tick N` sets `/tick rate` of the test worlds (default 20 = vanilla; 40 gave no speed-up: the time goes into Baritone's
+`--tick N` sets `/tick rate` of the test worlds (default 20 = vanilla; 40 gave no speed-up when this was measured: the time went into Baritone's
 real-time path calculation, not game ticks, and the tree tests got less reliable). The forest test is four tests
 (`trees_forest_spruce|jungle|dark|mixed`) so that they run on four games at once.
 Test commands wait for the server to have run them (`Ctx.sync`, a `/time query` answer), not for a fixed time.
@@ -151,7 +152,7 @@ that game dir. `install.bat` (the AFK profile) is separate and unchanged.
 A small client mod built by `build.bat` next to the main jar (Gradle source set `ingame`, task `testBridgeJar`).
 It is only ever installed into the testing profile. It listens on **127.0.0.1:25599** (loopback only;
 `-Dmanhattan.testbridge.port` / env `MANHATTAN_BRIDGE_PORT` change it), one command per line, one JSON answer per
-line. It lives in the package `dev.baritonequeue`, so it can start scripts and read the runner directly. It also
+line. It lives in the package `dev.manhattan`, so it can start scripts and read the runner directly. It also
 closes the pause screen if one opens, so an unfocused window never pauses the test world.
 
 | command | answer |

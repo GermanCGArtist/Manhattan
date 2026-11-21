@@ -1,9 +1,11 @@
 # How Manhattan is built
 
-Minecraft 26.1.1, Fabric (Mojang names, unobfuscated), Java 25, Midtown navigation & movement engine (`dev.midtown`). Client-only, with client mixins (`baritonequeue.mixins.json`) for Dear ImGui rendering and input routing.
+Minecraft 26.1.1, Fabric (Mojang names, unobfuscated), Java 25, Midtown navigation & movement engine (`dev.midtown`). Client-only, with client mixins (`manhattan.mixins.json`) for Dear ImGui rendering and input routing.
 
 ## Packages
-- `dev.baritonequeue` – the language, the editor, runner, and native movement integration. Entry point `QueueMod`.
+- `dev.manhattan` – the language, the editor, runner, and native movement integration. Entry point `QueueMod`.
+- `dev.baritonequeue.api` – only `ManhattanAreas`, the public area API for Heavymatica. It keeps the old package name
+  because Heavymatica looks the class up by name.
 - `dev.midtown` – the native pathing, execution, and movement engine (A* pathfinder, cost model, movement executor, `dev.midtown.api.*`).
 - `dev.survivalkit` – eat, defence, sleep, restock, respawn/resume/reconnect. Entry point `SurvivalKitMod`.
 - `dev.buildtools` – water fill (`TerminatorProcess`), drain, flood, scaffold, escape, safe areas. `BuildToolsMod`.
@@ -22,7 +24,7 @@ acts on its own: the script starts them. The packages talk through small `Api` c
 | `baritonequeue.halt` | helpers | asks the runner to stop the script |
 | `survivalkit.recovering` / `survivalkit.safe` | Recovery | waiting after a death / safe to carry on |
 
-## The language (`dev.baritonequeue`)
+## The language (`dev.manhattan`)
 - `Lexer` → `Parser` → AST (`Ast`, nodes run themselves) → `Interp`.
 - Each script runs on its own thread (`Fiber`), but only while the game thread waits for it (semaphore handoff),
   so the game is never touched from two threads at once. It yields every 4000 steps.
@@ -91,7 +93,7 @@ acts on its own: the script starts them. The packages talk through small `Api` c
 - Safe areas (`RegionRules`) force allowBreak/allowPlace off near a protected box every tick;
   `Api.setOwnBreak` changes the player's own wish, applied after leaving.
 
-## Area clearing (`dev.baritonequeue.ClearProcess`)
+## Area clearing (`dev.manhattan.ClearProcess`)
 Its own executor (longer walks go through Midtown): top-down passes 3 layers thick, lanes 6 apart, stops every 3
 blocks, highest-then-nearest visible block first, drops picked up along the way, a time report at the end.
 
