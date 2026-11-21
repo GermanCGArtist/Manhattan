@@ -55,7 +55,7 @@ final class Reconnect {
         settle = 0;
         if (suppressed || !cfg.reconnect || last == null) return;
 
-        if (mc.screen instanceof DisconnectedScreen) {
+        if (mc.gui.screen() instanceof DisconnectedScreen) {
             if (!pending) {
                 pending = true;
                 attempts = 0;
@@ -77,7 +77,7 @@ final class Reconnect {
             }
             return;
         }
-        if (mc.screen instanceof ConnectScreen) {
+        if (mc.gui.screen() instanceof ConnectScreen) {
             if (pending && ++connecting > CONNECT_TIMEOUT) connecting = 1;
             return;
         }

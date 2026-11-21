@@ -1,6 +1,6 @@
 package dev.manhattan;
 
-import com.mojang.blaze3d.opengl.GlTexture;
+import com.mojang.renderpearl.api.textures.GpuTextureView;
 import imgui.ImDrawList;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.MissingTextureAtlasSprite;
@@ -61,7 +61,9 @@ final class ItemIcons {
         if (!(mc.getTextureManager().getTexture(atlasId) instanceof TextureAtlas atlas)) return null;
         TextureAtlasSprite sp = atlas.getSprite(Identifier.withDefaultNamespace(path));
         if (sp == null || sp.contents().name().equals(MissingTextureAtlasSprite.getLocation())) return null;
-        if (!(atlas.getTexture() instanceof GlTexture gl)) return null;
-        return new Icon(gl.glId(), sp.getU0(), sp.getV0(), sp.getU1(), sp.getV1());
+        GpuTextureView view = atlas.getTextureView();
+        if (view == null) return null;
+        int texId = ImGuiRenderPearlRenderer.registerExternalTexture(view);
+        return new Icon(texId, sp.getU0(), sp.getV0(), sp.getU1(), sp.getV1());
     }
 }

@@ -670,7 +670,7 @@ public final class ClearProcess {
                 }
                 if (s.getDestroyProgress(p, level, b) >= 1.0f) {   // breaks at once: one per tick
                     mc.gameMode.startDestroyBlock(b, hit.getDirection());
-                    p.swing(InteractionHand.MAIN_HAND);
+                    p.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
                     if (level.getBlockState(b).isAir()) dev.buildtools.Api.forgetScaffold(b);
                     broken++;
                 } else {

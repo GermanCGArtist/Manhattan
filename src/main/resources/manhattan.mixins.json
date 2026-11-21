@@ -3,7 +3,7 @@
   "package": "dev.manhattan.mixin",
   "compatibilityLevel": "JAVA_25",
   "client": [
-    "RenderSystemMixin",
+    "MinecraftMixin",
     "KeyboardHandlerMixin",
     "MouseHandlerMixin"
   ],

@@ -1,12 +1,14 @@
 package dev.manhattan;
 
-import org.lwjgl.glfw.GLFW;
-
 import java.util.Locale;
 
 /** The few places where the UI behaves differently per OS: the shortcut modifier and its label. */
 public final class Platform {
     private static final boolean MAC = System.getProperty("os.name", "").toLowerCase(Locale.ROOT).startsWith("mac");
+    public static final int MOD_SHIFT = 0x0001;
+    public static final int MOD_CONTROL = 0x0002;
+    public static final int MOD_ALT = 0x0004;
+    public static final int MOD_SUPER = 0x0008;
 
     private Platform() {}
 
@@ -14,9 +16,9 @@ public final class Platform {
         return MAC;
     }
 
-    /** Whether the shortcut modifier is held in GLFW {@code mods}: Ctrl everywhere, and Cmd as well on macOS. */
+    /** Whether the shortcut modifier is held in modifier bitmask: Ctrl everywhere, and Cmd as well on macOS. */
     public static boolean shortcutDown(int mods) {
-        int mask = MAC ? GLFW.GLFW_MOD_CONTROL | GLFW.GLFW_MOD_SUPER : GLFW.GLFW_MOD_CONTROL;
+        int mask = MAC ? MOD_CONTROL | MOD_SUPER : MOD_CONTROL;
         return (mods & mask) != 0;
     }
 

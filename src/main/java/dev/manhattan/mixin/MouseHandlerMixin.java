@@ -40,7 +40,7 @@ public abstract class MouseHandlerMixin {
     }
 
     @Inject(method = "onMove", at = @At("HEAD"), cancellable = true)
-    private void manhattan$onMove(long window, double xpos, double ypos, CallbackInfo ci) {
+    private void manhattan$onMove(long window, double xpos, double ypos, double dx, double dy, CallbackInfo ci) {
         if (ImGuiManager.onMouseMove(window, xpos, ypos)) {
             ci.cancel();
             return;
@@ -48,7 +48,7 @@ public abstract class MouseHandlerMixin {
         if (!this.mouseGrabbed && ImGuiManager.isDockedViewportActive()) {
             this.accumulatedDX = 0.0;
             this.accumulatedDY = 0.0;
-            if (this.minecraft.screen != null || "true".equals(System.getProperty("manhattan.tests"))) {
+            if (this.minecraft.gui.screen() != null || "true".equals(System.getProperty("manhattan.tests"))) {
                 this.xpos = ImGuiManager.remapMouseX(xpos);
                 this.ypos = ImGuiManager.remapMouseY(ypos);
             }
@@ -63,7 +63,7 @@ public abstract class MouseHandlerMixin {
             return;
         }
         if (!this.mouseGrabbed && ImGuiManager.isDockedViewportActive()) {
-            if (this.minecraft.screen == null && !"true".equals(System.getProperty("manhattan.tests"))) {
+            if (this.minecraft.gui.screen() == null && !"true".equals(System.getProperty("manhattan.tests"))) {
                 ci.cancel();
                 return;
             }

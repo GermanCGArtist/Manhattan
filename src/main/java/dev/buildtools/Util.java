@@ -74,7 +74,7 @@ final class Util {
     /** A block you can click against to place something next to it. */
     static boolean isSolid(Level level, BlockPos pos) {
         BlockState s = level.getBlockState(pos);
-        return !s.isAir() && s.getFluidState().isEmpty() && !s.canBeReplaced() && s.blocksMotion();
+        return !s.isAir() && s.getFluidState().isEmpty() && !s.canBeReplaced() && s.isSolid();
     }
 
     /** Air or something a block/water can simply replace (but no fluid): water placed next to it would spread. */
@@ -104,7 +104,7 @@ final class Util {
         var b = bi.getBlock();
         if (b instanceof net.minecraft.world.level.block.FallingBlock || b instanceof net.minecraft.world.level.block.EntityBlock) return false;
         var s = b.defaultBlockState();
-        return s.blocksMotion() && !s.hasBlockEntity();
+        return s.isSolid() && !s.hasBlockEntity();
     }
 
     /** Inventory index of a throwaway block (cobblestone, dirt, ...), hotbar first; -1 if none. */

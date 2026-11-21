@@ -298,7 +298,7 @@ public final class BodyController {
         } else {
             mc.gameMode.continueDestroyBlock(breakingPos, hitDir);
         }
-        player.swing(InteractionHand.MAIN_HAND);
+        player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
         inputsActive = true;
         return true;
     }
@@ -337,7 +337,7 @@ public final class BodyController {
             BlockHitResult hit = new BlockHitResult(hitVec, face, support, false);
             var res = mc.gameMode.useItemOn(player, InteractionHand.MAIN_HAND, hit);
             if (res.consumesAction()) {
-                player.swing(InteractionHand.MAIN_HAND);
+                player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
                 return true;
             }
             return false;
@@ -361,7 +361,7 @@ public final class BodyController {
         BlockHitResult hit = new BlockHitResult(hitVec, Direction.UP, support, false);
         var res = mc.gameMode.useItemOn(player, InteractionHand.MAIN_HAND, hit);
         if (res.consumesAction()) {
-            player.swing(InteractionHand.MAIN_HAND);
+            player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
             return true;
         }
         return false;

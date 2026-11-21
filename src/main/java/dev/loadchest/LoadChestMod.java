@@ -758,7 +758,7 @@ public class LoadChestMod implements ClientModInitializer {
         BlockPos origin = mc.player.blockPosition();
         BlockPos best = null;
         double bestDist = Double.MAX_VALUE;
-        for (BlockPos pos : BlockPos.withinManhattan(origin, SEARCH_RADIUS, SEARCH_RADIUS / 2, SEARCH_RADIUS)) {
+        for (BlockPos pos : BlockPos.withinManhattan(origin, SEARCH_RADIUS)) {
             Block b = mc.level.getBlockState(pos).getBlock();
             if (!(b instanceof ChestBlock)) continue;
             if (!(mc.level.getBlockEntity(pos) instanceof ChestBlockEntity)) continue;
@@ -912,7 +912,7 @@ public class LoadChestMod implements ClientModInitializer {
                 || dev.manhattan.ClearProcess.isClearWorking()
                 || dev.midtown.api.RuntimeBus.currentStep() != null
                 || dev.midtown.api.RuntimeBus.isRecovering()
-                || (mc != null && mc.screen != null);
+                || (mc != null && mc.gui.screen() != null);
     }
 
     /** Whether the main inventory (hotbar included) has room for this stack, counting partial stacks. */

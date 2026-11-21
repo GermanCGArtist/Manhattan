@@ -81,8 +81,8 @@ public final class PlacesView {
         Capture.corner1 = null;
         Capture.captured = 0;
         Minecraft mc = Minecraft.getInstance();
-        if (mc != null && mc.screen != null) {
-            mc.setScreen(null);
+        if (mc != null && mc.gui.screen() != null) {
+            mc.gui.setScreen(null);
         }
         Shell.suspendForAiming();   // full-size game with mouse look; J captures and brings the workspace back
         String msg = "Aiming in world for '" + Capture.type().label + "': look at a block and press J (K goes back).";

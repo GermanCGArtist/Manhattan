@@ -28,7 +28,7 @@ final class HotbarTools {
         if (++ticks % 20 != 0) return;
         LocalPlayer p = mc.player;
         if (p == null || mc.gameMode == null || System.getProperty("baritonequeue.active") == null) return;
-        if (p.containerMenu != p.inventoryMenu || (mc.screen != null && !(mc.screen instanceof ChatScreen))) return;
+        if (p.containerMenu != p.inventoryMenu || (mc.gui.screen() != null && !(mc.gui.screen() instanceof ChatScreen))) return;
         if (mc.gameMode.isDestroying()) return;
         var inv = p.getInventory();
         for (String rule : dev.survivalkit.Api.wantList().keySet()) {

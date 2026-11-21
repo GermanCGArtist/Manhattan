@@ -11,7 +11,8 @@ import imgui.flag.ImGuiTableFlags;
 import imgui.type.ImBoolean;
 import imgui.type.ImString;
 import net.minecraft.client.Minecraft;
-import org.lwjgl.glfw.GLFW;
+import com.mojang.blaze3d.platform.InputConstants;
+import imgui.flag.ImGuiKey;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -480,33 +481,33 @@ public final class DockedPanels {
      */
     static boolean handleEditorKey(int key, int mods) {
         if (!editorInputActive) return false;
-        boolean ctrl = (mods & GLFW.GLFW_MOD_CONTROL) != 0;   // Ctrl+Space stays Ctrl: Cmd+Space is Spotlight on macOS
+        boolean ctrl = (mods & Platform.MOD_CONTROL) != 0;   // Ctrl+Space stays Ctrl: Cmd+Space is Spotlight on macOS
         boolean shortcut = Platform.shortcutDown(mods);
         boolean popup = popupVisible();
-        if (key == GLFW.GLFW_KEY_TAB && mods == 0 && !suggestions.isEmpty() && (popup || ghostSuffix() != null)) {
+        if (key == InputConstants.KEY_TAB && mods == 0 && !suggestions.isEmpty() && (popup || ghostSuffix() != null)) {
             acceptSuggestion(selectedSuggestion);
             return true;
         }
-        if (ctrl && key == GLFW.GLFW_KEY_SPACE) {
+        if (ctrl && key == InputConstants.KEY_SPACE) {
             suggestForced = true;
             popupDismissed = false;
             suggestKey = "";
             updateSuggestions(currentScriptText(), false);
             return true;
         }
-        if (shortcut && key == GLFW.GLFW_KEY_SLASH) {
+        if (shortcut && key == InputConstants.KEY_SLASH) {
             toggleComment();
             return true;
         }
         if (popup) {
             int n = suggestions.size();
             switch (key) {
-                case GLFW.GLFW_KEY_DOWN -> { selectedSuggestion = (selectedSuggestion + 1) % n; popupNavigated = true; return true; }
-                case GLFW.GLFW_KEY_UP -> { selectedSuggestion = (selectedSuggestion - 1 + n) % n; popupNavigated = true; return true; }
-                case GLFW.GLFW_KEY_PAGE_DOWN -> { selectedSuggestion = Math.min(n - 1, selectedSuggestion + 8); popupNavigated = true; return true; }
-                case GLFW.GLFW_KEY_PAGE_UP -> { selectedSuggestion = Math.max(0, selectedSuggestion - 8); popupNavigated = true; return true; }
-                case GLFW.GLFW_KEY_ESCAPE -> { popupDismissed = true; suggestForced = false; return true; }
-                case GLFW.GLFW_KEY_ENTER, GLFW.GLFW_KEY_KP_ENTER -> {
+                case InputConstants.KEY_DOWN -> { selectedSuggestion = (selectedSuggestion + 1) % n; popupNavigated = true; return true; }
+                case InputConstants.KEY_UP -> { selectedSuggestion = (selectedSuggestion - 1 + n) % n; popupNavigated = true; return true; }
+                case InputConstants.KEY_PAGEDOWN -> { selectedSuggestion = Math.min(n - 1, selectedSuggestion + 8); popupNavigated = true; return true; }
+                case InputConstants.KEY_PAGEUP -> { selectedSuggestion = Math.max(0, selectedSuggestion - 8); popupNavigated = true; return true; }
+                case InputConstants.KEY_ESCAPE -> { popupDismissed = true; suggestForced = false; return true; }
+                case InputConstants.KEY_RETURN, InputConstants.KEY_NUMPADENTER -> {
                     if (popupNavigated) { acceptSuggestion(selectedSuggestion); return true; }
                     return false;
                 }
@@ -1554,7 +1555,7 @@ public final class DockedPanels {
                     ImGui.popStyleColor();
                 }
             }
-            if (ImGui.isWindowFocused() && ImGui.getIO().getKeyCtrl() && ImGui.isKeyPressed(GLFW.GLFW_KEY_C) && !selectedLogIds.isEmpty()) {
+            if (ImGui.isWindowFocused() && ImGui.getIO().getKeyCtrl() && ImGui.isKeyPressed(ImGuiKey.C) && !selectedLogIds.isEmpty()) {
                 copySelectedLogs();
             }
         }

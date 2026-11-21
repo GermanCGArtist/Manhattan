@@ -63,7 +63,7 @@ public final class Api {
         Runnable action = () -> {
             if (mc.level == null && mc.getConnection() == null) return;
             mc.disconnectWithSavingScreen();
-            mc.setScreen(new net.minecraft.client.gui.screens.TitleScreen());
+            mc.gui.setScreen(new net.minecraft.client.gui.screens.TitleScreen());
         };
         if (mc.isSameThread()) action.run();
         else mc.execute(action);

@@ -304,7 +304,7 @@ public final class WorldSnapshot implements BlockView {
         if (state.is(BlockTags.SLABS) || state.is(BlockTags.STAIRS)) {
             return BlockKind.SLAB_OR_STAIR;
         }
-        if (fluid.is(FluidTags.WATER) && !state.blocksMotion()) {
+        if (fluid.is(FluidTags.WATER) && !state.isSolid()) {
             return BlockKind.WATER;
         }
         if (state.getCollisionShape(EmptyBlockGetter.INSTANCE, BlockPos.ZERO).isEmpty()) {

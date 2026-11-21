@@ -86,7 +86,7 @@ public class TestBridge implements ClientModInitializer {
     private static void tick(Minecraft mc) {
         captureChat(mc);
         // an unfocused window must not pause the test world
-        if (mc.screen instanceof PauseScreen && mc.level != null) mc.setScreen(null);
+        if (mc.gui.screen() instanceof PauseScreen && mc.level != null) mc.gui.setScreen(null);
         // a test game never keeps the user's mouse: let go whenever the game grabbed it (this jar exists only in test profiles)
         if (mc.mouseHandler.isMouseGrabbed()) mc.mouseHandler.releaseMouse();
         if (BENCHMARK != null && !BENCHMARK.isBlank()) {
@@ -102,7 +102,16 @@ public class TestBridge implements ClientModInitializer {
                 allMessages = net.minecraft.client.gui.components.ChatComponent.class.getDeclaredField("allMessages");
                 allMessages.setAccessible(true);
             }
-            List<GuiMessage> all = (List<GuiMessage>) allMessages.get(mc.gui.getChat());
+            Object chatComp = null;
+            for (Field f : mc.gui.getClass().getDeclaredFields()) {
+                if (f.getType() == net.minecraft.client.gui.components.ChatComponent.class) {
+                    f.setAccessible(true);
+                    chatComp = f.get(mc.gui);
+                    break;
+                }
+            }
+            if (chatComp == null) return;
+            List<GuiMessage> all = (List<GuiMessage>) allMessages.get(chatComp);
             if (all.isEmpty()) { lastHead = null; return; }
             if (all.get(0) == lastHead) return;
             List<String> fresh = new ArrayList<>();
@@ -287,7 +296,7 @@ public class TestBridge implements ClientModInitializer {
             case "leave": return onGame(() -> {
                 if (mc.level == null) return ok("\"was\":false");
                 mc.disconnectWithSavingScreen();
-                mc.setScreen(new TitleScreen());
+                mc.gui.setScreen(new TitleScreen());
                 return ok("\"was\":true");
             });
             case "runfile": {
@@ -306,8 +315,8 @@ public class TestBridge implements ClientModInitializer {
                 return ok("");
             });
             case "screen": return onGame(() -> {
-                if (a.length > 0 && a[0].equals("close")) mc.setScreen(null);
-                return ok("\"screen\":" + q(mc.screen == null ? "" : mc.screen.getClass().getName()));
+                if (a.length > 0 && a[0].equals("close")) mc.gui.setScreen(null);
+                return ok("\"screen\":" + q(mc.gui.screen() == null ? "" : mc.gui.screen().getClass().getName()));
             });
             case "imgui": return onGame(() -> handleImGui(mc, a));
             case "panels": return onGame(() -> handlePanels(mc, a, rest));
@@ -322,7 +331,7 @@ public class TestBridge implements ClientModInitializer {
 
     private static String state(Minecraft mc) {
         StringBuilder b = new StringBuilder();
-        b.append("\"screen\":").append(q(mc.screen == null ? "" : mc.screen.getClass().getName()));
+        b.append("\"screen\":").append(q(mc.gui.screen() == null ? "" : mc.gui.screen().getClass().getName()));
         b.append(",\"inWorld\":").append(mc.player != null && mc.level != null);
         b.append(",\"chat\":").append(chat.size());
         if (mc.player != null && mc.level != null) {
@@ -435,7 +444,7 @@ public class TestBridge implements ClientModInitializer {
                 case "resize" -> {
                     int w = Integer.parseInt(a[1]);
                     int h = Integer.parseInt(a[2]);
-                    org.lwjgl.glfw.GLFW.glfwSetWindowSize(win, w, h);
+                    mc.getWindow().setWindowed(w, h);
                 }
                 case "guiscale" -> {
                     int scale = Integer.parseInt(a[1]);
@@ -648,7 +657,7 @@ public class TestBridge implements ClientModInitializer {
         benchTicks++;
         switch (benchState) {
             case IDLE -> {
-                if (mc.level == null && mc.screen instanceof TitleScreen && benchTicks >= 10) {
+                if (mc.level == null && mc.gui.screen() instanceof TitleScreen && benchTicks >= 10) {
                     System.out.println("[testbridge] benchmark bootstrap: opening world for scenario=" + BENCHMARK);
                     openWorld(mc, "manhattan-benchmark", 20261109L, false);
                     benchState = BenchState.OPENING_WORLD;
@@ -665,7 +674,7 @@ public class TestBridge implements ClientModInitializer {
             }
             case WAIT_IN_WORLD -> {
                 if (benchTicks >= 40) {
-                    if (mc.screen != null) mc.setScreen(null);
+                    if (mc.gui.screen() != null) mc.gui.setScreen(null);
                     setupBenchmarkScenario(mc, BENCHMARK.trim());
                     benchState = BenchState.SETUP;
                     benchTicks = 0;
@@ -1158,7 +1167,7 @@ public class TestBridge implements ClientModInitializer {
             case "project_queue_pipeline" ->
                     mc.level.getBlockState(new BlockPos(98, -60, 100)).is(Blocks.CHEST)
                             && mc.level.getBlockState(new BlockPos(98, -60, 102)).is(Blocks.CHEST)
-                            && mc.level.getBlockState(new BlockPos(98, -60, 104)).is(Blocks.RED_BED)
+                            && mc.level.getBlockState(new BlockPos(98, -60, 104)).getBlock() instanceof net.minecraft.world.level.block.BedBlock
                             && mc.level.getFluidState(new BlockPos(104, -62, 99)).is(FluidTags.WATER);
             case "project_script_params" ->
                     mc.level.getBlockState(new BlockPos(98, -60, 100)).is(Blocks.CHEST)
@@ -1171,7 +1180,7 @@ public class TestBridge implements ClientModInitializer {
                             && mc.level.getBlockState(new BlockPos(104, -60, 97)).is(Blocks.STONE)
                             && mc.player != null && !mc.player.getInventory().getItem(0).isEmpty();
             case "project_pre_dusk_gate" ->
-                    mc.level.getBlockState(new BlockPos(98, -60, 102)).is(Blocks.RED_BED)
+                    mc.level.getBlockState(new BlockPos(98, -60, 102)).getBlock() instanceof net.minecraft.world.level.block.BedBlock
                             && mc.level.getBlockState(new BlockPos(115, -60, 99)).is(Blocks.STONE)
                             && (mc.level.getOverworldClockTime() % 24000L) >= 11700L;
             case "project_partial_stop_gate" ->
@@ -1657,7 +1666,7 @@ public class TestBridge implements ClientModInitializer {
                 int zombies = 0;
                 if (mc.player != null) {
                     for (Entity e : mc.level.entitiesForRendering()) {
-                        if (e.isAlive() && e.getType() == EntityType.ZOMBIE && e.distanceTo(mc.player) <= 48.0) {
+                        if (e.isAlive() && net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).getPath().equals("zombie") && e.distanceTo(mc.player) <= 48.0) {
                             zombies++;
                         }
                     }
@@ -1786,13 +1795,13 @@ public class TestBridge implements ClientModInitializer {
     private static String openWorld(Minecraft mc, String name, long seed, boolean normal) {
         if (mc.level != null) return err("already in a world");
         if (mc.getLevelSource().levelExists(name)) {
-            mc.createWorldOpenFlows().openWorld(name, () -> mc.setScreen(new TitleScreen()));
+            mc.createWorldOpenFlows().openWorld(name, () -> mc.gui.setScreen(new TitleScreen()));
             return ok("\"created\":false");
         }
         LevelSettings settings = new LevelSettings(name, GameType.CREATIVE,
                 new LevelSettings.DifficultySettings(Difficulty.PEACEFUL, false, false), true, WorldDataConfiguration.DEFAULT);
         mc.createWorldOpenFlows().createFreshLevel(name, settings, new WorldOptions(seed, false, false),
-                normal ? WorldPresets::createNormalWorldDimensions : WorldPresets::createFlatWorldDimensions, new TitleScreen());
+                normal ? WorldPresets::createNormalWorldDimensions : WorldPresets::createTestWorldDimensions, new TitleScreen());
         return ok("\"created\":true");
     }
 

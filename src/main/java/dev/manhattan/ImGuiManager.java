@@ -1,34 +1,25 @@
 package dev.manhattan;
 
-import com.mojang.blaze3d.opengl.GlStateManager;
-import com.mojang.blaze3d.opengl.GlTexture;
-import com.mojang.blaze3d.pipeline.RenderTarget;
+import com.mojang.blaze3d.platform.InputConstants;
 import com.mojang.blaze3d.platform.Window;
 import imgui.ImGui;
 import imgui.ImGuiIO;
 import imgui.flag.ImGuiConfigFlags;
-import imgui.gl3.ImGuiImplGl3;
-import imgui.glfw.ImGuiImplGlfw;
+import imgui.flag.ImGuiKey;
 import imgui.internal.ImGuiContext;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.input.KeyEvent;
-import org.lwjgl.glfw.GLFW;
-import org.lwjgl.glfw.GLFWMonitorCallback;
-import org.lwjgl.opengl.GL11;
-import org.lwjgl.opengl.GL30;
 
-import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static dev.manhattan.Config.cfg;
 
 /**
  * Dear ImGui lifecycle and input routing for the workspace ({@link Shell}, key J) and the closed-state
- * {@link Overlay}. While the workspace is open the game is drawn into {@link Shell}'s game area (letterboxed to the
- * window's aspect ratio): a click there gives the game the keyboard and mouse buttons, Esc gives them back to the
- * panels. While it is closed nothing here takes input; the overlay is only drawn.
+ * {@link Overlay}. Powered by {@link ImGuiRenderPearlRenderer} and direct SDL3/{@link InputConstants}
+ * event feeding (MC 26.3+, zero OpenGL/GLFW dependencies).
  */
 public final class ImGuiManager {
     private static boolean nativesPrepared;
@@ -105,7 +96,7 @@ public final class ImGuiManager {
         focused = false;
         unfocusRequested = true;
         Minecraft mc = Minecraft.getInstance();
-        if (mc != null && mc.screen == null && mc.level != null && !"true".equals(System.getProperty("manhattan.tests"))) {
+        if (mc != null && mc.gui.screen() == null && mc.level != null && !"true".equals(System.getProperty("manhattan.tests"))) {
             mc.mouseHandler.grabMouse();
         }
         if (mc != null && mc.getWindow() != null) updateViewportMetrics(mc.getWindow());
@@ -291,14 +282,14 @@ public final class ImGuiManager {
         Minecraft mc = Minecraft.getInstance();
         if (mc == null) return;
         Window win = mc.getWindow();
-        if (win == null || win.isMinimized() || win.getWidth() <= 0 || win.getHeight() <= 0) return;
+        if (win == null || win.isIconified() || win.getWidth() <= 0 || win.getHeight() <= 0) return;
         updateViewportMetrics(win);
         if (!isActive() || initFailed) return;
         if (Shell.isOpen() && mc.mouseHandler != null && mc.mouseHandler.isMouseGrabbed()) {
             mc.mouseHandler.releaseMouse();
         }
         if (!initialized) {
-            if (!init(win.handle())) return;
+            if (!init()) return;
         }
         if (stopRequested) {
             stopRequested = false;
@@ -307,10 +298,10 @@ public final class ImGuiManager {
         Backend.render(mc, win);
     }
 
-    private static boolean init(long windowHandle) {
+    private static boolean init() {
         try {
             prepareNatives();
-            Backend.init(windowHandle);
+            Backend.init();
             initialized = true;
             return true;
         } catch (Throwable t) {
@@ -341,12 +332,12 @@ public final class ImGuiManager {
         KeyEvent ev = new KeyEvent(key, scancode, mods);
         boolean textActive = !unfocusRequested && Backend.wantsTextInput();
         boolean uiHasKeys = !gameFocused || focused || textActive;
-        if (action == GLFW.GLFW_PRESS) {
+        if (action == InputConstants.PRESS) {
             boolean ctrl = Platform.shortcutDown(mods);   // Cmd on macOS
-            if (ctrl && key == GLFW.GLFW_KEY_P) {
+            if (ctrl && key == InputConstants.KEY_P) {
                 CommandPalette.toggle();
                 setGameFocused(false);
-                Backend.onKey(window, key, scancode, GLFW.GLFW_RELEASE, mods);
+                Backend.onKey(key, InputConstants.RELEASE, mods);
                 return true;
             }
             if (uiHasKeys && !textActive && QueueMod.open != null && QueueMod.open.matches(ev)) {
@@ -359,10 +350,10 @@ public final class ImGuiManager {
             }
         }
         if (uiHasKeys) {
-            if ((action == GLFW.GLFW_PRESS || action == GLFW.GLFW_REPEAT) && DockedPanels.handleEditorKey(key, mods)) {
+            if ((action == InputConstants.PRESS || action == InputConstants.REPEAT) && DockedPanels.handleEditorKey(key, mods)) {
                 return true;
             }
-            if (action == GLFW.GLFW_PRESS && key == GLFW.GLFW_KEY_ESCAPE && !textActive) {
+            if (action == InputConstants.PRESS && key == InputConstants.KEY_ESCAPE && !textActive) {
                 if (CommandPalette.isOpen()) {
                     CommandPalette.close();
                 } else if (Shell.drawer != Shell.Drawer.NONE) {
@@ -372,10 +363,10 @@ public final class ImGuiManager {
                     focused = false;
                     unfocusRequested = true;
                 }
-                Backend.onKey(window, key, scancode, action, mods);
+                Backend.onKey(key, action, mods);
                 return true;
             }
-            Backend.onKey(window, key, scancode, action, mods);
+            Backend.onKey(key, action, mods);
             return true;
         }
         return false;
@@ -386,7 +377,7 @@ public final class ImGuiManager {
         if (mc == null || mc.getWindow() == null || window != mc.getWindow().handle()) return false;
         if (!capturesInput() || !initialized) return false;
         if (!gameFocused || focused || (!unfocusRequested && Backend.wantsTextInput())) {
-            Backend.onChar(window, codepoint);
+            Backend.onChar(codepoint);
             return true;
         }
         return false;
@@ -399,7 +390,7 @@ public final class ImGuiManager {
         lastMouseY = ypos;
         if (!capturesInput() || !initialized) return false;
         if (mc.mouseHandler.isMouseGrabbed()) return false;
-        Backend.onMouseMove(window, xpos, ypos);
+        Backend.onMouseMove(xpos, ypos);
         return false;
     }
 
@@ -408,27 +399,27 @@ public final class ImGuiManager {
         if (mc == null || mc.getWindow() == null || window != mc.getWindow().handle()) return false;
         if (!capturesInput() || !initialized) return false;
         if (mc.mouseHandler.isMouseGrabbed()) return false;
-        if (action == GLFW.GLFW_PRESS && button == GLFW.GLFW_MOUSE_BUTTON_LEFT && DockedPanels.handlePopupClick(lastMouseX, lastMouseY)) {
+        if (action == InputConstants.PRESS && button == InputConstants.MOUSE_BUTTON_LEFT && DockedPanels.handlePopupClick(lastMouseX, lastMouseY)) {
             return true;
         }
 
-        boolean overPopup =CommandPalette.isOpen() || Shell.drawer != Shell.Drawer.NONE && Backend.wantsMouse();
+        boolean overPopup = CommandPalette.isOpen() || Shell.drawer != Shell.Drawer.NONE && Backend.wantsMouse();
         boolean inGame = insideViewport(lastMouseX, lastMouseY) && !overPopup;
         if (inGame) {
-            if (action == GLFW.GLFW_PRESS) {
+            if (action == InputConstants.PRESS) {
                 gameFocused = true;
                 focused = false;
                 unfocusRequested = true;
             }
-            Backend.onMouseButton(window, button, action, mods);
+            Backend.onMouseButton(button, action);
             return false;
         }
-        if (action == GLFW.GLFW_RELEASE && gameFocused) {
-            Backend.onMouseButton(window, button, action, mods);
+        if (action == InputConstants.RELEASE && gameFocused) {
+            Backend.onMouseButton(button, action);
             return false;
         }
-        Backend.onMouseButton(window, button, action, mods);
-        if (action == GLFW.GLFW_PRESS) {
+        Backend.onMouseButton(button, action);
+        if (action == InputConstants.PRESS) {
             gameFocused = false;
             focused = true;
             unfocusRequested = false;
@@ -442,7 +433,7 @@ public final class ImGuiManager {
         if (mc == null || mc.getWindow() == null || window != mc.getWindow().handle()) return false;
         if (!capturesInput() || !initialized) return false;
         if (mc.mouseHandler.isMouseGrabbed()) return false;
-        Backend.onMouseScroll(window, xoffset, yoffset);
+        Backend.onMouseScroll(xoffset, yoffset);
         return !insideViewport(lastMouseX, lastMouseY);
     }
 
@@ -450,11 +441,9 @@ public final class ImGuiManager {
 
     private static final class Backend {
         private static ImGuiContext ctx;
-        private static ImGuiImplGlfw glfw;
-        private static ImGuiImplGl3 gl3;
-        private static int blitReadFbo;
+        private static long lastFrameNs;
 
-        static void init(long windowHandle) {
+        static void init() {
             ctx = ImGui.createContext();
             ImGui.setCurrentContext(ctx);
 
@@ -470,17 +459,8 @@ public final class ImGuiManager {
                 io.getFonts().addFontDefault();
             }
 
-            glfw = new ImGuiImplGlfw();
-            GLFWMonitorCallback prevMonitor = GLFW.glfwSetMonitorCallback(null);
-            glfw.init(windowHandle, false);
-            GLFWMonitorCallback imguiMonitor = GLFW.glfwSetMonitorCallback(null);
-            GLFW.glfwSetMonitorCallback((monitor, event) -> {
-                if (prevMonitor != null) prevMonitor.invoke(monitor, event);
-                if (imguiMonitor != null) imguiMonitor.invoke(monitor, event);
-            });
-
-            gl3 = new ImGuiImplGl3();
-            gl3.init("#version 150");
+            ImGuiRenderPearlRenderer.init();
+            lastFrameNs = System.nanoTime();
         }
 
         /** Re-rasterises the fonts and rescales the style when the UI scale changed. */
@@ -490,8 +470,7 @@ public final class ImGuiManager {
             ImGuiIO io = ImGui.getIO();
             io.getFonts().clear();
             UiTheme.loadFonts(io, scale);
-            gl3.destroyFontsTexture();
-            gl3.createFontsTexture();
+            ImGuiRenderPearlRenderer.rebuildFontsTexture();
             UiTheme.apply(ImGui.getStyle(), scale);
         }
 
@@ -499,6 +478,19 @@ public final class ImGuiManager {
             ImGui.setCurrentContext(ctx);
             refreshScale();
             ImGuiIO io = ImGui.getIO();
+
+            int sw = Math.max(1, win.getScreenWidth());
+            int sh = Math.max(1, win.getScreenHeight());
+            int fbW = Math.max(1, win.getWidth());
+            int fbH = Math.max(1, win.getHeight());
+            io.setDisplaySize((float) sw, (float) sh);
+            io.setDisplayFramebufferScale((float) fbW / sw, (float) fbH / sh);
+
+            long nowNs = System.nanoTime();
+            float dt = (float) ((nowNs - lastFrameNs) / 1_000_000_000.0);
+            lastFrameNs = nowNs;
+            io.setDeltaTime(dt > 0f && dt < 1f ? dt : 1f / 60f);
+
             boolean shell = Shell.isOpen();
             if (!shell || mc.mouseHandler.isMouseGrabbed()) {
                 io.addConfigFlags(ImGuiConfigFlags.NoMouse);
@@ -506,13 +498,10 @@ public final class ImGuiManager {
             } else {
                 io.removeConfigFlags(ImGuiConfigFlags.NoMouse);
             }
-            // Closed (overlay only): ImGui must not touch the cursor mode, or the game's mouse look and aim jump.
             if (shell) io.removeConfigFlags(ImGuiConfigFlags.NoMouseCursorChange);
             else io.addConfigFlags(ImGuiConfigFlags.NoMouseCursorChange);
 
             io.setWantSetMousePos(false);
-            glfw.newFrame();
-            gl3.newFrame();
             ImGui.newFrame();
 
             if (unfocusRequested) {
@@ -528,70 +517,17 @@ public final class ImGuiManager {
 
             ImGui.render();
 
-            GlStateManager._glBindFramebuffer(GL30.GL_FRAMEBUFFER, 0);
-            if (shell) blitGameViewport(mc, win);
-            gl3.renderDrawData(ImGui.getDrawData());
+            ImGuiRenderPearlRenderer.renderDrawData(mc, ImGui.getDrawData(), shell, shell ? fittedViewportRect() : null);
+
             if (shotPath != null) {
                 Path p = shotPath;
                 shotPath = null;
-                saveShot(win, p);
+                shotDone = "unsupported on RenderPearl";
             }
 
             framesRendered++;
             lastDisplayW = (int) w;
             lastDisplayH = (int) h;
-        }
-
-        /** The finished frame (game and panels) as a PNG; used by the in-game tests to look at the layouts. */
-        private static void saveShot(Window win, Path p) {
-            try {
-                int w = win.getWidth(), h = win.getHeight();
-                java.nio.ByteBuffer buf = org.lwjgl.BufferUtils.createByteBuffer(w * h * 4);
-                GL11.glReadPixels(0, 0, w, h, GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, buf);
-                java.awt.image.BufferedImage img = new java.awt.image.BufferedImage(w, h, java.awt.image.BufferedImage.TYPE_INT_RGB);
-                for (int y = 0; y < h; y++) {
-                    for (int x = 0; x < w; x++) {
-                        int i = ((h - 1 - y) * w + x) * 4;
-                        img.setRGB(x, y, ((buf.get(i) & 0xFF) << 16) | ((buf.get(i + 1) & 0xFF) << 8) | (buf.get(i + 2) & 0xFF));
-                    }
-                }
-                Files.createDirectories(p.getParent());
-                javax.imageio.ImageIO.write(img, "png", p.toFile());
-                shotDone = p.toString();
-            } catch (Throwable t) {
-                shotDone = "error: " + t;
-            }
-        }
-
-        /** Clears the window to the workspace background and copies the game image into the fitted game area. */
-        private static void blitGameViewport(Minecraft mc, Window win) {
-            RenderTarget mainTarget = mc.getMainRenderTarget();
-            if (mainTarget == null || !(mainTarget.getColorTexture() instanceof GlTexture glTex)) return;
-            if (blitReadFbo == 0) blitReadFbo = GlStateManager.glGenFramebuffers();
-
-            float[] fit = fittedViewportRect();
-            double sx = (double) win.getWidth() / Math.max(1, win.getScreenWidth());
-            double sy = (double) win.getHeight() / Math.max(1, win.getScreenHeight());
-            int dstX0 = (int) Math.round(fit[0] * sx);
-            int dstX1 = (int) Math.round((fit[0] + fit[2]) * sx);
-            int dstY0 = (int) Math.round((win.getScreenHeight() - (fit[1] + fit[3])) * sy);
-            int dstY1 = (int) Math.round((win.getScreenHeight() - fit[1]) * sy);
-
-            GlStateManager._glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, 0);
-            GlStateManager._disableScissorTest();
-            GL11.glDisable(GL11.GL_SCISSOR_TEST);
-            GL11.glClearColor(UiTheme.r(UiTheme.BG), UiTheme.g(UiTheme.BG), UiTheme.b(UiTheme.BG), 1.0f);
-            GL11.glClear(GL11.GL_COLOR_BUFFER_BIT);
-
-            GlStateManager._glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, blitReadFbo);
-            GlStateManager._glFramebufferTexture2D(GL30.GL_READ_FRAMEBUFFER, GL30.GL_COLOR_ATTACHMENT0, GL11.GL_TEXTURE_2D, glTex.glId(), 0);
-            GlStateManager._glBlitFrameBuffer(
-                    0, 0, mainTarget.width, mainTarget.height,
-                    dstX0, dstY0, dstX1, dstY1,
-                    GL11.GL_COLOR_BUFFER_BIT, GL11.GL_LINEAR
-            );
-            GlStateManager._glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, 0);
-            GlStateManager._glBindFramebuffer(GL30.GL_FRAMEBUFFER, 0);
         }
 
         static boolean wantsKeyboard() {
@@ -609,29 +545,86 @@ public final class ImGuiManager {
             return ImGui.getIO().getWantCaptureMouse();
         }
 
-        static void onKey(long window, int key, int scancode, int action, int mods) {
+        static void onKey(int key, int action, int mods) {
             ImGui.setCurrentContext(ctx);
-            glfw.keyCallback(window, key, scancode, action, mods);
+            ImGuiIO io = ImGui.getIO();
+            io.addKeyEvent(ImGuiKey.ModCtrl, (mods & Platform.MOD_CONTROL) != 0);
+            io.addKeyEvent(ImGuiKey.ModShift, (mods & Platform.MOD_SHIFT) != 0);
+            io.addKeyEvent(ImGuiKey.ModAlt, (mods & Platform.MOD_ALT) != 0);
+            io.addKeyEvent(ImGuiKey.ModSuper, (mods & Platform.MOD_SUPER) != 0);
+            int imguiKey = toImGuiKey(key);
+            if (imguiKey != ImGuiKey.None) {
+                io.addKeyEvent(imguiKey, action != InputConstants.RELEASE);
+            }
         }
 
-        static void onChar(long window, int codepoint) {
+        static void onChar(int codepoint) {
             ImGui.setCurrentContext(ctx);
-            glfw.charCallback(window, codepoint);
+            ImGui.getIO().addInputCharacter(codepoint);
         }
 
-        static void onMouseMove(long window, double x, double y) {
+        static void onMouseMove(double x, double y) {
             ImGui.setCurrentContext(ctx);
-            glfw.cursorPosCallback(window, x, y);
+            ImGui.getIO().addMousePosEvent((float) x, (float) y);
         }
 
-        static void onMouseButton(long window, int button, int action, int mods) {
+        static void onMouseButton(int button, int action) {
             ImGui.setCurrentContext(ctx);
-            glfw.mouseButtonCallback(window, button, action, mods);
+            if (button >= 0 && button < 5) {
+                ImGui.getIO().addMouseButtonEvent(button, action != InputConstants.RELEASE);
+            }
         }
 
-        static void onMouseScroll(long window, double dx, double dy) {
+        static void onMouseScroll(double dx, double dy) {
             ImGui.setCurrentContext(ctx);
-            glfw.scrollCallback(window, dx, dy);
+            ImGui.getIO().addMouseWheelEvent((float) dx, (float) dy);
+        }
+
+        private static int toImGuiKey(int key) {
+            if (key >= InputConstants.KEY_A && key <= InputConstants.KEY_Z) {
+                return ImGuiKey.A + (key - InputConstants.KEY_A);
+            }
+            if (key >= InputConstants.KEY_0 && key <= InputConstants.KEY_9) {
+                return ImGuiKey._0 + (key - InputConstants.KEY_0);
+            }
+            return switch (key) {
+                case InputConstants.KEY_TAB -> ImGuiKey.Tab;
+                case InputConstants.KEY_LEFT -> ImGuiKey.LeftArrow;
+                case InputConstants.KEY_RIGHT -> ImGuiKey.RightArrow;
+                case InputConstants.KEY_UP -> ImGuiKey.UpArrow;
+                case InputConstants.KEY_DOWN -> ImGuiKey.DownArrow;
+                case InputConstants.KEY_PAGEUP -> ImGuiKey.PageUp;
+                case InputConstants.KEY_PAGEDOWN -> ImGuiKey.PageDown;
+                case InputConstants.KEY_HOME -> ImGuiKey.Home;
+                case InputConstants.KEY_END -> ImGuiKey.End;
+                case InputConstants.KEY_INSERT -> ImGuiKey.Insert;
+                case InputConstants.KEY_DELETE -> ImGuiKey.Delete;
+                case InputConstants.KEY_BACKSPACE -> ImGuiKey.Backspace;
+                case InputConstants.KEY_SPACE -> ImGuiKey.Space;
+                case InputConstants.KEY_RETURN -> ImGuiKey.Enter;
+                case InputConstants.KEY_NUMPADENTER -> ImGuiKey.KeypadEnter;
+                case InputConstants.KEY_ESCAPE -> ImGuiKey.Escape;
+                case InputConstants.KEY_SLASH -> ImGuiKey.Slash;
+                case InputConstants.KEY_MINUS -> ImGuiKey.Minus;
+                case InputConstants.KEY_EQUALS -> ImGuiKey.Equal;
+                case InputConstants.KEY_LBRACKET -> ImGuiKey.LeftBracket;
+                case InputConstants.KEY_RBRACKET -> ImGuiKey.RightBracket;
+                case InputConstants.KEY_BACKSLASH -> ImGuiKey.Backslash;
+                case InputConstants.KEY_SEMICOLON -> ImGuiKey.Semicolon;
+                case InputConstants.KEY_APOSTROPHE -> ImGuiKey.Apostrophe;
+                case InputConstants.KEY_COMMA -> ImGuiKey.Comma;
+                case InputConstants.KEY_PERIOD -> ImGuiKey.Period;
+                case InputConstants.KEY_GRAVE -> ImGuiKey.GraveAccent;
+                case InputConstants.KEY_LCONTROL -> ImGuiKey.LeftCtrl;
+                case InputConstants.KEY_RCONTROL -> ImGuiKey.RightCtrl;
+                case InputConstants.KEY_LSHIFT -> ImGuiKey.LeftShift;
+                case InputConstants.KEY_RSHIFT -> ImGuiKey.RightShift;
+                case InputConstants.KEY_LALT -> ImGuiKey.LeftAlt;
+                case InputConstants.KEY_RALT -> ImGuiKey.RightAlt;
+                case InputConstants.KEY_LGUI -> ImGuiKey.LeftSuper;
+                case InputConstants.KEY_RGUI -> ImGuiKey.RightSuper;
+                default -> ImGuiKey.None;
+            };
         }
     }
 }

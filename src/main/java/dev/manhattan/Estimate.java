@@ -68,7 +68,7 @@ final class Estimate {
     /** Counts the wet cells of the selection (water, seagrass, kelp ...), for fill_water. */
     static Estimate water() {
         Estimate e = new Estimate();
-        e.remains = st -> st.getFluidState().is(net.minecraft.tags.FluidTags.WATER) && !st.blocksMotion();
+        e.remains = st -> st.getFluidState().is(net.minecraft.tags.FluidTags.WATER) && !st.isSolid();
         e.mode = Mode.SELECTION;
         return e;
     }

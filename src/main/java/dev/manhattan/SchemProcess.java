@@ -599,7 +599,7 @@ public final class SchemProcess {
                 mtAim(p, Vec3.atCenterOf(mtBreakPos));
                 ClearProcess.equipFor(mc, p, bs);
                 mc.gameMode.continueDestroyBlock(mtBreakPos, Direction.UP);
-                p.swing(InteractionHand.MAIN_HAND);
+                p.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
                 return;
             }
         }
@@ -668,7 +668,7 @@ public final class SchemProcess {
                 mtAim(p, Vec3.atCenterOf(mtCur));
                 ClearProcess.equipFor(mc, p, now);
                 mc.gameMode.startDestroyBlock(mtCur, Direction.UP);
-                p.swing(InteractionHand.MAIN_HAND);
+                p.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
                 return;
             }
         }
@@ -762,7 +762,7 @@ public final class SchemProcess {
             }
             if (mtAim(p, hit.getLocation())) {
                 mc.gameMode.useItemOn(p, InteractionHand.MAIN_HAND, hit);
-                p.swing(InteractionHand.MAIN_HAND);
+                p.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
             }
             return;
         }
@@ -1007,7 +1007,7 @@ public final class SchemProcess {
         if (b instanceof net.minecraft.world.level.block.FallingBlock
                 || b instanceof net.minecraft.world.level.block.EntityBlock) return false;
         BlockState s = b.defaultBlockState();
-        return s.blocksMotion() && !s.hasBlockEntity() && s.canOcclude();
+        return s.isSolid() && !s.hasBlockEntity() && s.canOcclude();
     }
 
     private boolean mtPlaceScaffold(Minecraft mc, LocalPlayer p, Level level, BlockPos pos) {
@@ -1038,7 +1038,7 @@ public final class SchemProcess {
         }
         if (mtAim(p, hit.getLocation())) {
             mc.gameMode.useItemOn(p, InteractionHand.MAIN_HAND, hit);
-            p.swing(InteractionHand.MAIN_HAND);
+            p.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
             Block b = ((BlockItem) scaffoldItem).getBlock();
             if (dev.buildtools.Api.scaffoldOutsideSchematic == null || dev.buildtools.Api.scaffoldOutsideSchematic.test(pos, b)) {
                 dev.buildtools.Api.addScaffold(pos, b);

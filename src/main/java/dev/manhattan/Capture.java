@@ -432,7 +432,7 @@ final class Capture {
             }
         }
         boolean menu = Shell.isOpen() && Shell.drawer == Shell.Drawer.CAPTURE;
-        if (!cfg.captureShow || !(menu || aiming || mc.screen == null)) return;
+        if (!cfg.captureShow || !(menu || aiming || mc.gui.screen() == null)) return;
         if (!menu && !aiming && pulse % 40 != 0) return;   // in normal play only every 2 s
         int[] budget = {1500};
         var me = mc.player.blockPosition();
@@ -579,7 +579,7 @@ final class Capture {
                             m.setY(y);
                             BlockState s = level.getBlockState(m);
                             if (s.isAir()) { air++; continue; }
-                            if (s.getFluidState().is(FluidTags.WATER) && !s.blocksMotion()) { wet++; continue; }
+                            if (s.getFluidState().is(FluidTags.WATER) && !s.isSolid()) { wet++; continue; }
                             kinds.merge(BuiltInRegistries.BLOCK.getKey(s.getBlock()).getPath(), 1, Integer::sum);
                         }
                     }

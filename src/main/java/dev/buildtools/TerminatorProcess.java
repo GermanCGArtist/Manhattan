@@ -283,7 +283,7 @@ public final class TerminatorProcess extends Feature {
     /** Holds water and is not a solid block: water, seagrass, kelp, bubble column, ... (a waterlogged stair is solid). */
     static boolean wet(Level level, BlockPos pos) {
         BlockState s = level.getBlockState(pos);
-        return s.getFluidState().is(FluidTags.WATER) && !s.blocksMotion();
+        return s.getFluidState().is(FluidTags.WATER) && !s.isSolid();
     }
 
     private static boolean dry(Level level, BlockPos pos) {

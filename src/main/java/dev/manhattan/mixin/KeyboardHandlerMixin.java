@@ -13,7 +13,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public abstract class KeyboardHandlerMixin {
     @Inject(method = "keyPress", at = @At("HEAD"), cancellable = true)
     private void manhattan$onKeyPress(long window, int action, KeyEvent event, CallbackInfo ci) {
-        if (ImGuiManager.onKey(window, event.key(), event.scancode(), action, event.modifiers())) {
+        if (ImGuiManager.onKey(window, event.key(), event.keycode(), action, event.modifiers())) {
             ci.cancel();
         }
     }

@@ -475,7 +475,7 @@ public class QueueMod implements ClientModInitializer {
                 picking = false;
                 DockedPanels.handleImGuiPick(Places.target());
                 backFromAiming(null);
-            } else if (mc.screen == null || ImGuiManager.isDockedViewportActive()) {
+            } else if (mc.gui.screen() == null || ImGuiManager.isDockedViewportActive()) {
                 ImGuiManager.toggleShell();
             }
         }
@@ -483,7 +483,7 @@ public class QueueMod implements ClientModInitializer {
             if (Capture.aiming) {
                 Capture.aiming = false;
                 backFromAiming(Shell.Drawer.CAPTURE);
-            } else if (mc.screen == null || ImGuiManager.isDockedViewportActive()) {
+            } else if (mc.gui.screen() == null || ImGuiManager.isDockedViewportActive()) {
                 if (!Shell.isOpen()) ImGuiManager.openShell(Shell.lastMode());
                 Shell.drawer = Shell.Drawer.CAPTURE;
             }

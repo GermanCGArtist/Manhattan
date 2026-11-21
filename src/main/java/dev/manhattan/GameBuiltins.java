@@ -262,7 +262,7 @@ final class GameBuiltins {
             return countInSelection(in, st -> wanted.contains(st.getBlock()), l);
         });
         def(g, "water_left", 0, 0, "water_left()", "wet cells in the selection (water, seagrass, kelp ...)", (in, a, l) -> {
-            return countInSelection(in, st -> st.getFluidState().is(net.minecraft.tags.FluidTags.WATER) && !st.blocksMotion(), l);
+            return countInSelection(in, st -> st.getFluidState().is(net.minecraft.tags.FluidTags.WATER) && !st.isSolid(), l);
         });
     }
 

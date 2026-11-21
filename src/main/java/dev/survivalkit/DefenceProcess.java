@@ -15,10 +15,10 @@ import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.NeutralMob;
 import net.minecraft.world.entity.boss.wither.WitherBoss;
 import net.minecraft.world.entity.monster.Creeper;
-import net.minecraft.world.entity.monster.EnderMan;
+import net.minecraft.world.entity.monster.Enderman;
 import net.minecraft.world.entity.monster.Monster;
 import net.minecraft.world.entity.monster.Phantom;
-import net.minecraft.world.entity.monster.Slime;
+import net.minecraft.world.entity.monster.cubemob.Slime;
 import net.minecraft.world.entity.monster.hoglin.Hoglin;
 import net.minecraft.world.entity.monster.piglin.Piglin;
 import net.minecraft.world.entity.monster.piglin.PiglinAi;
@@ -74,11 +74,11 @@ final class DefenceProcess extends Feature {
         if (p == null || e == null || e == p || !e.isAlive() || ignored.contains(e.getId()) || ignoredFor(p, e)) return false;
         if (e.distanceTo(p) > maxRange || Math.abs(e.getY() - p.getY()) > Math.max(4.0, maxRange * 0.6)) return false;
         if (e instanceof Warden || e instanceof WitherBoss) return false;
-        if (e instanceof EnderMan em && !em.isCreepy()) return false;
+        if (e instanceof Enderman em && !em.isCreepy()) return false;
         if (e instanceof Piglin piglin && !piglin.isAggressive() && PiglinAi.isWearingSafeArmor(p)) return false;
         if (e instanceof Creeper c && !includeCalmCreeper && c.getSwelling(1.0f) <= 0 && c.getSwellDir() <= 0) return false;
         if (e instanceof NeutralMob nm) {
-            if (e instanceof EnderMan em) return em.isCreepy();
+            if (e instanceof Enderman em) return em.isCreepy();
             boolean angry = nm.isAngry() || (e instanceof Mob mob && (mob.isAggressive() || mob.getTarget() == p));
             if (!angry) return false;
             return nm.getTarget() == null || nm.getTarget() == p;
@@ -438,7 +438,7 @@ final class DefenceProcess extends Feature {
             mc.gameMode.attack(p, target);
             if (fought.size() > 500) fought.clear();
             if (fought.add(target.getId())) Session.count("mobs fought");
-            p.swing(InteractionHand.MAIN_HAND);
+            p.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
         }
     }
 

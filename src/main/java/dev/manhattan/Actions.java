@@ -327,7 +327,7 @@ final class Actions {
             if (estimate.measurable() ? better : moved) noProgress = 0;
             else noProgress++;
             // standing still for minutes while busy: do what you would do by hand, start it again
-            if (moved || better || p.isSleeping() || Minecraft.getInstance().screen != null) still = 0;
+            if (moved || better || p.isSleeping() || Minecraft.getInstance().gui.screen() != null) still = 0;
             else if (++still > KICK_TICKS && kicks < MAX_KICKS) {
                 kicks++;
                 still = 0;

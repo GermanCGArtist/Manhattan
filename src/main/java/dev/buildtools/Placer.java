@@ -211,7 +211,7 @@ final class Placer {
             Direction f = Direction.getApproximateNearest(p.getEyePosition().subtract(click.aim()));
             if (!breaking) { mc.gameMode.startDestroyBlock(target, f); breaking = true; }
             else mc.gameMode.continueDestroyBlock(target, f);
-            p.swing(InteractionHand.MAIN_HAND);
+            p.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
             return Status.WORKING;
         }
 
@@ -248,7 +248,7 @@ final class Placer {
         } else {
             mc.gameMode.useItem(p, InteractionHand.MAIN_HAND);   // buckets aim with the look ray (checked above)
         }
-        p.swing(InteractionHand.MAIN_HAND);
+        p.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
         actions++;
         cooldown = 6;   // like a player: no more than a click every few ticks
         return Status.WORKING;

@@ -41,7 +41,7 @@ public final class Areas {
         Minecraft mc = Minecraft.getInstance();
         if (mc.levelRenderer == null) return;
         BlockPos me = mc.player != null ? mc.player.blockPosition() : null;
-        try (var ignored = mc.levelRenderer.collectPerFrameGizmos()) {
+        try (var ignored = mc.levelRenderer.collectPerFrameRenderThreadGizmos()) {
             GizmoStyle style = GizmoStyle.stroke(0xFF00E5FF, 2.0f);
             if (!boxes.isEmpty()) {
                 for (int[] b : boxes) {

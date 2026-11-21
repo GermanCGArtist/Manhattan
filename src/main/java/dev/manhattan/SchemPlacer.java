@@ -434,7 +434,7 @@ final class SchemPlacer {
                 if (++turned < 2) return false;   // let the rotation reach the server before clicking
                 turned = 0;
                 mc.gameMode.useItemOn(p, InteractionHand.MAIN_HAND, new BlockHitResult(chosen.hit(), chosen.face(), chosen.against(), false));
-                p.swing(InteractionHand.MAIN_HAND);
+                p.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
                 clicks++;
                 stage = Stage.VERIFY;
                 stageTicks = 0;

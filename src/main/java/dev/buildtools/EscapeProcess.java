@@ -290,7 +290,7 @@ final class EscapeProcess extends Feature {
                 bestTool(p, level.getBlockState(up));
                 if (!up.equals(breakingUp)) { mc.gameMode.startDestroyBlock(up, net.minecraft.core.Direction.DOWN); breakingUp = up; }
                 else mc.gameMode.continueDestroyBlock(up, net.minecraft.core.Direction.DOWN);
-                p.swing(net.minecraft.world.InteractionHand.MAIN_HAND);
+                p.swing(net.minecraft.world.InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
                 if (passable(level, up)) breakingUp = null;
             }
         } else {

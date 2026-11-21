@@ -41,7 +41,7 @@ final class PathRender {
         }
         if (!zones && path.isEmpty()) return;
         // one gizmo collection for everything drawn this frame
-        try (var ignored = mc.levelRenderer.collectPerFrameGizmos()) {
+        try (var ignored = mc.levelRenderer.collectPerFrameRenderThreadGizmos()) {
             if (zones) ScaffoldZones.draw(mc);
             if (path.isEmpty() || me == null) return;
             int idx = Math.max(0, Math.min(me.coordinator().pathIndex(), path.size()));

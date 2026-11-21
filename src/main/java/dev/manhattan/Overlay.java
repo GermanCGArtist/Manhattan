@@ -25,8 +25,8 @@ final class Overlay {
     /** Whether ImGui has to run while the workspace is closed. */
     static boolean visible() {
         Minecraft mc = Minecraft.getInstance();
-        if (mc == null || mc.level == null || mc.player == null || mc.options.hideGui) return false;
-        if (mc.screen != null && !(mc.screen instanceof ChatScreen)) return false;
+        if (mc == null || mc.level == null || mc.player == null) return false;
+        if (mc.gui.screen() != null && !(mc.gui.screen() instanceof ChatScreen)) return false;
         pollErrors();
         return QueueMod.runner.running() || Capture.aiming || QueueMod.picking || toastActive();
     }
