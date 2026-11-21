@@ -360,6 +360,12 @@ public class ChunkRunner extends Actions.Action {
             }
             ChunkGrid.ColumnBox next = chunkByKey.get(claim.chunkKey());
             if (next == null) {
+                // If the leased chunk belongs to a different task in the same Fleet Project,
+                // finish this task cleanly without marking the peer/other-task chunk as FAILED.
+                if (taskIdPrefix != null && claim.chunkKey() != null && !claim.chunkKey().startsWith(taskIdPrefix + "/")) {
+                    finishCleanly(0.0);
+                    return;
+                }
                 leaseProvider.reportChunk(claim.chunkKey(), "FAILED", "Unknown chunk key");
                 return;
             }

@@ -57,6 +57,7 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
     private int baseTripCooldownTicks;
     private int baseTripFailStreak;
     private int emergencyCooldownTicks;
+    private int fleetRestartCooldownTicks;
 
     private GameProjectRuntime() {
         this.scheduler = new PriorityScheduler(this);
@@ -70,6 +71,7 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
         if (sleepCooldownTicks > 0) sleepCooldownTicks--;
         if (baseTripCooldownTicks > 0) baseTripCooldownTicks--;
         if (emergencyCooldownTicks > 0) emergencyCooldownTicks--;
+        if (fleetRestartCooldownTicks > 0) fleetRestartCooldownTicks--;
 
         if (mc == null || mc.player == null || mc.level == null) {
             return;
@@ -115,6 +117,7 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
      * for a chunk lease and automatically starts the assigned Project without requiring an Editor online.
      */
     private void tickFleetWorkerIdle() {
+        if (fleetRestartCooldownTicks > 0) return;
         dev.manhattan.fleet.FleetClient fc = dev.manhattan.fleet.FleetClient.instance();
         if (!fc.isWorkerActive()) return;
         dev.manhattan.fleet.FleetProtocol.WorkGrant grant = fc.activeGrant();
@@ -142,8 +145,27 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
                 fleetProject.places.bed = grant.assignedBed.clone();
                 dev.survivalkit.Api.setBedPos(grant.assignedBed);
             }
+            // Scope execution to the exact task that owns grant.chunkKey ("<taskId>/<x>,<z>[,<y>]")
+            // so the worker does not run unrelated tasks or misreport another task's chunk key as unknown.
+            if (grant.chunkKey != null && grant.chunkKey.contains("/")) {
+                String leasedTaskId = grant.chunkKey.substring(0, grant.chunkKey.indexOf('/'));
+                boolean matched = false;
+                for (ProjectTask t : fleetProject.tasks) {
+                    if (t != null && leasedTaskId.equals(t.id)) {
+                        matched = true;
+                        break;
+                    }
+                }
+                if (matched) {
+                    for (ProjectTask t : fleetProject.tasks) {
+                        if (t != null) t.enabled = leasedTaskId.equals(t.id);
+                    }
+                }
+            }
+            fleetRestartCooldownTicks = 60;
             startQueue(fleetProject);
         } catch (Exception ignored) {
+            fleetRestartCooldownTicks = 60;
         }
     }
 
