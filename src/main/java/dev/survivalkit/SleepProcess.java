@@ -47,6 +47,15 @@ final class SleepProcess extends Feature {
         return lvl != null && lvl.dimension() == Level.OVERWORLD && (lvl.isDarkOutside() || (cfg.weather && lvl.isThundering()));
     }
 
+    /** True when it is morning/midday (outside dusk/night and not thundering), e.g. another player skipped the night. */
+    private static boolean isMorningOrMidday(Minecraft mc) {
+        Level lvl = mc.level;
+        if (lvl == null || lvl.dimension() != Level.OVERWORLD) return true;
+        if (isNight(mc)) return false;
+        long time = lvl.getOverworldClockTime() % 24000L;
+        return time < 9000L || time >= 23460L;
+    }
+
     @Override
     void tick() {
         Minecraft mc = Minecraft.getInstance();
@@ -109,7 +118,7 @@ final class SleepProcess extends Feature {
             Util.msg("It is not night yet (or you are not in the overworld).");
             return;
         }
-        if (allowPreDusk && mc.level.dimension() != Level.OVERWORLD) {
+        if (allowPreDusk && (mc.level.dimension() != Level.OVERWORLD || isMorningOrMidday(mc))) {
             return;
         }
         start(mc);
@@ -165,6 +174,13 @@ final class SleepProcess extends Feature {
 
         switch (state) {
             case PATHING -> {
+                if (isMorningOrMidday(mc)) {
+                    EngineSelector.current().cancel();
+                    state = State.IDLE;
+                    cooldown = 20 * 10;
+                    Util.msg("Night was skipped (morning arrived) - carrying on.");
+                    return;
+                }
                 if (timer > pathTimeout) { fail("Could not reach the bed in time."); return; }
                 if (bedGone(mc, p)) {
                     if (cfg.logoffOnMissingBed) {
@@ -210,6 +226,12 @@ final class SleepProcess extends Feature {
                 EngineSelector.current().goTo(GoalSpec.near(bed, 1));
             }
             case WAITING -> {
+                if (isMorningOrMidday(mc)) {
+                    state = State.IDLE;
+                    cooldown = 20 * 10;
+                    Util.msg("Night was skipped (morning arrived) - carrying on.");
+                    return;
+                }
                 if (isNight(mc)) {
                     state = State.ENTERING;
                     timer = 0;
