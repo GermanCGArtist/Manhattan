@@ -50,6 +50,7 @@ public final class FleetClient {
     // Worker lease state
     private WorkGrant activeGrant;
     private boolean claimInFlight;
+    private boolean serverSaidIdle;
     private long lastClaimRequestMs;
     private long lastHeartbeatMs;
 
@@ -96,6 +97,7 @@ public final class FleetClient {
         worldId = "";
         activeGrant = null;
         claimInFlight = false;
+        serverSaidIdle = false;
         designatedSleeper = false;
         sleepBedPos = null;
         sleepExpiresAtMs = 0L;
@@ -246,6 +248,7 @@ public final class FleetClient {
         if (!claimInFlight && now - lastClaimRequestMs < 2_500L) return;
 
         claimInFlight = true;
+        serverSaidIdle = false;
         lastClaimRequestMs = now;
         JsonObject body = new JsonObject();
         if (activeGrant != null && activeGrant.projectHash != null) {
@@ -263,8 +266,11 @@ public final class FleetClient {
                 if (g != null && !g.idle && expectedJobId.equals(g.jobId) && g.chunkKey != null) {
                     return ClaimResult.granted(g.chunkKey);
                 }
+                if (serverSaidIdle) {
+                    return ClaimResult.noWork();
+                }
                 requestWorkIfIdle();
-                return claimInFlight ? ClaimResult.waiting() : ClaimResult.noWork();
+                return ClaimResult.waiting();
             }
 
             @Override
@@ -285,6 +291,8 @@ public final class FleetClient {
         if (activeGrant != null && chunkKey.equals(activeGrant.chunkKey)) {
             activeGrant = null;
             claimInFlight = false;
+            serverSaidIdle = false;
+            lastClaimRequestMs = 0L; // Immediately claim the next chunk without throttle-exiting ChunkRunner
         }
     }
 
@@ -454,7 +462,9 @@ public final class FleetClient {
                 WorkGrant grant = FleetProtocol.GSON.fromJson(body, WorkGrant.class);
                 if (grant == null || grant.idle) {
                     activeGrant = null;
+                    serverSaidIdle = true;
                 } else {
+                    serverSaidIdle = false;
                     if (grant.projectJson != null && grant.projectHash != null) {
                         cachedProjects.put(grant.projectHash, grant.projectJson);
                     }
