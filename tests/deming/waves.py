@@ -17,7 +17,22 @@ import argparse, copy, glob, json, os, re, subprocess, sys, time
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SPECS = os.path.join(REPO, "tests", "deming")
 OUT = os.path.join(REPO, "tmp", "deming-waves")
-DEMING_DEFAULT = os.path.join(os.path.dirname(REPO), "Deming", "target-manhattan", "release", "deming.exe")
+
+
+def find_deming():
+    """deming.exe from a Deming checkout next to the repo (or next to any parent, for worktrees), else PATH."""
+    d = REPO
+    while True:
+        for target in ("target-manhattan", "target"):
+            exe = os.path.join(os.path.dirname(d), "Deming", target, "release", "deming.exe")
+            if os.path.exists(exe):
+                return exe
+        if os.path.dirname(d) == d:
+            return "deming"
+        d = os.path.dirname(d)
+
+
+DEMING_DEFAULT = find_deming()
 
 
 def mod_version():
