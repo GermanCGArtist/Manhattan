@@ -47,6 +47,10 @@ allows `--max` games and `--ram` MB (default 72000; games beyond it wait). Resul
 and `summary.txt`; Deming keeps every run under `%LOCALAPPDATA%\deming\runs`. `--only <text>` picks specs,
 `--dry-run` only writes the wave files.
 
+The games are not pinned to CPUs (`cpu_cores` is set to 0 in the wave files). Deming pins `cpu_cores` to the
+*lowest* logical processors, so with pinning all games of a wave share CPUs 0 to 3 and most of them time out
+while still booting. `--pin` keeps the specs' values anyway.
+
 After `mod_version` changes, `python tests/deming/waves.py --set-version` points every spec at the new jar names.
 
 See [docs/DEMING_BENCHMARKS.md](../../docs/DEMING_BENCHMARKS.md) for the `BENCHMARK_RESULT` line and how to read

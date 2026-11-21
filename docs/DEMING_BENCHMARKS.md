@@ -27,7 +27,8 @@ at once.
 
 `python tests/deming/waves.py` runs every spec, packed into waves of up to 32 games (`--max`). The machine
 (128 GB RAM, 32 threads) handles 32 games at 2.5 to 4 GB each; `--ram` (default 72000 MB) keeps the total below what
-is free while other Minecraft instances run, and Deming queues the rest. Games run at below-normal priority.
+is free while other Minecraft instances run, and Deming queues the rest. Games run at below-normal priority and are not pinned to CPUs: Deming's `cpu_cores` picks the
+lowest logical processors, which put 32 games on CPUs 0 to 3 and made most of them time out during start-up.
 
 ## Reading the results
 

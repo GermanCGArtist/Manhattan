@@ -8,7 +8,7 @@
 
 The specs are packed largest first into waves of at most --max instances. Every instance gets a unique id
 (<spec>__<id>), its own test bridge port (25600 + n) and an absolute jar path, so specs that were written to run
-alone can share a wave. The waves run one after another with a Deming config that allows --max games and
+alone can share a wave, and is not pinned to CPUs (cpu_cores 0; see --pin). The waves run one after another with a Deming config that allows --max games and
 --ram MB in total (Deming queues games beyond that), at below-normal priority. Wave files, Deming's JSON output and a
 summary (summary.txt) go to tmp/deming-waves/.
 """
@@ -54,7 +54,7 @@ def pack(specs, limit):
     return [w[0] for w in waves]
 
 
-def build_wave(k, names, specs):
+def build_wave(k, names, specs, pin=False):
     inst, timeout = [], 0
     for name in names:
         d = specs[name]
@@ -65,6 +65,10 @@ def build_wave(k, names, specs):
             i["jvm_args"] = [a for a in i["jvm_args"] if not a.startswith("-Dmanhattan.testbridge.port=")]
             i["jvm_args"].append("-Dmanhattan.testbridge.port=%d" % (25600 + len(inst)))
             i["account"] = {"offline": {"username": "W%dI%02d" % (k, len(inst))}}
+            if not pin:
+                # Deming pins cpu_cores to the LOWEST logical processors, so every game of a wave would share
+                # CPUs 0-3 and most never finish booting; 0 = no affinity, Windows spreads them over all threads
+                i["cpu_cores"] = 0
             for m in i["mods"]:
                 if "local_path" in m:
                     p = os.path.join(REPO, *m["local_path"].split("/"))
@@ -82,6 +86,7 @@ def main():
     ap.add_argument("--only", help="only specs whose file name contains this")
     ap.add_argument("--deming", default=DEMING_DEFAULT)
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--pin", action="store_true", help="keep the specs' cpu_cores (Deming pins them to the lowest CPUs)")
     ap.add_argument("--set-version", action="store_true")
     a = ap.parse_args()
     if a.set_version:
@@ -105,7 +110,7 @@ def main():
                "curseforge_api_key": None}, open(cfg, "w"), indent=2)
     summary = []
     for k, names in enumerate(pack(specs, a.max), 1):
-        wave = build_wave(k, names, specs)
+        wave = build_wave(k, names, specs, a.pin)
         path = os.path.join(OUT, "wave-%d.json" % k)
         json.dump(wave, open(path, "w"), indent=2)
         print("wave %d: %d games: %s" % (k, len(wave["instances"]), ", ".join(names)), flush=True)
