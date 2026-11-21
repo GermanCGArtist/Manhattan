@@ -159,7 +159,8 @@ public final class ProgressModel {
 
     private static Snapshot snapshotProject(GameProjectRuntime rt) {
         PriorityScheduler.Telemetry t = rt.telemetry();
-        Project proj = rt.activeProject();
+        Project proj = rt.runningProject();
+        if (proj == null) proj = rt.activeProject();
         Runner r = QueueMod.runner;
         boolean scriptRunning = r != null && r.running();
 
@@ -174,10 +175,19 @@ public final class ProgressModel {
         if (proj != null && proj.tasks != null) {
             int taskNum = 0;
             String activeTaskId = t != null ? t.taskId() : null;
+            TaskQueue.TaskLedger projLedger = proj.id != null ? rt.loadLedgerCached(proj.id) : null;
             for (ProjectTask pt : proj.tasks) {
                 if (pt == null || !pt.enabled) continue;
                 taskNum++;
-                TaskQueue.TaskLedger.State st = pt.id != null ? rt.taskState(pt.id) : TaskQueue.TaskLedger.State.PENDING;
+                TaskQueue.TaskLedger.State st = TaskQueue.TaskLedger.State.PENDING;
+                if (pt.id != null) {
+                    if (projLedger != null) {
+                        var ev = projLedger.get(pt.id);
+                        if (ev != null && ev.state() != null) st = ev.state();
+                    } else {
+                        st = rt.taskState(pt.id);
+                    }
+                }
                 State segState;
                 double segFrac;
                 if (activeTaskId != null && activeTaskId.equals(pt.id)) {

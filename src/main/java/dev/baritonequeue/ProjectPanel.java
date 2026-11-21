@@ -3,10 +3,13 @@ package dev.baritonequeue;
 import dev.baritonequeue.project.GameProjectRuntime;
 import dev.baritonequeue.project.PriorityScheduler;
 import dev.baritonequeue.project.Project;
+import dev.baritonequeue.project.ProjectLayerScheduler;
+import dev.baritonequeue.project.ProjectQueue;
 import dev.baritonequeue.project.ProjectStore;
 import dev.baritonequeue.project.ProjectTask;
 import dev.baritonequeue.project.TaskQueue;
 import imgui.ImGui;
+import imgui.flag.ImGuiTabItemFlags;
 import imgui.type.ImBoolean;
 import imgui.type.ImDouble;
 import imgui.type.ImInt;
@@ -30,7 +33,10 @@ final class ProjectPanel {
 
     private static final Pattern TASK_ID_NUM = Pattern.compile("^t_(\\d+)$");
 
+    private static final String LAYER_DRAG_TYPE = "MANHATTAN_PROJ_LAYER_IDX";
     private static final ImString newProjectInput = new ImString("", 64);
+    private static String addLayerSelection = "";
+    private static boolean focusTasksTab = false;
     private static String notice = "";
     private static boolean noticeError = false;
 
@@ -84,11 +90,20 @@ final class ProjectPanel {
 
         ImGui.separator();
         if (ImGui.beginTabBar("##ProjectPanelTabs")) {
-            if (ImGui.beginTabItem("Queue##ProjTabQueue")) {
+            ProjectQueue pq = rt.projectQueue();
+            int layerCount = pq != null ? pq.snapshot().size() : 0;
+            String layersTabTitle = (layerCount > 0 ? "Layers (" + layerCount + ")" : "Layers") + "###ProjTabLayers";
+            if (ImGui.beginTabItem(layersTabTitle)) {
+                renderLayersTab(rt, active, s);
+                ImGui.endTabItem();
+            }
+            int taskTabFlags = focusTasksTab ? ImGuiTabItemFlags.SetSelected : 0;
+            focusTasksTab = false;
+            if (ImGui.beginTabItem("Tasks###ProjTabQueue", taskTabFlags)) {
                 renderQueueTab(rt, active, s);
                 ImGui.endTabItem();
             }
-            if (ImGui.beginTabItem("Base & Survival##ProjTabBase")) {
+            if (ImGui.beginTabItem("Base & Survival###ProjTabBase")) {
                 renderBaseAndSurvivalTab(rt, active, s);
                 ImGui.endTabItem();
             }
@@ -151,20 +166,59 @@ final class ProjectPanel {
 
         ImGui.sameLine(0f, 8f * s);
         boolean running = rt.running();
+        ProjectQueue pq = rt.projectQueue();
+        boolean hasLayers = pq != null && pq.enabledCount() > 0;
         if (!running) {
-            if (Widgets.button("Run Queue##ProjRunQueue", 1)) {
-                String err = rt.startQueue();
-                if (err != null && !err.isBlank()) {
-                    setNotice(err, true);
-                    Util.msg(err);
-                } else {
-                    setNotice("Project queue started.", false);
+            if (hasLayers) {
+                if (Widgets.button("Run Layers##ProjRunLayers", 1)) {
+                    String err = rt.startLayerQueue();
+                    if (err != null && !err.isBlank()) {
+                        setNotice(err, true);
+                        Util.msg(err);
+                    } else {
+                        setNotice("Project layer queue started.", false);
+                    }
+                }
+                if (ImGui.isItemHovered()) {
+                    ImGui.setTooltip("Runs all enabled project layers in priority order (topmost layer gets bot capacity first).");
+                }
+                ImGui.sameLine(0f, 4f * s);
+                if (Widgets.button("Run Active##ProjRunQueue", 0)) {
+                    String err = rt.startQueue();
+                    if (err != null && !err.isBlank()) {
+                        setNotice(err, true);
+                        Util.msg(err);
+                    } else {
+                        setNotice("Active project queue started.", false);
+                    }
+                }
+            } else {
+                if (Widgets.button("Run Queue##ProjRunQueue", 1)) {
+                    String err = rt.startQueue();
+                    if (err != null && !err.isBlank()) {
+                        setNotice(err, true);
+                        Util.msg(err);
+                    } else {
+                        setNotice("Project queue started.", false);
+                    }
                 }
             }
         } else {
-            if (Widgets.button("Stop Queue##ProjStopQueue", 2)) {
+            if (Widgets.button("Stop##ProjStopQueue", 2)) {
                 rt.stopQueue("Stopped from Projects panel.");
                 setNotice("Project queue stopped.", false);
+            }
+            ImGui.sameLine(0f, 4f * s);
+            if (rt.scheduler().isPaused()) {
+                if (Widgets.button("Resume##ProjResume", 1)) {
+                    rt.scheduler().resume();
+                    setNotice("Resumed project queue.", false);
+                }
+            } else {
+                if (Widgets.button("Pause##ProjPause", 0)) {
+                    rt.scheduler().pause();
+                    setNotice("Paused project queue.", false);
+                }
             }
             ImGui.sameLine(0f, 4f * s);
             if (Widgets.button("Skip##ProjSkipCurrent", 0)) {
@@ -178,10 +232,17 @@ final class ProjectPanel {
         if (rt.running()) {
             PriorityScheduler.Telemetry t = rt.telemetry();
             if (t != null) {
+                String layerPrefix = "";
+                if (rt.layerQueueRunning()) {
+                    ProjectLayerScheduler.LayerTelemetry lt = rt.layerTelemetry();
+                    int layerNum = lt.activeLayerIndex() >= 0 ? lt.activeLayerIndex() + 1 : 1;
+                    String pname = lt.activeProjectName() != null ? lt.activeProjectName() : String.valueOf(lt.activeProjectId());
+                    layerPrefix = "[Layer #" + layerNum + "/" + Math.max(1, lt.totalLayers()) + ": " + pname + "]  ";
+                }
                 String lane = formatLane(t);
                 String detail = (t.detail() != null && !t.detail().isBlank()) ? t.detail() : "";
                 String elapsed = Estimate.duration(t.elapsedMillis() / 50L);
-                UiTheme.textColored(ACCENT, lane + (detail.isEmpty() ? "" : "  " + detail)
+                UiTheme.textColored(ACCENT, layerPrefix + lane + (detail.isEmpty() ? "" : "  " + detail)
                         + "   (" + t.doneTasks() + "/" + t.totalTasks() + " done, " + elapsed + ")");
                 if (t.lastError() != null && !t.lastError().isBlank()) {
                     UiTheme.textColored(ERR, "Last error: " + Alerts.shorten(t.lastError(), 120));
@@ -211,6 +272,230 @@ final class ProjectPanel {
             }
             case IDLE -> t.paused() ? "[Paused]" : "[Idle]";
         };
+    }
+
+    // ------------------------------------------------------------------ Layers Tab
+
+    private static void renderLayersTab(GameProjectRuntime rt, Project active, float s) {
+        ProjectQueue pq = rt.projectQueue();
+        if (pq == null) return;
+
+        UiTheme.push(UiTheme.small);
+        UiTheme.textColored(DIM, "Priority stack: topmost enabled layer gets bot capacity first. Drag rows or use Top / ^ / v to reprioritize live.");
+        ImGui.popFont();
+        ImGui.spacing();
+
+        // Add project to layer queue controls
+        List<String> allIds = rt.projectIds();
+        List<String> available = new ArrayList<>();
+        for (String id : allIds) {
+            if (!pq.contains(id)) available.add(id);
+        }
+        if (addLayerSelection.isEmpty() || !available.contains(addLayerSelection)) {
+            addLayerSelection = available.isEmpty() ? "" : available.get(0);
+        }
+
+        ImGui.setNextItemWidth(175f * s);
+        String comboPreview = addLayerSelection.isEmpty() ? "(all projects queued)" : addLayerSelection;
+        if (ImGui.beginCombo("##AddLayerProj", comboPreview)) {
+            if (available.isEmpty()) {
+                ImGui.textDisabled("All saved projects are already in the layer queue.");
+            } else {
+                for (String id : available) {
+                    if (ImGui.selectable(id + "##addlayer_" + id, id.equals(addLayerSelection))) {
+                        addLayerSelection = id;
+                    }
+                }
+            }
+            ImGui.endCombo();
+        }
+        ImGui.sameLine(0f, 6f * s);
+        boolean canAdd = !addLayerSelection.isEmpty();
+        if (!canAdd) ImGui.beginDisabled();
+        if (Widgets.button("+ Add Layer##ProjAddLayer", 0)) {
+            if (rt.addProjectLayer(addLayerSelection)) {
+                setNotice("Queued project '" + addLayerSelection + "' as layer #" + pq.snapshot().size() + ".", false);
+                addLayerSelection = "";
+            }
+        }
+        if (!canAdd) ImGui.endDisabled();
+
+        if (active != null && active.id != null && !pq.contains(active.id)) {
+            ImGui.sameLine(0f, 6f * s);
+            if (Widgets.button("+ Add Active##ProjAddActiveLayer", 0)) {
+                if (rt.addProjectLayer(active.id)) {
+                    setNotice("Queued active project '" + active.id + "'.", false);
+                }
+            }
+        }
+
+        // Queue-level policies
+        ImBoolean stopOnErr = new ImBoolean(pq.stopOnProjectError);
+        if (ImGui.checkbox("Stop on project error##LayerStopOnErr", stopOnErr)) {
+            rt.setStopOnProjectError(stopOnErr.get());
+        }
+        ImGui.sameLine(0f, 12f * s);
+        ImBoolean logoffAll = new ImBoolean(pq.logoffWhenAllDone);
+        if (ImGui.checkbox("Log off when all done##LayerLogoffAll", logoffAll)) {
+            rt.setLogoffWhenAllDone(logoffAll.get());
+        }
+
+        ImGui.separator();
+
+        List<ProjectQueue.Layer> layers = pq.snapshot();
+        if (layers.isEmpty()) {
+            UiTheme.textColored(DIM, "No projects queued. Add one or more projects above to run them in priority order.");
+            return;
+        }
+
+        int dragFrom = -1;
+        int dragTo = -1;
+
+        for (int i = 0; i < layers.size(); i++) {
+            ProjectQueue.Layer layer = layers.get(i);
+            if (layer == null || layer.projectId == null) continue;
+            Project proj = rt.loadProjectCached(layer.projectId);
+            String title = (proj != null && proj.name != null && !proj.name.isBlank()) ? proj.name : layer.projectId;
+            ProjectLayerScheduler.LayerStatus status = rt.layerStatus(layer);
+            int[] progress = rt.projectProgress(layer.projectId);
+            int done = progress[0];
+            int total = progress[1];
+            boolean isRunningLayer = status == ProjectLayerScheduler.LayerStatus.RUNNING;
+            boolean isTopLayer = (i == 0);
+
+            ImGui.pushID("layerRow_" + i + "_" + layer.projectId);
+
+            // Drag handle + priority index
+            int rankColor = isRunningLayer ? ACCENT : (isTopLayer ? OK : GUTTER);
+            ImGui.beginGroup();
+            UiTheme.textColored(rankColor, String.format("L%d", i + 1));
+            ImGui.sameLine(0f, 4f * s);
+            UiTheme.textColored(DIM, "::");
+            ImGui.endGroup();
+            if (ImGui.isItemHovered()) {
+                ImGui.setTooltip("Drag to reorder priority layer (L1 = highest priority)");
+            }
+            if (ImGui.beginDragDropSource()) {
+                ImGui.setDragDropPayload(LAYER_DRAG_TYPE, Integer.valueOf(i));
+                ImGui.text("Move L" + (i + 1) + ": " + title);
+                ImGui.endDragDropSource();
+            }
+            if (ImGui.beginDragDropTarget()) {
+                Integer payload = ImGui.acceptDragDropPayload(LAYER_DRAG_TYPE);
+                if (payload != null && payload != i) {
+                    dragFrom = payload;
+                    dragTo = i;
+                }
+                ImGui.endDragDropTarget();
+            }
+
+            ImGui.sameLine(0f, 6f * s);
+            ImBoolean en = new ImBoolean(layer.enabled);
+            if (ImGui.checkbox("##en", en)) {
+                rt.setProjectLayerEnabled(layer.projectId, en.get());
+            }
+            if (ImGui.isItemHovered()) ImGui.setTooltip("Enable/disable this project layer");
+
+            ImGui.sameLine(0f, 6f * s);
+            drawLayerStatusBadge(status);
+
+            ImGui.sameLine(0f, 6f * s);
+            int nameColor = !layer.enabled ? DIM : (isRunningLayer ? ACCENT : FG);
+            ImGui.beginGroup();
+            UiTheme.textColored(nameColor, title);
+            if (!title.equals(layer.projectId)) {
+                ImGui.sameLine(0f, 4f * s);
+                UiTheme.textColored(DIM, "(" + layer.projectId + ")");
+            }
+            ImGui.sameLine(0f, 8f * s);
+            UiTheme.textColored(DIM, done + "/" + total + " tasks");
+            ImGui.endGroup();
+
+            // Allow dropping anywhere on the title row too
+            if (ImGui.beginDragDropSource()) {
+                ImGui.setDragDropPayload(LAYER_DRAG_TYPE, Integer.valueOf(i));
+                ImGui.text("Move L" + (i + 1) + ": " + title);
+                ImGui.endDragDropSource();
+            }
+            if (ImGui.beginDragDropTarget()) {
+                Integer payload = ImGui.acceptDragDropPayload(LAYER_DRAG_TYPE);
+                if (payload != null && payload != i) {
+                    dragFrom = payload;
+                    dragTo = i;
+                }
+                ImGui.endDragDropTarget();
+            }
+
+            // Compact inline controls row
+            ImGui.indent(28f * s);
+            boolean first = (i == 0);
+            boolean last = (i == layers.size() - 1);
+
+            if (first) ImGui.beginDisabled();
+            if (ImGui.smallButton("Top##top")) {
+                rt.moveProjectLayerToTop(layer.projectId);
+                setNotice("Promoted '" + title + "' to Layer 1.", false);
+            }
+            ImGui.sameLine(0f, 3f * s);
+            if (ImGui.smallButton("^##up")) rt.moveProjectLayer(i, i - 1);
+            if (first) ImGui.endDisabled();
+            ImGui.sameLine(0f, 3f * s);
+
+            if (last) ImGui.beginDisabled();
+            if (ImGui.smallButton("v##dn")) rt.moveProjectLayer(i, i + 1);
+            if (last) ImGui.endDisabled();
+            ImGui.sameLine(0f, 8f * s);
+
+            if (ImGui.smallButton("Edit##edit")) {
+                rt.selectProject(layer.projectId);
+                focusTasksTab = true;
+            }
+            if (ImGui.isItemHovered()) ImGui.setTooltip("Open this project in the Tasks tab");
+            ImGui.sameLine(0f, 3f * s);
+
+            if (ImGui.smallButton("Retry##retry")) {
+                rt.retryProjectLedger(layer.projectId);
+                setNotice("Retried failed/deferred tasks in '" + title + "'.", false);
+            }
+            ImGui.sameLine(0f, 3f * s);
+
+            if (ImGui.smallButton("Reset##reset")) {
+                rt.resetProjectLedger(layer.projectId);
+                setNotice("Reset progress for '" + title + "'.", false);
+            }
+            ImGui.sameLine(0f, 8f * s);
+
+            ImGui.pushStyleColor(imgui.flag.ImGuiCol.Text, r(ERR), g(ERR), b(ERR), 1f);
+            boolean removed = ImGui.smallButton("x##rem");
+            ImGui.popStyleColor();
+            if (ImGui.isItemHovered()) ImGui.setTooltip("Remove from layer queue (keeps project saved)");
+            ImGui.unindent(28f * s);
+
+            ImGui.popID();
+            if (removed) {
+                rt.removeProjectLayer(layer.projectId);
+                setNotice("Removed '" + title + "' from layer queue.", false);
+                break;
+            }
+        }
+
+        if (dragFrom >= 0 && dragTo >= 0 && dragFrom != dragTo) {
+            rt.moveProjectLayer(dragFrom, dragTo);
+            setNotice("Moved layer L" + (dragFrom + 1) + " to L" + (dragTo + 1) + ".", false);
+        }
+    }
+
+    private static void drawLayerStatusBadge(ProjectLayerScheduler.LayerStatus st) {
+        int col = switch (st) {
+            case RUNNING -> ACCENT;
+            case DONE -> OK;
+            case FAILED, MISSING -> ERR;
+            case QUEUED -> FG;
+            case DISABLED, EMPTY -> DIM;
+        };
+        UiTheme.push(UiTheme.small);
+        UiTheme.textColored(col, "[" + st.name() + "]");
+        ImGui.popFont();
     }
 
     // ------------------------------------------------------------------ Queue Tab
@@ -313,6 +598,15 @@ final class ProjectPanel {
                 }
             }
             setNotice("Retried " + count + " failed/deferred task" + (count == 1 ? "" : "s") + ".", false);
+        }
+        ProjectQueue pq = rt.projectQueue();
+        if (pq != null && active.id != null && !pq.contains(active.id)) {
+            ImGui.sameLine(0f, 6f * s);
+            if (Widgets.button("+ Add to Layers##ProjTasksAddLayer", 0)) {
+                if (rt.addProjectLayer(active.id)) {
+                    setNotice("Added '" + active.id + "' to priority layers.", false);
+                }
+            }
         }
     }
 

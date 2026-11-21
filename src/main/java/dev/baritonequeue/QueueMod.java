@@ -640,6 +640,78 @@ public class QueueMod implements ClientModInitializer {
                         .then(ClientCommands.literal("stop").executes(ctx -> {
                             GameProjectRuntime.instance().stopQueue("Stopped via /project queue stop.");
                             return 1;
+                        })))
+                .then(ClientCommands.literal("layers")
+                        .executes(ctx -> projectLayersList())
+                        .then(ClientCommands.literal("list").executes(ctx -> projectLayersList()))
+                        .then(ClientCommands.literal("add")
+                                .then(ClientCommands.argument("id", StringArgumentType.word())
+                                        .executes(ctx -> {
+                                            String id = StringArgumentType.getString(ctx, "id");
+                                            boolean ok = GameProjectRuntime.instance().addProjectLayer(id);
+                                            Util.msg(ok ? "Added project '" + id + "' to priority layers."
+                                                    : "Could not add project '" + id + "' (missing or already queued).");
+                                            return ok ? 1 : 0;
+                                        })
+                                        .then(ClientCommands.argument("position", IntegerArgumentType.integer(1)).executes(ctx -> {
+                                            String id = StringArgumentType.getString(ctx, "id");
+                                            int pos = IntegerArgumentType.getInteger(ctx, "position") - 1;
+                                            boolean ok = GameProjectRuntime.instance().insertProjectLayer(pos, id);
+                                            Util.msg(ok ? "Inserted project '" + id + "' at layer #" + (pos + 1) + "."
+                                                    : "Could not insert project '" + id + "' (missing or already queued).");
+                                            return ok ? 1 : 0;
+                                        }))))
+                        .then(ClientCommands.literal("remove")
+                                .then(ClientCommands.argument("id", StringArgumentType.word()).executes(ctx -> {
+                                    String id = StringArgumentType.getString(ctx, "id");
+                                    boolean ok = GameProjectRuntime.instance().removeProjectLayer(id);
+                                    Util.msg(ok ? "Removed project '" + id + "' from priority layers."
+                                            : "Project '" + id + "' is not in priority layers.");
+                                    return ok ? 1 : 0;
+                                })))
+                        .then(ClientCommands.literal("move")
+                                .then(ClientCommands.argument("from", IntegerArgumentType.integer(1))
+                                        .then(ClientCommands.argument("to", IntegerArgumentType.integer(1)).executes(ctx -> {
+                                            int from = IntegerArgumentType.getInteger(ctx, "from") - 1;
+                                            int to = IntegerArgumentType.getInteger(ctx, "to") - 1;
+                                            boolean ok = GameProjectRuntime.instance().moveProjectLayer(from, to);
+                                            Util.msg(ok ? "Moved layer L" + (from + 1) + " to L" + (to + 1) + "."
+                                                    : "Invalid layer positions.");
+                                            return ok ? 1 : 0;
+                                        }))))
+                        .then(ClientCommands.literal("top")
+                                .then(ClientCommands.argument("id", StringArgumentType.word()).executes(ctx -> {
+                                    String id = StringArgumentType.getString(ctx, "id");
+                                    boolean ok = GameProjectRuntime.instance().moveProjectLayerToTop(id);
+                                    Util.msg(ok ? "Promoted project '" + id + "' to Layer 1."
+                                            : "Project '" + id + "' is not in priority layers.");
+                                    return ok ? 1 : 0;
+                                })))
+                        .then(ClientCommands.literal("enable")
+                                .then(ClientCommands.argument("id", StringArgumentType.word()).executes(ctx -> {
+                                    String id = StringArgumentType.getString(ctx, "id");
+                                    boolean ok = GameProjectRuntime.instance().setProjectLayerEnabled(id, true);
+                                    Util.msg(ok ? "Enabled layer '" + id + "'." : "Project '" + id + "' is not in priority layers.");
+                                    return ok ? 1 : 0;
+                                })))
+                        .then(ClientCommands.literal("disable")
+                                .then(ClientCommands.argument("id", StringArgumentType.word()).executes(ctx -> {
+                                    String id = StringArgumentType.getString(ctx, "id");
+                                    boolean ok = GameProjectRuntime.instance().setProjectLayerEnabled(id, false);
+                                    Util.msg(ok ? "Disabled layer '" + id + "'." : "Project '" + id + "' is not in priority layers.");
+                                    return ok ? 1 : 0;
+                                })))
+                        .then(ClientCommands.literal("run").executes(ctx -> {
+                            String err = GameProjectRuntime.instance().startLayerQueue();
+                            if (err != null) {
+                                Util.msg(err);
+                                return 0;
+                            }
+                            return 1;
+                        }))
+                        .then(ClientCommands.literal("stop").executes(ctx -> {
+                            GameProjectRuntime.instance().stopQueue("Stopped via /project layers stop.");
+                            return 1;
                         }))));
     }
 
@@ -722,6 +794,25 @@ public class QueueMod implements ClientModInitializer {
             TaskQueue.TaskLedger.State st = rt.taskState(t.id);
             Util.msg("  " + (i + 1) + ". [" + st + "] " + t.id + " " + t.displayLabel()
                     + (t.enabled ? "" : " (disabled)"));
+        }
+        return 1;
+    }
+
+    private static int projectLayersList() {
+        GameProjectRuntime rt = GameProjectRuntime.instance();
+        var pq = rt.projectQueue();
+        var layers = pq != null ? pq.snapshot() : List.<dev.baritonequeue.project.ProjectQueue.Layer>of();
+        if (layers.isEmpty()) {
+            Util.msg("Project layers queue is empty. Use /project layers add <id>.");
+            return 1;
+        }
+        Util.msg("Project priority layers (" + layers.size() + ", top gets bot capacity first):");
+        for (int i = 0; i < layers.size(); i++) {
+            var layer = layers.get(i);
+            var st = rt.layerStatus(layer);
+            int[] prog = rt.projectProgress(layer.projectId);
+            Util.msg("  L" + (i + 1) + ". [" + st + "] " + layer.projectId + " (" + prog[0] + "/" + prog[1] + " done)"
+                    + (layer.enabled ? "" : " (disabled)"));
         }
         return 1;
     }

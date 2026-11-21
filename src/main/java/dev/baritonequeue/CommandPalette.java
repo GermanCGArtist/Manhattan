@@ -58,7 +58,11 @@ final class CommandPalette {
             if (rt != null) {
                 Project active = rt.activeProject();
                 String activeHint = active != null ? (active.name != null && !active.name.isBlank() ? active.name : active.id) : "";
-                out.add(new Cmd("Projects", "Run project queue", activeHint, () -> {
+                out.add(new Cmd("Projects", "Run project layers", rt.projectQueue().enabledCount() + " enabled", () -> {
+                    String err = GameProjectRuntime.instance().startLayerQueue();
+                    if (err != null && !err.isBlank()) Util.msg(err);
+                }));
+                out.add(new Cmd("Projects", "Run active project", activeHint, () -> {
                     String err = GameProjectRuntime.instance().startQueue();
                     if (err != null && !err.isBlank()) Util.msg(err);
                 }));

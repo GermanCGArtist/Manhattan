@@ -3,6 +3,8 @@ package dev.baritonequeue;
 import dev.baritonequeue.project.LogisticsPlanner;
 import dev.baritonequeue.project.PriorityScheduler;
 import dev.baritonequeue.project.Project;
+import dev.baritonequeue.project.ProjectLayerScheduler;
+import dev.baritonequeue.project.ProjectQueue;
 import dev.baritonequeue.project.ProjectStore;
 import dev.baritonequeue.project.ProjectTask;
 import dev.baritonequeue.project.ScopedOverrides;
@@ -73,6 +75,11 @@ public class ProjectQueueTest {
         testSchedulerErrorPolicies();
         testSchedulerLiveControlsAndTelemetry();
         testSchedulerSuspendsBeforeStartingPreemption();
+        testProjectQueueStoreAndOperations();
+        testProjectLayerSequentialExecution();
+        testProjectLayerLivePreemptionAndResume();
+        testProjectLayerPreemptionWaitsForCombat();
+        testProjectLayerErrorPolicies();
 
         System.out.println("ProjectQueueTest: " + passes + " passed, " + fails + " failed.");
         if (fails > 0) System.exit(1);
@@ -1066,6 +1073,270 @@ public class ProjectQueueTest {
             completedSuccess = success;
             completedSummary = summary;
             completedLogoff = logoff;
+        }
+    }
+
+    // ------------------------------------------------------------------ 15. ProjectQueue & Layer Scheduler
+
+    private static void testProjectQueueStoreAndOperations() throws IOException {
+        ProjectQueue q = new ProjectQueue();
+        check("add alpha", q.add("Alpha Build"));
+        check("add beta", q.add("beta"));
+        check("duplicate add rejected", !q.add("alpha_build"));
+        check("insertAt 0 gamma", q.insertAt(0, "gamma"));
+
+        eq("layer order [0]", q.snapshot().get(0).projectId, "gamma");
+        eq("layer order [1]", q.snapshot().get(1).projectId, "alpha_build");
+        eq("layer order [2]", q.snapshot().get(2).projectId, "beta");
+
+        check("moveToTop beta", q.moveToTop("beta"));
+        eq("beta now top", q.indexOf("beta"), 0);
+        check("move 0 -> 2", q.move(0, 2));
+        eq("beta now bottom", q.indexOf("beta"), 2);
+        check("setEnabled alpha false", q.setEnabled("alpha_build", false));
+        eq("enabledCount is 2", q.enabledCount(), 2);
+
+        q.stopOnProjectError = false;
+        q.logoffWhenAllDone = true;
+
+        Path tmp = Files.createTempDirectory("manhattan-project-queue-test-");
+        try {
+            String world = "TestWorld";
+            ProjectStore.save(tmp, ProjectStore.createDefault(world, "gamma", "Gamma"));
+            ProjectStore.save(tmp, ProjectStore.createDefault(world, "alpha_build", "Alpha Build"));
+            ProjectStore.save(tmp, ProjectStore.createDefault(world, "beta", "Beta"));
+            ProjectStore.saveQueue(tmp, world, q);
+
+            // _queue.json must NOT show up in ProjectStore.list()
+            eq("list excludes _queue.json", ProjectStore.list(tmp, world), List.of("alpha_build", "beta", "gamma"));
+
+            ProjectQueue loaded = ProjectStore.loadQueue(tmp, world);
+            eq("queue round-trip equals", loaded, q);
+            eq("loaded stopOnProjectError", loaded.stopOnProjectError, false);
+            eq("loaded logoffWhenAllDone", loaded.logoffWhenAllDone, true);
+
+            // Deleting a project removes it from _queue.json automatically
+            check("delete gamma", ProjectStore.delete(tmp, world, "gamma"));
+            ProjectQueue afterDel = ProjectStore.loadQueue(tmp, world);
+            check("gamma removed from queue on delete", !afterDel.contains("gamma"));
+            eq("remaining queue size", afterDel.snapshot().size(), 2);
+        } finally {
+            deleteRecursively(tmp);
+        }
+    }
+
+    private static final class MockLayerHost implements ProjectLayerScheduler.Host {
+        final Map<String, Project> projects = new LinkedHashMap<>();
+        final Map<String, TaskQueue.InMemoryTaskLedger> ledgers = new LinkedHashMap<>();
+        final List<String> events = new ArrayList<>();
+        boolean allComplete;
+        boolean allSuccess;
+        String allSummary;
+        boolean allLogoff;
+
+        Project addProject(String id, String name, int taskCount) {
+            Project p = ProjectStore.createDefault("w", id, name);
+            TaskQueue.InMemoryTaskLedger ledger = new TaskQueue.InMemoryTaskLedger();
+            TaskQueue tq = new TaskQueue(p, ledger);
+            for (int i = 1; i <= taskCount; i++) {
+                tq.add(new ProjectTask(null, id + "_task_" + i, ProjectTask.Kind.CLEAR_AREA));
+            }
+            projects.put(p.id, p);
+            ledgers.put(p.id, ledger);
+            return p;
+        }
+
+        @Override public Project loadProject(String projectId) { return projects.get(projectId); }
+        @Override public TaskQueue.TaskLedger loadLedger(String projectId) { return ledgers.get(projectId); }
+        @Override public void activateProject(Project project) { events.add("ACT:" + project.id); }
+        @Override public void deactivateProject(Project project) { events.add("DEACT:" + project.id); }
+        @Override public void onLog(String message) { events.add("LOG:" + message); }
+
+        @Override
+        public void onAllComplete(boolean success, String summary, boolean logoff) {
+            allComplete = true;
+            allSuccess = success;
+            allSummary = summary;
+            allLogoff = logoff;
+        }
+    }
+
+    private static void testProjectLayerSequentialExecution() {
+        MockEnv env = new MockEnv();
+        MockLayerHost host = new MockLayerHost();
+        Project a = host.addProject("a", "Project A", 1);
+        a.survival.logoffOnDone = true; // should NOT log off before layer C finishes
+        host.addProject("b", "Project B", 1);
+        host.addProject("c", "Project C", 1);
+
+        ProjectQueue pq = new ProjectQueue();
+        pq.add("a");
+        pq.add("b");
+        pq.add("c");
+        pq.setEnabled("b", false);
+        pq.logoffWhenAllDone = true;
+
+        List<String> startedTasks = new ArrayList<>();
+        env.taskFactory = (t, ov) -> {
+            startedTasks.add(t.label);
+            return new FakeHandle(t.label, 2);
+        };
+
+        ProjectLayerScheduler ls = new ProjectLayerScheduler(env, host);
+        eq("start layer queue succeeds", ls.start(pq), null);
+        check("layer queue running", ls.isRunning());
+        eq("initial layer is A", ls.currentProjectId(), "a");
+        eq("status A is RUNNING", ls.layerStatus(pq.find("a")), ProjectLayerScheduler.LayerStatus.RUNNING);
+        eq("status B is DISABLED", ls.layerStatus(pq.find("b")), ProjectLayerScheduler.LayerStatus.DISABLED);
+        eq("status C is QUEUED", ls.layerStatus(pq.find("c")), ProjectLayerScheduler.LayerStatus.QUEUED);
+
+        for (int i = 0; i < 20 && ls.isRunning(); i++) {
+            ls.tick();
+        }
+
+        check("layer queue finished", !ls.isRunning());
+        check("allComplete fired", host.allComplete);
+        check("allSuccess true", host.allSuccess);
+        check("logoffWhenAllDone respected at end", host.allLogoff);
+        eq("started tasks skipped disabled B", startedTasks, List.of("a_task_1", "c_task_1"));
+        eq("status A is DONE", ls.layerStatus(pq.find("a")), ProjectLayerScheduler.LayerStatus.DONE);
+        eq("status C is DONE", ls.layerStatus(pq.find("c")), ProjectLayerScheduler.LayerStatus.DONE);
+
+        List<String> actDeact = host.events.stream().filter(s -> s.startsWith("ACT:") || s.startsWith("DEACT:")).toList();
+        eq("activation lifecycle A then C", actDeact, List.of("ACT:a", "DEACT:a", "ACT:c", "DEACT:c"));
+    }
+
+    private static void testProjectLayerLivePreemptionAndResume() {
+        MockEnv env = new MockEnv();
+        MockLayerHost host = new MockLayerHost();
+        host.addProject("b", "Project B", 1);
+        host.addProject("a", "Project A", 1);
+
+        ProjectQueue pq = new ProjectQueue();
+        pq.add("b");
+        pq.add("a");
+
+        List<String> startedOrder = new ArrayList<>();
+        env.taskFactory = (t, ov) -> {
+            startedOrder.add(t.label);
+            return new FakeHandle(t.label, 3);
+        };
+
+        ProjectLayerScheduler ls = new ProjectLayerScheduler(env, host);
+        eq("start preemption test", ls.start(pq), null);
+        ls.tick(); // starts b_task_1 (tick 1 of 3)
+        eq("running B before reorder", ls.currentProjectId(), "b");
+
+        // User drags/promotes A to Layer 1 above B!
+        check("promote A to top", pq.moveToTop("a"));
+        ls.tick(); // B yields, A activates & runs tick 1 of 3
+        eq("preempted to A", ls.currentProjectId(), "a");
+        // B's task must still be RUNNING in its ledger (not FAILED or DONE) so it resumes after A finishes
+        eq("B ledger preserved as RUNNING",
+                host.ledgers.get("b").get("t_001").state(), TaskQueue.TaskLedger.State.RUNNING);
+
+        for (int i = 0; i < 20 && ls.isRunning(); i++) {
+            ls.tick();
+        }
+
+        check("all completed after preemption", host.allComplete && host.allSuccess);
+        eq("B started, A preempted & finished, B resumed & finished",
+                startedOrder, List.of("b_task_1", "a_task_1", "b_task_1"));
+        eq("A ledger DONE", host.ledgers.get("a").get("t_001").state(), TaskQueue.TaskLedger.State.DONE);
+        eq("B ledger DONE", host.ledgers.get("b").get("t_001").state(), TaskQueue.TaskLedger.State.DONE);
+    }
+
+    private static void testProjectLayerPreemptionWaitsForCombat() {
+        MockEnv env = new MockEnv();
+        MockLayerHost host = new MockLayerHost();
+        host.addProject("b", "Project B", 1);
+        host.addProject("a", "Project A", 1);
+
+        ProjectQueue pq = new ProjectQueue();
+        pq.add("b");
+        pq.add("a");
+
+        env.taskFactory = (t, ov) -> new FakeHandle(t.label, 5);
+        env.defendFactory = () -> new FakeHandle("defend", 2);
+
+        ProjectLayerScheduler ls = new ProjectLayerScheduler(env, host);
+        eq("start combat safety test", ls.start(pq), null);
+        ls.tick(); // starts b_task_1
+
+        // Threat appears -> P1_COMBAT preempts B's work
+        env.threats = 1;
+        ls.tick(); // starts combat (tick 1 of 2)
+        eq("lane is P1_COMBAT", ls.scheduler().currentLane(), PriorityScheduler.Lane.P1_COMBAT);
+
+        // User promotes A to Layer 1 while bot is fighting!
+        pq.moveToTop("a");
+        env.threats = 0;
+        ls.tick(); // combat tick 2 of 2 completes; MUST NOT have switched away mid-combat
+        eq("did not switch mid-combat", ls.currentProjectId(), "b");
+
+        // Next tick: lane is back to P4_WORK -> now safe to yield B and switch to A!
+        ls.tick();
+        eq("switched to A after combat ended", ls.currentProjectId(), "a");
+    }
+
+    private static void testProjectLayerErrorPolicies() {
+        // 1. stopOnProjectError = true (default)
+        {
+            MockEnv env = new MockEnv();
+            MockLayerHost host = new MockLayerHost();
+            host.addProject("a", "Project A", 1);
+            host.addProject("b", "Project B", 1);
+
+            ProjectQueue pq = new ProjectQueue();
+            pq.add("a");
+            pq.add("b");
+            pq.stopOnProjectError = true;
+
+            List<String> started = new ArrayList<>();
+            env.taskFactory = (t, ov) -> {
+                started.add(t.label);
+                FakeHandle h = new FakeHandle(t.label, 1);
+                if (t.label.startsWith("a_")) h.error = "boom";
+                return h;
+            };
+
+            ProjectLayerScheduler ls = new ProjectLayerScheduler(env, host);
+            eq("start stopOnError", ls.start(pq), null);
+            for (int i = 0; i < 10 && ls.isRunning(); i++) ls.tick();
+
+            check("stopped on error", !ls.isRunning() && host.allComplete && !host.allSuccess);
+            eq("B never started when stopOnProjectError=true", started, List.of("a_task_1"));
+        }
+
+        // 2. stopOnProjectError = false -> continues to B
+        {
+            MockEnv env = new MockEnv();
+            MockLayerHost host = new MockLayerHost();
+            host.addProject("a", "Project A", 1);
+            host.addProject("b", "Project B", 1);
+
+            ProjectQueue pq = new ProjectQueue();
+            pq.add("a");
+            pq.add("b");
+            pq.stopOnProjectError = false;
+
+            List<String> started = new ArrayList<>();
+            env.taskFactory = (t, ov) -> {
+                started.add(t.label);
+                FakeHandle h = new FakeHandle(t.label, 1);
+                if (t.label.startsWith("a_")) h.error = "boom";
+                return h;
+            };
+
+            ProjectLayerScheduler ls = new ProjectLayerScheduler(env, host);
+            eq("start continueOnError", ls.start(pq), null);
+            for (int i = 0; i < 15 && ls.isRunning(); i++) ls.tick();
+
+            check("finished queue after continuing", !ls.isRunning() && host.allComplete);
+            check("overall success false because A failed", !host.allSuccess);
+            eq("B ran after A failed", started, List.of("a_task_1", "b_task_1"));
+            eq("A status FAILED", ls.layerStatus(pq.find("a")), ProjectLayerScheduler.LayerStatus.FAILED);
+            eq("B status DONE", ls.layerStatus(pq.find("b")), ProjectLayerScheduler.LayerStatus.DONE);
         }
     }
 }

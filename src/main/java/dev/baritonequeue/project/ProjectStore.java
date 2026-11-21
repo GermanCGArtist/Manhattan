@@ -29,6 +29,7 @@ import java.util.regex.Pattern;
 public final class ProjectStore {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final String ACTIVE_FILE = "_active.txt";
+    private static final String QUEUE_FILE = "_queue.json";
     private static final String JSON_EXT = ".json";
 
     private static final Pattern POS_PATTERN = Pattern.compile(
@@ -152,8 +153,14 @@ public final class ProjectStore {
         Path file = projectFile(rootDir, world, cleanId);
         try {
             boolean deleted = Files.deleteIfExists(file);
-            if (deleted && cleanId.equals(activeId(rootDir, world))) {
-                setActiveId(rootDir, world, null);
+            if (deleted) {
+                if (cleanId.equals(activeId(rootDir, world))) {
+                    setActiveId(rootDir, world, null);
+                }
+                ProjectQueue q = loadQueue(rootDir, world);
+                if (q.remove(cleanId)) {
+                    saveQueue(rootDir, world, q);
+                }
             }
             return deleted;
         } catch (IOException e) {
@@ -185,6 +192,41 @@ public final class ProjectStore {
             return;
         }
         writeAtomically(activeFile, sanitizeId(id) + "\n");
+    }
+
+    /** Resolves {@code <rootDir>/<sanitizedWorld>/_queue.json}. */
+    public static Path queueFile(Path rootDir, String world) {
+        return worldDir(rootDir, world).resolve(QUEUE_FILE);
+    }
+
+    /** Loads the per-world {@link ProjectQueue}, returning an empty queue if missing or unreadable. */
+    public static ProjectQueue loadQueue(Path rootDir, String world) {
+        Path file = queueFile(rootDir, world);
+        if (!Files.isRegularFile(file)) {
+            ProjectQueue empty = new ProjectQueue();
+            empty.ensureInitialized();
+            return empty;
+        }
+        try (Reader r = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+            ProjectQueue q = GSON.fromJson(r, ProjectQueue.class);
+            if (q == null) q = new ProjectQueue();
+            q.ensureInitialized();
+            return q;
+        } catch (Exception e) {
+            ProjectQueue empty = new ProjectQueue();
+            empty.ensureInitialized();
+            return empty;
+        }
+    }
+
+    /** Atomically saves the per-world {@link ProjectQueue} to {@code <rootDir>/<world>/_queue.json}. */
+    public static Path saveQueue(Path rootDir, String world, ProjectQueue queue) {
+        Objects.requireNonNull(rootDir, "rootDir");
+        Objects.requireNonNull(queue, "queue");
+        queue.ensureInitialized();
+        Path file = queueFile(rootDir, world);
+        writeAtomically(file, GSON.toJson(queue));
+        return file;
     }
 
     /**
