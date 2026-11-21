@@ -36,6 +36,9 @@ lowest logical processors, which put 32 games on CPUs 0 to 3 and made most of th
 - `%LOCALAPPDATA%\deming\runs\<date>_<run id>\`: every game's `latest.log`, stdout and screenshots. Search a
   game's log for `BENCHMARK_RESULT`; `stuck_count` and `deaths` above 0 on a passing run are worth a look.
 - `deming run list` / `deming run status <id>` / `deming run logs <id>` show the same from the command line.
+- `Mod error: I/O error: The system cannot find the file specified` with no `log_path` means the game never
+  started: Deming failed to copy its mods, which happens now and then when 32 games install at once. It is not a
+  Manhattan failure; run that spec again (`waves.py --only <name>`).
 
 ## What counts as good
 
