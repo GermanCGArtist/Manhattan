@@ -1239,10 +1239,16 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
         return places;
     }
 
-    private static List<int[]> resolveTaskBoxes(ProjectTask task) {
-        List<int[]> raw;
+    private List<int[]> resolveTaskBoxes(ProjectTask task) {
+        List<int[]> raw = null;
         if (task.areaName != null && !task.areaName.isBlank()) {
-            raw = Areas.getBoxes(task.areaName);
+            Project exec = currentExecutionProject();
+            if (exec != null && exec.places != null && exec.places.areas != null) {
+                raw = exec.places.areas.get(task.areaName);
+            }
+            if (raw == null || raw.isEmpty()) {
+                raw = Areas.getBoxes(task.areaName);
+            }
             if (raw == null || raw.isEmpty()) return null;
         } else {
             raw = Areas.read();

@@ -1199,12 +1199,30 @@ public class QueueMod implements ClientModInitializer {
                 project.places.ensureInitialized();
                 project.places.areas.put(task.areaName, boxes);
             }
-            List<ChunkGrid.ColumnBox> cols = ChunkGrid.split(boxes, cfg.chunkSize, chunkSizeY, gap);
+            List<int[]> effectiveBoxes = task.expand == 0 ? boxes : expandBoxesHorizontal(boxes, task.expand);
+            List<ChunkGrid.ColumnBox> cols = ChunkGrid.split(effectiveBoxes, cfg.chunkSize, chunkSizeY, gap);
             for (ChunkGrid.ColumnBox c : cols) {
                 String key = ChunkRunner.chunkKey(task.id, c);
                 BlockPos center = c.centerXZ(c.minY());
                 out.add(new dev.manhattan.fleet.FleetProtocol.ChunkSpec(
                         key, c.gridX(), c.gridZ(), center.getX(), center.getZ()));
+            }
+        }
+        return out;
+    }
+
+    private static List<int[]> expandBoxesHorizontal(List<int[]> boxes, int delta) {
+        List<int[]> out = new ArrayList<>(boxes.size());
+        for (int[] b : boxes) {
+            if (b == null || b.length < 6) continue;
+            int minX = Math.min(b[0], b[3]) - delta;
+            int minY = Math.min(b[1], b[4]);
+            int minZ = Math.min(b[2], b[5]) - delta;
+            int maxX = Math.max(b[0], b[3]) + delta;
+            int maxY = Math.max(b[1], b[4]);
+            int maxZ = Math.max(b[2], b[5]) + delta;
+            if (minX <= maxX && minZ <= maxZ) {
+                out.add(new int[]{minX, minY, minZ, maxX, maxY, maxZ});
             }
         }
         return out;
