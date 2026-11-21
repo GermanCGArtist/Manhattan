@@ -450,6 +450,22 @@ public final class ImGuiManager {
             ImGuiIO io = ImGui.getIO();
             io.setIniFilename(null);   // fixed layouts: nothing to save
             io.addConfigFlags(ImGuiConfigFlags.NavEnableKeyboard);
+            io.setGetClipboardTextFn(new imgui.callback.ImStrSupplier() {
+                @Override
+                public String get() {
+                    Minecraft mc = Minecraft.getInstance();
+                    return mc != null && mc.keyboardHandler != null ? mc.keyboardHandler.getClipboard() : "";
+                }
+            });
+            io.setSetClipboardTextFn(new imgui.callback.ImStrConsumer() {
+                @Override
+                public void accept(String text) {
+                    Minecraft mc = Minecraft.getInstance();
+                    if (mc != null && mc.keyboardHandler != null) {
+                        mc.keyboardHandler.setClipboard(text == null ? "" : text);
+                    }
+                }
+            });
 
             UiTheme.apply(ImGui.getStyle(), getUiScale());
             try {
@@ -570,8 +586,18 @@ public final class ImGuiManager {
 
         static void onMouseButton(int button, int action) {
             ImGui.setCurrentContext(ctx);
-            if (button >= 0 && button < 5) {
-                ImGui.getIO().addMouseButtonEvent(button, action != InputConstants.RELEASE);
+            // MC 26.3 uses SDL3 1-indexed mouse buttons: 1=Left, 2=Middle, 3=Right, 4=X1, 5=X2.
+            // Dear ImGui uses 0-indexed: 0=Left, 1=Right, 2=Middle, 3=X1, 4=X2.
+            int imguiButton = switch (button) {
+                case InputConstants.MOUSE_BUTTON_LEFT -> 0;
+                case InputConstants.MOUSE_BUTTON_RIGHT -> 1;
+                case InputConstants.MOUSE_BUTTON_MIDDLE -> 2;
+                case InputConstants.MOUSE_BUTTON_4 -> 3;
+                case InputConstants.MOUSE_BUTTON_5 -> 4;
+                default -> -1;
+            };
+            if (imguiButton >= 0) {
+                ImGui.getIO().addMouseButtonEvent(imguiButton, action != InputConstants.RELEASE);
             }
         }
 
@@ -584,8 +610,12 @@ public final class ImGuiManager {
             if (key >= InputConstants.KEY_A && key <= InputConstants.KEY_Z) {
                 return ImGuiKey.A + (key - InputConstants.KEY_A);
             }
-            if (key >= InputConstants.KEY_0 && key <= InputConstants.KEY_9) {
-                return ImGuiKey._0 + (key - InputConstants.KEY_0);
+            // SDL3 USB-HID scancodes: KEY_1=30..KEY_9=38, KEY_0=39.
+            if (key >= InputConstants.KEY_1 && key <= InputConstants.KEY_9) {
+                return ImGuiKey._1 + (key - InputConstants.KEY_1);
+            }
+            if (key == InputConstants.KEY_0) {
+                return ImGuiKey._0;
             }
             return switch (key) {
                 case InputConstants.KEY_TAB -> ImGuiKey.Tab;

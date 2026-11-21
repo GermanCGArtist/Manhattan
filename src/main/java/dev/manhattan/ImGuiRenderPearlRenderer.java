@@ -191,11 +191,11 @@ final class ImGuiRenderPearlRenderer {
 
         float displayW = drawData.getDisplaySizeX();
         float displayH = drawData.getDisplaySizeY();
-        float fbScaleX = drawData.getFramebufferScaleX();
-        float fbScaleY = drawData.getFramebufferScaleY();
-        int fbW = Math.max(1, (int) (displayW * fbScaleX));
-        int fbH = Math.max(1, (int) (displayH * fbScaleY));
         if (displayW <= 0f || displayH <= 0f) return;
+        int fbW = Math.max(1, mainTarget.width);
+        int fbH = Math.max(1, mainTarget.height);
+        float fbScaleX = (float) fbW / displayW;
+        float fbScaleY = (float) fbH / displayH;
 
         GpuDevice dev = RenderSystem.getDevice();
         CommandEncoder enc = dev.createCommandEncoder();
