@@ -1154,6 +1154,13 @@ public class QueueMod implements ClientModInitializer {
         };
     }
 
+    private static boolean hasActiveFleetLease() {
+        dev.manhattan.fleet.FleetClient fc = dev.manhattan.fleet.FleetClient.instance();
+        if (!fc.isWorkerActive()) return false;
+        dev.manhattan.fleet.FleetProtocol.WorkGrant grant = fc.activeGrant();
+        return grant != null && !grant.idle && grant.jobId != null;
+    }
+
     private static void attachFleetLease(ChunkRunner runner) {
         dev.manhattan.fleet.FleetClient fc = dev.manhattan.fleet.FleetClient.instance();
         if (fc.isWorkerActive()) {
@@ -1228,7 +1235,7 @@ public class QueueMod implements ClientModInitializer {
             Util.msg("Stair shaft '" + Shaft.current.name() + "' stays standing; its steps are carved as the hole gets deeper.");
         }
         Actions.Action act;
-        if (ChunkGrid.shouldChunk(boxes, cfg.chunkSize, cfg.chunkSizeY, cfg.chunkGap, cfg.chunkEnabled)) {
+        if (hasActiveFleetLease() || ChunkGrid.shouldChunk(boxes, cfg.chunkSize, cfg.chunkSizeY, cfg.chunkGap, cfg.chunkEnabled)) {
             act = new ChunkRunner(new ChunkRunner.ChunkWorkload() {
                 @Override public String actionKind() { return "clear_area"; }
                 @Override public boolean usesSelectionNarrowing() { return false; }
@@ -1263,7 +1270,7 @@ public class QueueMod implements ClientModInitializer {
         String resolvedName = it == null ? null : ChestOp.name(it);
         String chestLabel = materialChestPos == null ? null : "at " + materialChestPos.toShortString();
         Actions.Action act;
-        if (ChunkGrid.shouldChunk(boxes, cfg.chunkSize, cfg.chunkEnabled)) {
+        if (hasActiveFleetLease() || ChunkGrid.shouldChunk(boxes, cfg.chunkSize, cfg.chunkEnabled)) {
             act = new ChunkRunner(new ChunkRunner.ChunkWorkload() {
                 @Override public String actionKind() { return "fill_water"; }
                 @Override public boolean usesSelectionNarrowing() { return false; }
@@ -1306,7 +1313,7 @@ public class QueueMod implements ClientModInitializer {
 
     public static PriorityScheduler.ActionHandle projectCreateDrainHandle(List<int[]> boxes, String taskId) {
         Actions.Action act;
-        if (ChunkGrid.shouldChunk(boxes, cfg.chunkSize, cfg.chunkEnabled)) {
+        if (hasActiveFleetLease() || ChunkGrid.shouldChunk(boxes, cfg.chunkSize, cfg.chunkEnabled)) {
             act = new ChunkRunner(new ChunkRunner.ChunkWorkload() {
                 @Override public String actionKind() { return "drain"; }
                 @Override public boolean usesSelectionNarrowing() { return false; }
@@ -1349,7 +1356,7 @@ public class QueueMod implements ClientModInitializer {
         SchemProcess.prepare(pls, finalMode);
         List<int[]> bounds = SchemProcess.placementBounds(pls);
         Actions.Action act;
-        if (ChunkGrid.shouldChunk(bounds, cfg.chunkSize, cfg.chunkEnabled)) {
+        if (hasActiveFleetLease() || ChunkGrid.shouldChunk(bounds, cfg.chunkSize, cfg.chunkEnabled)) {
             act = new ChunkRunner(new ChunkRunner.ChunkWorkload() {
                 @Override public String actionKind() { return "schem_build"; }
                 @Override public boolean usesSelectionNarrowing() { return false; }

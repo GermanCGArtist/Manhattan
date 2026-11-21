@@ -163,10 +163,18 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
                 }
             }
             fleetRestartCooldownTicks = 60;
-            startQueue(fleetProject);
+            startFleetQueue(fleetProject);
         } catch (Exception ignored) {
             fleetRestartCooldownTicks = 60;
         }
+    }
+
+    /** Starts a Fleet Server-assigned project using a fresh in-memory TaskLedger (the Fleet Server owns progress). */
+    private void startFleetQueue(Project project) {
+        if (project == null || running() || QueueMod.projectRunnerRunning()) return;
+        String cleanId = ProjectStore.sanitizeId(project.id == null || project.id.isBlank() ? "fleet" : project.id);
+        ledgerCache.put(cleanId, new TaskQueue.InMemoryTaskLedger());
+        startQueue(project);
     }
 
     public Project activeProject() {
