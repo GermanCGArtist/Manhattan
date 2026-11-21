@@ -7,8 +7,6 @@ group = project.maven_group
 
 repositories {
     mavenCentral()
-    // baritone-api-fabric-<version>.jar lives in ./libs
-    flatDir { dirs 'libs' }
 }
 
 configurations {

@@ -14,10 +14,10 @@
           }
         },
         {
-          "local_path": "build/libs/baritonequeue-2.12.3.jar"
+          "local_path": "build/libs/manhattan-2.12.5.jar"
         },
         {
-          "local_path": "build/libs/manhattan-testbridge-2.12.3.jar"
+          "local_path": "build/libs/manhattan-testbridge-2.12.5.jar"
         }
       ],
       "account": {
@@ -53,10 +53,10 @@
           }
         },
         {
-          "local_path": "build/libs/baritonequeue-2.12.3.jar"
+          "local_path": "build/libs/manhattan-2.12.5.jar"
         },
         {
-          "local_path": "build/libs/manhattan-testbridge-2.12.3.jar"
+          "local_path": "build/libs/manhattan-testbridge-2.12.5.jar"
         }
       ],
       "account": {
@@ -92,10 +92,10 @@
           }
         },
         {
-          "local_path": "build/libs/baritonequeue-2.12.3.jar"
+          "local_path": "build/libs/manhattan-2.12.5.jar"
         },
         {
-          "local_path": "build/libs/manhattan-testbridge-2.12.3.jar"
+          "local_path": "build/libs/manhattan-testbridge-2.12.5.jar"
         }
       ],
       "account": {
@@ -131,10 +131,10 @@
           }
         },
         {
-          "local_path": "build/libs/baritonequeue-2.12.3.jar"
+          "local_path": "build/libs/manhattan-2.12.5.jar"
         },
         {
-          "local_path": "build/libs/manhattan-testbridge-2.12.3.jar"
+          "local_path": "build/libs/manhattan-testbridge-2.12.5.jar"
         }
       ],
       "account": {

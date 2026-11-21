@@ -3,7 +3,6 @@ build/
 run/
 .idea/
 *.iml
-libs/*.jar
 tools/
 tmp/
 __pycache__/

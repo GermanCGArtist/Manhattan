@@ -1,33 +1,6 @@
 {
-  "name": "midtown-vs-baritone-water-fill-tight",
+  "name": "midtown-water-fill-tight",
   "instances": [
-    {
-      "id": "baritone",
-      "mc_version": "26.1.1",
-      "loader": "fabric",
-      "loader_version": "0.20.1",
-      "mods": [
-        { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
-        { "local_path": "libs/baritone-api-fabric-1.18.0.jar" },
-        { "local_path": "build/libs/baritonequeue-2.12.1.jar" },
-        { "local_path": "build/libs/manhattan-testbridge-2.12.1.jar" }
-      ],
-      "account": { "offline": { "username": "BenchBaritone" } },
-      "ram_mb": 4096,
-      "cpu_cores": 2,
-      "jvm_args": [
-        "-Dmanhattan.tests=true",
-        "-Dmanhattan.engine=baritone",
-        "-Dmanhattan.benchmark=water_fill_tight"
-      ],
-      "game_args": [],
-      "test_rule": {
-        "log_pattern": {
-          "success_regex": "BENCHMARK_RESULT engine=baritone scenario=water_fill_tight pass=true",
-          "failure_regex": "BENCHMARK_RESULT engine=baritone scenario=water_fill_tight pass=false|FATAL"
-        }
-      }
-    },
     {
       "id": "midtown",
       "mc_version": "26.1.1",
@@ -35,8 +8,8 @@
       "loader_version": "0.20.1",
       "mods": [
         { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
-        { "local_path": "build/libs/baritonequeue-2.12.1.jar" },
-        { "local_path": "build/libs/manhattan-testbridge-2.12.1.jar" }
+        { "local_path": "build/libs/manhattan-2.12.5.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
       ],
       "account": { "offline": { "username": "BenchMidtown" } },
       "ram_mb": 4096,
