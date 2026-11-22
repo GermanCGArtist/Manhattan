@@ -198,6 +198,7 @@ public class ChunkRunner extends Actions.Action {
     private ChunkGrid.ColumnBox currentChunk;
     private List<int[]> currentClipped;
     private Actions.Action activeChunkAction;
+    private boolean activeActionSuspended;
     private int walkTicks;
     private int walkStallTicks;
     private double walkBestDistSq;
@@ -300,6 +301,7 @@ public class ChunkRunner extends Actions.Action {
         currentChunk = null;
         currentClipped = null;
         activeChunkAction = null;
+        activeActionSuspended = false;
 
         signature = buildSignature(workload.actionKind(), chunkSize, chunkSizeY, gap, fullBounds);
         actionNode = taskIdPrefix != null
@@ -483,6 +485,7 @@ public class ChunkRunner extends Actions.Action {
         currentChunk = chunk;
         currentClipped = clippedByChunk.getOrDefault(chunk.index(), List.of());
         activeChunkAction = null;
+        activeActionSuspended = false;
         walkTicks = 0;
         walkStallTicks = 0;
         walkBestDistSq = Double.MAX_VALUE;
@@ -612,6 +615,14 @@ public class ChunkRunner extends Actions.Action {
             return;
         }
 
+        if (activeActionSuspended) {
+            activeActionSuspended = false;
+            if (workload.usesSelectionNarrowing() && currentClipped != null) {
+                Areas.apply(currentClipped);
+            }
+            workload.onChunkStart(currentChunk, currentClipped);
+            activeChunkAction.resume();
+        }
         if (!activeChunkAction.done) {
             activeChunkAction.ticks++;
             activeChunkAction.tick();
@@ -626,6 +637,7 @@ public class ChunkRunner extends Actions.Action {
         List<int[]> finishedClipped = currentClipped;
 
         activeChunkAction = null;
+        activeActionSuspended = false;
         this.estimate = new Estimate();
         workload.onChunkEnd(finishedChunk);
         if (workload.usesSelectionNarrowing() && savedSelection != null) {
@@ -752,6 +764,7 @@ public class ChunkRunner extends Actions.Action {
     void suspend() {
         if (activeChunkAction != null) {
             activeChunkAction.suspend();
+            activeActionSuspended = true;
         }
         if (step == Step.WALK_TO_CHUNK && walkIssued) {
             env.cancelPath();
@@ -766,8 +779,13 @@ public class ChunkRunner extends Actions.Action {
         done = false;
         MapLayers.register("chunks", this::mapRegions);
         if (currentChunk == null) return;
-        if (step == Step.WALK_TO_CHUNK) {
+        BlockPos playerPos = env.playerBlockPos();
+        boolean far = playerPos != null && currentChunk.distanceSqXZ(playerPos) > 64.0;
+        boolean unloaded = !allMcChunksLoaded(currentChunk);
+        if (step == Step.WALK_TO_CHUNK || far || unloaded) {
             walkTicks = 0;
+            waitLoadTicks = 0;
+            step = Step.WALK_TO_CHUNK;
             issueWalkToChunk(currentChunk);
             return;
         }
@@ -775,7 +793,8 @@ public class ChunkRunner extends Actions.Action {
             if (workload.usesSelectionNarrowing() && currentClipped != null) {
                 Areas.apply(currentClipped);
             }
-            if (activeChunkAction != null) {
+            if (activeChunkAction != null && activeActionSuspended) {
+                activeActionSuspended = false;
                 workload.onChunkStart(currentChunk, currentClipped);
                 activeChunkAction.resume();
             }
@@ -786,6 +805,7 @@ public class ChunkRunner extends Actions.Action {
     void cancel() {
         MapLayers.unregister("chunks");
         latestDeficit = Map.of();
+        activeActionSuspended = false;
         if (activeChunkAction != null) {
             activeChunkAction.cancel();
             activeChunkAction = null;
