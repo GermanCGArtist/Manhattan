@@ -1057,6 +1057,7 @@ public final class ClearProcess {
                         if (s.is(net.minecraft.world.level.block.Blocks.BEDROCK)
                                 || s.is(net.minecraft.world.level.block.Blocks.END_PORTAL_FRAME)) continue;
                         if (s.getDestroySpeed(level, pos) < 0) continue;
+                        if (protectedOrForbidden(s, pos) || nextToFluid(level, pos)) continue;
                         count++;
                     }
                 }

@@ -20,6 +20,9 @@ public final class WorldOverlayTest {
         testAreaCollectionAndSafePriority();
         testLabelFormatting();
         testStatusTransitions();
+        testAdjacentAreaMerging();
+        testOverlapResolutionDistinctLayers();
+        testPerElementVisibility();
         System.out.println("WorldOverlayTest: ALL " + passed + " tests passed.");
     }
 
@@ -149,6 +152,51 @@ public final class WorldOverlayTest {
         // Same status -> silent
         assertTrue(WorldOverlay.evaluateTransition(WorldOverlay.Status.OK, WorldOverlay.Status.OK, bed, "red_bed") == null,
                 "OK -> OK is silent");
+        passed++;
+    }
+
+    private static void testAdjacentAreaMerging() {
+        WorldOverlay.AreaMarker left = new WorldOverlay.AreaMarker(0, 60, 0, 9, 70, 9, "quarry", false, "dig");
+        WorldOverlay.AreaMarker right = new WorldOverlay.AreaMarker(10, 60, 0, 19, 70, 9, "quarry", false, "dig");
+        WorldOverlay.AreaMarker inner = new WorldOverlay.AreaMarker(2, 62, 2, 6, 68, 6, "quarry", false, "dig");
+        WorldOverlay.AreaMarker other = new WorldOverlay.AreaMarker(10, 60, 0, 19, 70, 9, "safe_camp", true, "protect");
+
+        List<WorldOverlay.AreaMarker> merged = WorldOverlay.mergeAdjacentAreas(List.of(left, right, inner, other));
+        assertEquals(2, merged.size(), "Adjacent + contained boxes of same area merge into 1; distinct area kept separate");
+        WorldOverlay.AreaMarker q = merged.get(0);
+        assertEquals(0, q.x1(), "Merged x1");
+        assertEquals(19, q.x2(), "Merged x2");
+        passed++;
+    }
+
+    private static void testOverlapResolutionDistinctLayers() {
+        WorldOverlay.AreaMarker a = new WorldOverlay.AreaMarker(0, 60, 0, 20, 80, 20, "dig1", false, "dig");
+        WorldOverlay.AreaMarker b = new WorldOverlay.AreaMarker(10, 60, 10, 30, 80, 30, "dig2", false, "dig");
+        WorldOverlay.AreaMarker c = new WorldOverlay.AreaMarker(100, 60, 100, 110, 70, 110, "far", false, "dig");
+
+        List<WorldOverlay.StyledArea> styled = WorldOverlay.resolveOverlaps(List.of(a, b, c), true);
+        assertEquals(3, styled.size(), "3 styled areas");
+        assertTrue(styled.get(0).overlapping() && styled.get(1).overlapping(), "a and b detected as overlapping");
+        assertTrue(!styled.get(2).overlapping(), "c is not overlapping");
+        assertTrue(styled.get(0).layerIndex() != styled.get(1).layerIndex(), "Overlapping areas get distinct layers");
+        assertTrue(styled.get(0).inflate() != styled.get(1).inflate(), "Overlapping areas get distinct Z-fighting offsets");
+        assertTrue(styled.get(0).color() != styled.get(1).color(), "Overlapping task areas get distinct colors");
+        passed++;
+    }
+
+    private static void testPerElementVisibility() {
+        WorldOverlay.resetHidden();
+        assertTrue(WorldOverlay.isAreaVisible("quarry"), "Visible by default");
+        WorldOverlay.setAreaVisible("Quarry", false);
+        assertTrue(!WorldOverlay.isAreaVisible("quarry"), "Case-insensitive hide works");
+
+        WorldOverlay.setPointVisible(WorldOverlay.Category.BED, 10, 64, -20, false);
+        assertTrue(!WorldOverlay.isPointVisible(WorldOverlay.Category.BED, 10, 64, -20), "Point hidden");
+        assertTrue(WorldOverlay.isPointVisible(WorldOverlay.Category.CHEST, 10, 64, -20), "Different category unaffected");
+
+        assertEquals(2, WorldOverlay.hiddenCount(), "2 hidden elements");
+        WorldOverlay.resetHidden();
+        assertEquals(0, WorldOverlay.hiddenCount(), "Reset clears all hidden elements");
         passed++;
     }
 

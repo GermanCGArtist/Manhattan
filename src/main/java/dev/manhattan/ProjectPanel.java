@@ -882,8 +882,23 @@ final class ProjectPanel {
         ov.set(Config.cfg.showWorldOverlay);
         if (ImGui.checkbox("Enabled##ovMaster", ov)) { Config.cfg.showWorldOverlay = ov.get(); Config.save(); }
         ImGui.sameLine(0f, 10f * s);
+        ov.set(Config.cfg.showOverlayProblemsOnly);
+        if (ImGui.checkbox("Problems Only##ovProbOnly", ov)) { Config.cfg.showOverlayProblemsOnly = ov.get(); Config.save(); }
+        if (ImGui.isItemHovered()) {
+            ImGui.setTooltip("Hide all OK markers & areas; only show MISSING/WRONG/BLOCKED beds and chests.");
+        }
+        ImGui.sameLine(0f, 10f * s);
+        ov.set(Config.cfg.showOverlayAreaFill);
+        if (ImGui.checkbox("Area Fill##ovFill", ov)) { Config.cfg.showOverlayAreaFill = ov.get(); Config.save(); }
+        if (ImGui.isItemHovered()) {
+            ImGui.setTooltip("Off = clean wireframes only (recommended). On = light translucent fill.");
+        }
+
+        ov.set(Config.cfg.showOverlayBeds);
+        if (ImGui.checkbox("Beds##ovBeds", ov)) { Config.cfg.showOverlayBeds = ov.get(); Config.save(); }
+        ImGui.sameLine(0f, 10f * s);
         ov.set(Config.cfg.showOverlayChests);
-        if (ImGui.checkbox("Chests & Beds##ovChests", ov)) { Config.cfg.showOverlayChests = ov.get(); Config.save(); }
+        if (ImGui.checkbox("Chests##ovChests", ov)) { Config.cfg.showOverlayChests = ov.get(); Config.save(); }
         ImGui.sameLine(0f, 10f * s);
         ov.set(Config.cfg.showOverlaySafeAreas);
         if (ImGui.checkbox("Safe Areas##ovSafe", ov)) { Config.cfg.showOverlaySafeAreas = ov.get(); Config.save(); }
@@ -896,6 +911,8 @@ final class ProjectPanel {
         ImGui.sameLine(0f, 10f * s);
         ov.set(Config.cfg.showOverlayThroughWalls);
         if (ImGui.checkbox("Through Walls##ovXray", ov)) { Config.cfg.showOverlayThroughWalls = ov.get(); Config.save(); }
+
+        renderOverlayElementsSection("proj", s);
 
         ImGui.separator();
         Widgets.label("Survival Policy");
@@ -1012,9 +1029,71 @@ final class ProjectPanel {
             }
         }
         if (current != null && current.length >= 3) {
+            ImGui.sameLine(0f, 6f * s);
+            ImBoolean vis = new ImBoolean(WorldOverlay.isPointVisible(category, current));
+            if (ImGui.checkbox("##vis", vis)) {
+                WorldOverlay.setPointVisible(category, current[0], current[1], current[2], vis.get());
+            }
+            if (ImGui.isItemHovered()) ImGui.setTooltip("Show/hide in 3D World Overlay");
             renderPlaceStatusBadge(current, category, s);
         }
         ImGui.popID();
+    }
+
+    /** Shared collapsible list of individual areas, beds, and chests with per-element show/hide checkboxes. */
+    static void renderOverlayElementsSection(String idPrefix, float s) {
+        int hidden = WorldOverlay.hiddenCount();
+        String title = "Individual Overlay Elements" + (hidden > 0 ? " (" + hidden + " hidden)" : "") + "###ovElems_" + idPrefix;
+        if (!ImGui.collapsingHeader(title)) return;
+
+        ImGui.indent(6f * s);
+        if (Widgets.button("Show All##ovShowAll_" + idPrefix, 0)) {
+            WorldOverlay.resetHidden();
+        }
+        ImGui.sameLine(0f, 6f * s);
+        if (Widgets.button("Hide All Areas##ovHideAreas_" + idPrefix, 0)) {
+            for (WorldOverlay.AreaMarker a : WorldOverlay.currentAreas()) {
+                WorldOverlay.setAreaVisible(a.label(), false);
+            }
+        }
+        ImGui.sameLine(0f, 6f * s);
+        if (Widgets.button("Hide All Chests##ovHideChests_" + idPrefix, 0)) {
+            for (WorldOverlay.PointMarker p : WorldOverlay.currentPoints()) {
+                if (p.category() == WorldOverlay.Category.CHEST) {
+                    WorldOverlay.setPointVisible(p.category(), p.x(), p.y(), p.z(), false);
+                }
+            }
+        }
+
+        List<WorldOverlay.AreaMarker> areas = WorldOverlay.currentAreas();
+        if (!areas.isEmpty()) {
+            UiTheme.textColored(DIM, "Areas:");
+            java.util.Set<String> shownNames = new java.util.LinkedHashSet<>();
+            int idx = 0;
+            for (WorldOverlay.AreaMarker a : areas) {
+                if (!shownNames.add(a.key())) continue;
+                ImBoolean vis = new ImBoolean(WorldOverlay.isAreaVisible(a.label()));
+                String tag = a.safe() ? " [SAFE]" : (a.role() == null || a.role().isBlank() || "custom".equalsIgnoreCase(a.role()) ? "" : " [" + a.role() + "]");
+                if (ImGui.checkbox(a.label() + tag + "##ovArea_" + idPrefix + "_" + (idx++), vis)) {
+                    WorldOverlay.setAreaVisible(a.label(), vis.get());
+                }
+            }
+        }
+
+        List<WorldOverlay.PointMarker> points = WorldOverlay.currentPoints();
+        if (!points.isEmpty()) {
+            UiTheme.textColored(DIM, "Beds & Chests:");
+            int idx = 0;
+            for (WorldOverlay.PointMarker p : points) {
+                ImBoolean vis = new ImBoolean(WorldOverlay.isPointVisible(p));
+                String lbl = p.label() + " (" + p.x() + " " + p.y() + " " + p.z() + ")";
+                if (ImGui.checkbox(lbl + "##ovPt_" + idPrefix + "_" + (idx++), vis)) {
+                    WorldOverlay.setPointVisible(p.category(), p.x(), p.y(), p.z(), vis.get());
+                }
+                renderPlaceStatusBadge(new int[]{p.x(), p.y(), p.z()}, p.category(), s);
+            }
+        }
+        ImGui.unindent(6f * s);
     }
 
     private static void renderPlaceStatusBadge(int[] coords, WorldOverlay.Category category, float s) {
@@ -1097,7 +1176,13 @@ final class ProjectPanel {
         for (int i = 0; i < places.bedPool.size(); i++) {
             int[] b = places.bedPool.get(i);
             if (b == null || b.length != 3) continue;
-            UiTheme.textColored(FG, "  #" + (i + 1) + ": " + b[0] + ", " + b[1] + ", " + b[2]);
+            ImBoolean bvis = new ImBoolean(WorldOverlay.isPointVisible(WorldOverlay.Category.BED, b));
+            if (ImGui.checkbox("##visBedPool_" + i, bvis)) {
+                WorldOverlay.setPointVisible(WorldOverlay.Category.BED, b[0], b[1], b[2], bvis.get());
+            }
+            if (ImGui.isItemHovered()) ImGui.setTooltip("Show/hide in 3D World Overlay");
+            ImGui.sameLine(0f, 4f * s);
+            UiTheme.textColored(FG, "#" + (i + 1) + ": " + b[0] + ", " + b[1] + ", " + b[2]);
             renderPlaceStatusBadge(b, WorldOverlay.Category.BED, s);
             ImGui.sameLine();
             if (Widgets.button("x##rmBed_" + i, 2)) {

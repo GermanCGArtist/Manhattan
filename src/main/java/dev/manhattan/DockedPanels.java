@@ -1278,6 +1278,14 @@ public final class DockedPanels {
         } else {
             for (int i = 0; i < areas.size(); i++) {
                 AreasView.AreaEntry a = areas.get(i);
+                if (!a.isLast()) {
+                    ImBoolean vis = new ImBoolean(WorldOverlay.isAreaVisible(a.name()));
+                    if (ImGui.checkbox("##visarea_" + i, vis)) {
+                        WorldOverlay.setAreaVisible(a.name(), vis.get());
+                    }
+                    if (ImGui.isItemHovered()) ImGui.setTooltip("Show/hide in 3D World Overlay");
+                    ImGui.sameLine(0f, 4f);
+                }
                 if (ImGui.smallButton("Select##selarea_" + i)) {
                     AreasView.select(a.name());
                 }
@@ -1316,6 +1324,13 @@ public final class DockedPanels {
         } else {
             for (int i = 0; i < spots.size(); i++) {
                 PlacesView.SavedSpot sp = spots.get(i);
+                WorldOverlay.Category cat = "bed".equalsIgnoreCase(sp.kind()) ? WorldOverlay.Category.BED : WorldOverlay.Category.CHEST;
+                ImBoolean vis = new ImBoolean(WorldOverlay.isPointVisible(cat, sp.x(), sp.y(), sp.z()));
+                if (ImGui.checkbox("##visspot_" + i, vis)) {
+                    WorldOverlay.setPointVisible(cat, sp.x(), sp.y(), sp.z(), vis.get());
+                }
+                if (ImGui.isItemHovered()) ImGui.setTooltip("Show/hide in 3D World Overlay");
+                ImGui.sameLine(0f, 4f);
                 if (ImGui.smallButton("Go##gospot_" + i)) {
                     ChestIndexView.goThere(sp.x(), sp.y(), sp.z());
                 }

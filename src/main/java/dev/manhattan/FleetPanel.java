@@ -49,14 +49,21 @@ final class FleetPanel {
 
         // World Overlay quick controls (for both Editors and Worker bots)
         imgui.type.ImBoolean overlayOn = new imgui.type.ImBoolean(cfg.showWorldOverlay);
-        if (ImGui.checkbox("3D World Overlay (Chests, Beds & Safe Areas)##fleetOverlay", overlayOn)) {
+        if (ImGui.checkbox("3D Overlay##fleetOverlay", overlayOn)) {
             cfg.showWorldOverlay = overlayOn.get();
+            Config.save();
+        }
+        ImGui.sameLine(0f, 8f * s);
+        imgui.type.ImBoolean probOnly = new imgui.type.ImBoolean(cfg.showOverlayProblemsOnly);
+        if (ImGui.checkbox("Problems Only##fleetProbOnly", probOnly)) {
+            cfg.showOverlayProblemsOnly = probOnly.get();
             Config.save();
         }
         ImGui.sameLine(0f, 8f * s);
         if (Widgets.button("Check Base##fleetCheckBase", 0)) {
             WorldOverlay.checkReport().forEach(Util::msg);
         }
+        ProjectPanel.renderOverlayElementsSection("fleet", s);
 
         ImGui.separator();
 

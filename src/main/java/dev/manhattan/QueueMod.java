@@ -154,11 +154,14 @@ public class QueueMod implements ClientModInitializer {
                         .then(ClientCommands.literal("overlay")
                                 .executes(ctx -> {
                                     Util.msg("World overlay: " + (cfg.showWorldOverlay ? "ON" : "OFF")
-                                            + " (chests/beds=" + (cfg.showOverlayChests ? "on" : "off")
+                                            + " (beds=" + (cfg.showOverlayBeds ? "on" : "off")
+                                            + ", chests=" + (cfg.showOverlayChests ? "on" : "off")
                                             + ", safe=" + (cfg.showOverlaySafeAreas ? "on" : "off")
                                             + ", areas=" + (cfg.showOverlayTaskAreas ? "on" : "off")
+                                            + ", fill=" + (cfg.showOverlayAreaFill ? "on" : "off")
                                             + ", labels=" + (cfg.showOverlayLabels ? "on" : "off")
-                                            + ", xray=" + (cfg.showOverlayThroughWalls ? "on" : "off") + ")");
+                                            + ", xray=" + (cfg.showOverlayThroughWalls ? "on" : "off")
+                                            + ", problems=" + (cfg.showOverlayProblemsOnly ? "on" : "off") + ")");
                                     WorldOverlay.checkReport().forEach(Util::msg);
                                     return 1;
                                 })
@@ -169,6 +172,29 @@ public class QueueMod implements ClientModInitializer {
                                     WorldOverlay.checkReport().forEach(Util::msg);
                                     return 1;
                                 }))
+                                .then(ClientCommands.literal("reset").executes(ctx -> {
+                                    WorldOverlay.resetHidden();
+                                    Util.msg("All hidden overlay elements are now visible again.");
+                                    return 1;
+                                }))
+                                .then(ClientCommands.literal("hide")
+                                        .then(ClientCommands.argument("name", StringArgumentType.greedyString()).executes(ctx -> {
+                                            String name = StringArgumentType.getString(ctx, "name");
+                                            int n = WorldOverlay.setVisibleByName(name, false);
+                                            Util.msg("Hidden " + n + " overlay element(s) matching '" + name + "'.");
+                                            return 1;
+                                        })))
+                                .then(ClientCommands.literal("show")
+                                        .then(ClientCommands.argument("name", StringArgumentType.greedyString()).executes(ctx -> {
+                                            String name = StringArgumentType.getString(ctx, "name");
+                                            int n = WorldOverlay.setVisibleByName(name, true);
+                                            Util.msg("Shown " + n + " overlay element(s) matching '" + name + "'.");
+                                            return 1;
+                                        })))
+                                .then(ClientCommands.literal("beds")
+                                        .executes(ctx -> toggleOverlayLayer("beds", null))
+                                        .then(ClientCommands.literal("on").executes(ctx -> toggleOverlayLayer("beds", true)))
+                                        .then(ClientCommands.literal("off").executes(ctx -> toggleOverlayLayer("beds", false))))
                                 .then(ClientCommands.literal("chests")
                                         .executes(ctx -> toggleOverlayLayer("chests", null))
                                         .then(ClientCommands.literal("on").executes(ctx -> toggleOverlayLayer("chests", true)))
@@ -181,6 +207,10 @@ public class QueueMod implements ClientModInitializer {
                                         .executes(ctx -> toggleOverlayLayer("areas", null))
                                         .then(ClientCommands.literal("on").executes(ctx -> toggleOverlayLayer("areas", true)))
                                         .then(ClientCommands.literal("off").executes(ctx -> toggleOverlayLayer("areas", false))))
+                                .then(ClientCommands.literal("fill")
+                                        .executes(ctx -> toggleOverlayLayer("fill", null))
+                                        .then(ClientCommands.literal("on").executes(ctx -> toggleOverlayLayer("fill", true)))
+                                        .then(ClientCommands.literal("off").executes(ctx -> toggleOverlayLayer("fill", false))))
                                 .then(ClientCommands.literal("labels")
                                         .executes(ctx -> toggleOverlayLayer("labels", null))
                                         .then(ClientCommands.literal("on").executes(ctx -> toggleOverlayLayer("labels", true)))
@@ -188,7 +218,11 @@ public class QueueMod implements ClientModInitializer {
                                 .then(ClientCommands.literal("xray")
                                         .executes(ctx -> toggleOverlayLayer("xray", null))
                                         .then(ClientCommands.literal("on").executes(ctx -> toggleOverlayLayer("xray", true)))
-                                        .then(ClientCommands.literal("off").executes(ctx -> toggleOverlayLayer("xray", false)))))
+                                        .then(ClientCommands.literal("off").executes(ctx -> toggleOverlayLayer("xray", false))))
+                                .then(ClientCommands.literal("problems")
+                                        .executes(ctx -> toggleOverlayLayer("problems", null))
+                                        .then(ClientCommands.literal("on").executes(ctx -> toggleOverlayLayer("problems", true)))
+                                        .then(ClientCommands.literal("off").executes(ctx -> toggleOverlayLayer("problems", false)))))
                         .then(ClientCommands.literal("chest")
                                 .executes(ctx -> chestList())
                                 .then(ClientCommands.literal("list").executes(ctx -> chestList()))
@@ -1721,11 +1755,14 @@ public class QueueMod implements ClientModInitializer {
 
     private static int toggleOverlayLayer(String layer, Boolean value) {
         boolean next = switch (layer) {
+            case "beds" -> cfg.showOverlayBeds = (value != null ? value : !cfg.showOverlayBeds);
             case "chests" -> cfg.showOverlayChests = (value != null ? value : !cfg.showOverlayChests);
             case "safe" -> cfg.showOverlaySafeAreas = (value != null ? value : !cfg.showOverlaySafeAreas);
             case "areas" -> cfg.showOverlayTaskAreas = (value != null ? value : !cfg.showOverlayTaskAreas);
+            case "fill" -> cfg.showOverlayAreaFill = (value != null ? value : !cfg.showOverlayAreaFill);
             case "labels" -> cfg.showOverlayLabels = (value != null ? value : !cfg.showOverlayLabels);
             case "xray" -> cfg.showOverlayThroughWalls = (value != null ? value : !cfg.showOverlayThroughWalls);
+            case "problems" -> cfg.showOverlayProblemsOnly = (value != null ? value : !cfg.showOverlayProblemsOnly);
             default -> false;
         };
         Config.save();

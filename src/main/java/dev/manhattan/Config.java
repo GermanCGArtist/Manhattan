@@ -49,11 +49,16 @@ final class Config {
     boolean showPath = true;
     /** Client-side 3D world visualization of chests, beds, safe areas and task areas (with live block verification). */
     boolean showWorldOverlay = true;
+    boolean showOverlayBeds = true;
     boolean showOverlayChests = true;
     boolean showOverlaySafeAreas = true;
     boolean showOverlayTaskAreas = true;
+    boolean showOverlayAreaFill = false;
     boolean showOverlayLabels = true;
     boolean showOverlayThroughWalls = true;
+    boolean showOverlayProblemsOnly = false;
+    java.util.Set<String> overlayHiddenAreas = new java.util.LinkedHashSet<>();
+    java.util.Set<String> overlayHiddenPoints = new java.util.LinkedHashSet<>();
     boolean captureRapid = false;
     String captureType = "dump";
 
@@ -127,6 +132,8 @@ final class Config {
                     if (cfg.lastArea == null) cfg.lastArea = new ArrayList<>();
                     if (cfg.fleetMode == null || cfg.fleetMode.isBlank()) cfg.fleetMode = "LOCAL";
                     if (cfg.fleetTags == null) cfg.fleetTags = new ArrayList<>();
+                    if (cfg.overlayHiddenAreas == null) cfg.overlayHiddenAreas = new java.util.LinkedHashSet<>();
+                    if (cfg.overlayHiddenPoints == null) cfg.overlayHiddenPoints = new java.util.LinkedHashSet<>();
                 }
                 if (cfg.scriptVersion < 2) migrate();
                 if (cfg.presetsVersion < Presets.VERSION) {   // new default presets: untouched old ones are replaced

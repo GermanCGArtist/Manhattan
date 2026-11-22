@@ -34,7 +34,7 @@ import static dev.manhattan.Config.cfg;
 /**
  * Client-side 3D world visualization for editors and bots (LOCAL / EDITOR / WORKER / BOTH):
  * draws configured beds, chests, safe (protected) areas, and task/saved areas with live client-side
- * block verification.
+ * block verification, per-element visibility controls, and clean handling of overlapping/adjacent areas.
  *
  * <p>When a bed or chest is destroyed (e.g. by a creeper), its exact block coordinate pulses red with
  * an X-cross and a {@code [MISSING!]} label. As soon as it is placed back, the client verifies the
@@ -72,9 +72,32 @@ public final class WorldOverlay {
         INFO
     }
 
-    public record PointMarker(int x, int y, int z, String label, Category category, Role role) {}
+    public record PointMarker(int x, int y, int z, String label, Category category, Role role) {
+        public String key() {
+            return pointKey(category, x, y, z);
+        }
+    }
 
-    public record AreaMarker(int x1, int y1, int z1, int x2, int y2, int z2, String label, boolean safe, String role) {}
+    public record AreaMarker(int x1, int y1, int z1, int x2, int y2, int z2, String label, boolean safe, String role) {
+        public String key() {
+            return areaKey(label);
+        }
+
+        public boolean overlaps(AreaMarker other) {
+            return x1 <= other.x2 && x2 >= other.x1
+                    && y1 <= other.y2 && y2 >= other.y1
+                    && z1 <= other.z2 && z2 >= other.z1;
+        }
+
+        public boolean contains(AreaMarker other) {
+            return x1 <= other.x1 && x2 >= other.x2
+                    && y1 <= other.y1 && y2 >= other.y2
+                    && z1 <= other.z1 && z2 >= other.z2;
+        }
+    }
+
+    /** Area marker with resolved overlap layer, Z-fighting inset offset, and distinct outline color. */
+    public record StyledArea(AreaMarker area, int layerIndex, boolean overlapping, int color, double inflate) {}
 
     public record CheckResult(Status status, String detail) {
         public boolean isProblem() {
@@ -131,10 +154,128 @@ public final class WorldOverlay {
     private static final int COL_AREA_BUILD = 0xCCA78BFA;
     private static final int COL_AREA_CUSTOM = 0xAA67E8F9;
 
+    // Distinct palettes when multiple areas overlap so their outlines stay clearly separable
+    private static final int[] OVERLAP_SAFE_PALETTE = {
+            0xFF22D3A0, // emerald
+            0xFF34D399, // mint
+            0xFF2DD4BF, // teal
+            0xFF86EFAC  // light green
+    };
+    private static final int[] OVERLAP_TASK_PALETTE = {
+            0xDD38BDF8, // sky
+            0xDDFB923C, // orange
+            0xDDA78BFA, // violet
+            0xDDF472B6, // pink
+            0xDDFACC15, // yellow
+            0xDD60A5FA  // blue
+    };
+
     // Live status transition tracking (world/dimension scoped)
     private static Object trackedLevel;
     private static String trackedDimension = "";
     private static final Map<String, Status> lastStatuses = new LinkedHashMap<>();
+
+    // ------------------------------------------------------------------ Per-element visibility API
+
+    public static String pointKey(Category category, int x, int y, int z) {
+        return (category == null ? Category.SPOT : category).name() + ":" + x + "," + y + "," + z;
+    }
+
+    public static String areaKey(String label) {
+        return label == null ? "" : label.trim().toLowerCase(Locale.ROOT);
+    }
+
+    public static boolean isPointVisible(PointMarker pt) {
+        if (pt == null) return false;
+        return isPointVisible(pt.category(), pt.x(), pt.y(), pt.z());
+    }
+
+    public static boolean isPointVisible(Category category, int[] coords) {
+        if (coords == null || coords.length < 3) return true;
+        return isPointVisible(category, coords[0], coords[1], coords[2]);
+    }
+
+    public static boolean isPointVisible(Category category, int x, int y, int z) {
+        if (cfg == null || cfg.overlayHiddenPoints == null) return true;
+        return !cfg.overlayHiddenPoints.contains(pointKey(category, x, y, z));
+    }
+
+    public static void setPointVisible(Category category, int x, int y, int z, boolean visible) {
+        if (cfg == null) return;
+        if (cfg.overlayHiddenPoints == null) cfg.overlayHiddenPoints = new LinkedHashSet<>();
+        String key = pointKey(category, x, y, z);
+        if (visible) cfg.overlayHiddenPoints.remove(key);
+        else cfg.overlayHiddenPoints.add(key);
+        Config.save();
+    }
+
+    public static boolean isAreaVisible(String label) {
+        if (cfg == null || cfg.overlayHiddenAreas == null || label == null) return true;
+        return !cfg.overlayHiddenAreas.contains(areaKey(label));
+    }
+
+    public static void setAreaVisible(String label, boolean visible) {
+        if (cfg == null || label == null || label.isBlank()) return;
+        if (cfg.overlayHiddenAreas == null) cfg.overlayHiddenAreas = new LinkedHashSet<>();
+        String key = areaKey(label);
+        if (visible) cfg.overlayHiddenAreas.remove(key);
+        else cfg.overlayHiddenAreas.add(key);
+        Config.save();
+    }
+
+    public static void resetHidden() {
+        if (cfg == null) return;
+        if (cfg.overlayHiddenAreas != null) cfg.overlayHiddenAreas.clear();
+        if (cfg.overlayHiddenPoints != null) cfg.overlayHiddenPoints.clear();
+        Config.save();
+    }
+
+    public static int hiddenCount() {
+        if (cfg == null) return 0;
+        int a = cfg.overlayHiddenAreas != null ? cfg.overlayHiddenAreas.size() : 0;
+        int p = cfg.overlayHiddenPoints != null ? cfg.overlayHiddenPoints.size() : 0;
+        return a + p;
+    }
+
+    /** Hides or shows matching areas and/or point markers by name/label (case-insensitive substring/exact). */
+    public static int setVisibleByName(String name, boolean visible) {
+        if (name == null || name.isBlank()) return 0;
+        String q = name.trim().toLowerCase(Locale.ROOT);
+        Sources src = gatherLiveSources();
+        int changed = 0;
+
+        Set<String> matchedAreas = new LinkedHashSet<>();
+        for (AreaMarker a : collectAreas(src, true, true)) {
+            if (a.label().toLowerCase(Locale.ROOT).equals(q) || a.label().toLowerCase(Locale.ROOT).contains(q)) {
+                if (matchedAreas.add(areaKey(a.label()))) {
+                    setAreaVisible(a.label(), visible);
+                    changed++;
+                }
+            }
+        }
+        for (PointMarker p : collectPoints(src)) {
+            if (p.label().toLowerCase(Locale.ROOT).equals(q) || p.label().toLowerCase(Locale.ROOT).contains(q)) {
+                setPointVisible(p.category(), p.x(), p.y(), p.z(), visible);
+                changed++;
+            }
+        }
+        // Even if not currently active, allow direct area-name unhide/hide
+        if (changed == 0) {
+            setAreaVisible(name, visible);
+            changed = 1;
+        }
+        return changed;
+    }
+
+    /** Current deduplicated point markers for UI panels. */
+    public static List<PointMarker> currentPoints() {
+        return collectPoints(gatherLiveSources());
+    }
+
+    /** Current deduplicated & merged area markers for UI panels. */
+    public static List<AreaMarker> currentAreas() {
+        return mergeAdjacentAreas(collectAreas(gatherLiveSources(), true, true));
+    }
 
     // ------------------------------------------------------------------ Rendering entry point
 
@@ -145,25 +286,43 @@ public final class WorldOverlay {
         if (cfg == null || !cfg.showWorldOverlay) return;
 
         Sources src = gatherLiveSources();
-        List<PointMarker> points = cfg.showOverlayChests ? collectPoints(src) : List.of();
-        List<AreaMarker> areas = (cfg.showOverlaySafeAreas || cfg.showOverlayTaskAreas)
-                ? collectAreas(src, cfg.showOverlaySafeAreas, cfg.showOverlayTaskAreas)
-                : List.of();
-        if (points.isEmpty() && areas.isEmpty()) return;
+        boolean problemsOnly = cfg.showOverlayProblemsOnly;
+        List<PointMarker> allPoints = collectPoints(src);
+
+        List<AreaMarker> visibleAreas = List.of();
+        if (!problemsOnly && (cfg.showOverlaySafeAreas || cfg.showOverlayTaskAreas)) {
+            List<AreaMarker> rawAreas = collectAreas(src, cfg.showOverlaySafeAreas, cfg.showOverlayTaskAreas);
+            List<AreaMarker> filtered = new ArrayList<>(rawAreas.size());
+            for (AreaMarker a : rawAreas) {
+                if (isAreaVisible(a.label())) filtered.add(a);
+            }
+            visibleAreas = mergeAdjacentAreas(filtered);
+        }
+
+        if (allPoints.isEmpty() && visibleAreas.isEmpty()) return;
 
         Vec3 me = mc.player.position();
         String dim = mc.level.dimension().identifier().toString();
         boolean pulse = ((System.currentTimeMillis() / 350L) & 1L) == 0L;
 
+        // Filter areas by distance first, then resolve overlaps only among visible nearby areas
+        List<AreaMarker> nearbyAreas = new ArrayList<>();
+        for (AreaMarker a : visibleAreas) {
+            if (withinAreaDist(me, a, MAX_AREA_DIST)) {
+                nearbyAreas.add(a);
+            }
+        }
+        List<StyledArea> styledAreas = resolveOverlaps(nearbyAreas, src.protectEnabled());
+
         try (var ignored = mc.levelRenderer.collectPerFrameRenderThreadGizmos()) {
-            // 1. Safe areas & task/saved areas
-            for (AreaMarker area : areas) {
-                if (!withinAreaDist(me, area, MAX_AREA_DIST)) continue;
-                drawArea(area, src.protectEnabled(), me);
+            // 1. Safe areas & task/saved areas (wireframe-only by default; overlap-aware)
+            List<Vec3> placedAreaLabels = new ArrayList<>();
+            for (StyledArea sa : styledAreas) {
+                drawArea(sa, src.protectEnabled(), me, placedAreaLabels);
             }
 
-            // 2. Beds & chests (with live block verification)
-            for (PointMarker pt : points) {
+            // 2. Beds & chests (live block verification always runs so transitions notify & reset cooldown)
+            for (PointMarker pt : allPoints) {
                 double dx = (pt.x() + 0.5) - me.x;
                 double dz = (pt.z() + 0.5) - me.z;
                 double distSq = dx * dx + dz * dz;
@@ -172,6 +331,11 @@ public final class WorldOverlay {
                 BlockPos pos = new BlockPos(pt.x(), pt.y(), pt.z());
                 CheckResult check = verifyBlock(pt.category(), pos, mc.level);
                 recordTransition(dim, pt, check);
+
+                if (pt.category() == Category.BED && !cfg.showOverlayBeds) continue;
+                if (pt.category() == Category.CHEST && !cfg.showOverlayChests) continue;
+                if (!isPointVisible(pt)) continue;
+                if (problemsOnly && !check.isProblem()) continue;
 
                 String fleetState = null;
                 if (pt.category() == Category.CHEST) {
@@ -280,7 +444,7 @@ public final class WorldOverlay {
         Minecraft mc = Minecraft.getInstance();
         Sources src = gatherLiveSources();
         List<PointMarker> points = collectPoints(src);
-        List<AreaMarker> areas = collectAreas(src, true, true);
+        List<AreaMarker> areas = mergeAdjacentAreas(collectAreas(src, true, true));
 
         if (points.isEmpty() && areas.isEmpty()) {
             lines.add("No beds, chests, or safe areas are configured yet.");
@@ -304,7 +468,8 @@ public final class WorldOverlay {
                 case UNLOADED -> "unloaded";
                 case INFO -> "info";
             };
-            lines.add("  " + pt.label() + " at " + pt.x() + " " + pt.y() + " " + pt.z() + ": " + statusText);
+            String visNote = isPointVisible(pt) ? "" : " [hidden]";
+            lines.add("  " + pt.label() + " at " + pt.x() + " " + pt.y() + " " + pt.z() + ": " + statusText + visNote);
         }
 
         int safeCount = 0;
@@ -314,8 +479,107 @@ public final class WorldOverlay {
             else taskCount++;
         }
         lines.add(0, "Overlay check: " + ok + " OK, " + problems + " problem(s), " + unloaded + " unloaded"
-                + " | " + safeCount + " safe area(s), " + taskCount + " task area(s).");
+                + " | " + safeCount + " safe area(s), " + taskCount + " task area(s)"
+                + (hiddenCount() > 0 ? " (" + hiddenCount() + " hidden)" : "") + ".");
         return lines;
+    }
+
+    // ------------------------------------------------------------------ Adjacent merging & overlap resolution
+
+    /**
+     * Collapses adjacent/touching boxes of the same area (same label + safe flag) into minimal cuboids,
+     * and drops boxes completely contained inside another box of the same area.
+     */
+    public static List<AreaMarker> mergeAdjacentAreas(List<AreaMarker> input) {
+        if (input == null || input.size() <= 1) return input == null ? List.of() : new ArrayList<>(input);
+        List<AreaMarker> list = new ArrayList<>(input);
+        boolean changed = true;
+        while (changed) {
+            changed = false;
+            outer:
+            for (int i = 0; i < list.size(); i++) {
+                AreaMarker a = list.get(i);
+                for (int j = i + 1; j < list.size(); j++) {
+                    AreaMarker b = list.get(j);
+                    if (a.safe() != b.safe() || !a.label().equalsIgnoreCase(b.label())) continue;
+                    AreaMarker merged = tryMergeSameArea(a, b);
+                    if (merged != null) {
+                        list.set(i, merged);
+                        list.remove(j);
+                        changed = true;
+                        break outer;
+                    }
+                }
+            }
+        }
+        return list;
+    }
+
+    private static AreaMarker tryMergeSameArea(AreaMarker a, AreaMarker b) {
+        if (a.contains(b)) return a;
+        if (b.contains(a)) return b;
+        // Touching or overlapping along X with identical Y & Z
+        if (a.y1() == b.y1() && a.y2() == b.y2() && a.z1() == b.z1() && a.z2() == b.z2()
+                && a.x1() <= b.x2() + 1 && b.x1() <= a.x2() + 1) {
+            return new AreaMarker(Math.min(a.x1(), b.x1()), a.y1(), a.z1(),
+                    Math.max(a.x2(), b.x2()), a.y2(), a.z2(), a.label(), a.safe(), a.role());
+        }
+        // Touching or overlapping along Z with identical X & Y
+        if (a.x1() == b.x1() && a.x2() == b.x2() && a.y1() == b.y1() && a.y2() == b.y2()
+                && a.z1() <= b.z2() + 1 && b.z1() <= a.z2() + 1) {
+            return new AreaMarker(a.x1(), a.y1(), Math.min(a.z1(), b.z1()),
+                    a.x2(), a.y2(), Math.max(a.z2(), b.z2()), a.label(), a.safe(), a.role());
+        }
+        // Touching or overlapping along Y with identical X & Z
+        if (a.x1() == b.x1() && a.x2() == b.x2() && a.z1() == b.z1() && a.z2() == b.z2()
+                && a.y1() <= b.y2() + 1 && b.y1() <= a.y2() + 1) {
+            return new AreaMarker(a.x1(), Math.min(a.y1(), b.y1()), a.z1(),
+                    a.x2(), Math.max(a.y2(), b.y2()), a.z2(), a.label(), a.safe(), a.role());
+        }
+        return null;
+    }
+
+    /**
+     * Assigns non-colliding layer indices (via greedy graph coloring of overlapping boxes) so overlapping
+     * areas get distinct outline colors and slight Z-fighting-free inflate offsets.
+     */
+    public static List<StyledArea> resolveOverlaps(List<AreaMarker> areas, boolean protectEnabled) {
+        if (areas == null || areas.isEmpty()) return List.of();
+        int n = areas.size();
+        int[] layers = new int[n];
+        boolean[] hasOverlap = new boolean[n];
+
+        for (int i = 0; i < n; i++) {
+            AreaMarker a = areas.get(i);
+            Set<Integer> used = new LinkedHashSet<>();
+            for (int j = 0; j < n; j++) {
+                if (i == j) continue;
+                if (a.overlaps(areas.get(j))) {
+                    hasOverlap[i] = true;
+                    if (j < i) used.add(layers[j]);
+                }
+            }
+            int layer = 0;
+            while (used.contains(layer)) layer++;
+            layers[i] = layer;
+        }
+
+        List<StyledArea> out = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            AreaMarker a = areas.get(i);
+            int layer = layers[i];
+            boolean overlap = hasOverlap[i];
+            int color;
+            if (a.safe()) {
+                color = !protectEnabled ? COL_SAFE_OFF
+                        : overlap ? OVERLAP_SAFE_PALETTE[layer % OVERLAP_SAFE_PALETTE.length] : COL_SAFE;
+            } else {
+                color = overlap ? OVERLAP_TASK_PALETTE[layer % OVERLAP_TASK_PALETTE.length] : areaRoleColor(a.role());
+            }
+            double inflate = 0.003 + 0.008 * layer;
+            out.add(new StyledArea(a, layer, overlap, color, inflate));
+        }
+        return out;
     }
 
     // ------------------------------------------------------------------ Drawing
@@ -342,7 +606,7 @@ public final class WorldOverlay {
             width = 1.5f;
         } else {
             stroke = roleColor(pt.role());
-            fill = withAlpha(stroke, 0x28);
+            fill = withAlpha(stroke, 0x24);
             width = 2.5f;
         }
 
@@ -383,18 +647,20 @@ public final class WorldOverlay {
         }
     }
 
-    private static void drawArea(AreaMarker area, boolean protectEnabled, Vec3 me) {
-        AABB box = new AABB(area.x1(), area.y1(), area.z1(), area.x2() + 1, area.y2() + 1, area.z2() + 1).inflate(0.003);
-        int stroke;
-        int fill;
-        if (area.safe()) {
-            stroke = protectEnabled ? COL_SAFE : COL_SAFE_OFF;
-            fill = protectEnabled ? 0x1622D3A0 : 0x0C94A3B8;
-        } else {
-            stroke = areaRoleColor(area.role());
-            fill = withAlpha(stroke, 0x10);
-        }
-        Gizmos.cuboid(box, GizmoStyle.strokeAndFill(stroke, area.safe() ? 2.5f : 2.0f, fill));
+    private static void drawArea(StyledArea sa, boolean protectEnabled, Vec3 me, List<Vec3> placedLabels) {
+        AreaMarker area = sa.area();
+        AABB box = new AABB(area.x1(), area.y1(), area.z1(), area.x2() + 1, area.y2() + 1, area.z2() + 1)
+                .inflate(sa.inflate());
+        int stroke = sa.color();
+        float width = area.safe() ? 2.5f : 2.0f;
+
+        // Wireframe-only by default (prevents stacked opaque cyan walls on big/overlapping areas).
+        // When Area Fill is explicitly enabled, keep alpha very light and only fill layer 0 so overlapping fills never stack.
+        boolean wantFill = cfg != null && cfg.showOverlayAreaFill && (!sa.overlapping() || sa.layerIndex() == 0);
+        GizmoStyle style = wantFill
+                ? GizmoStyle.strokeAndFill(stroke, width, withAlpha(stroke, 0x0A))
+                : GizmoStyle.stroke(stroke, width);
+        Gizmos.cuboid(box, style);
 
         if (cfg != null && cfg.showOverlayLabels) {
             double cx = (area.x1() + area.x2() + 1) / 2.0;
@@ -402,13 +668,23 @@ public final class WorldOverlay {
             double dx = cx - me.x, dz = cz - me.z;
             if (dx * dx + dz * dz <= (MAX_LABEL_DIST * 1.5) * (MAX_LABEL_DIST * 1.5)) {
                 double labelY = Math.min(area.y2() + 1.35, Math.max(area.y1() + 1.35, me.y + 2.5));
+                // Stack vertically if another area label is already near this position
+                for (Vec3 prev : placedLabels) {
+                    double ldx = prev.x - cx, ldz = prev.z - cz;
+                    if (ldx * ldx + ldz * ldz < 16.0 && Math.abs(prev.y - labelY) < 0.65) {
+                        labelY = prev.y + 0.65;
+                    }
+                }
+                Vec3 pos = new Vec3(cx, labelY, cz);
+                placedLabels.add(pos);
+
                 String text = area.safe()
                         ? (protectEnabled ? "SAFE: " : "SAFE (off): ") + area.label()
                         : area.label() + (area.role() == null || area.role().isBlank() || "custom".equalsIgnoreCase(area.role())
                             ? "" : " [" + area.role() + "]");
                 Gizmos.billboardText(
                         text,
-                        new Vec3(cx, labelY, cz),
+                        pos,
                         TextGizmo.Style.forColorAndCentered(stroke).withScale(0.30f)
                 ).setAlwaysOnTop();
             }
@@ -728,8 +1004,6 @@ public final class WorldOverlay {
 
         void mergeLabel(String label) {
             if (label == null || label.isBlank()) return;
-            // Avoid redundant generic mirrors when a more specific label already exists at the same block
-            // (e.g., "Tool Chest" + "Supply Chest", or "Assigned Bed" + "Bed").
             for (String existing : labels) {
                 if (existing.equalsIgnoreCase(label)) return;
                 if (category == Category.BED && "Bed".equalsIgnoreCase(label)) return;
