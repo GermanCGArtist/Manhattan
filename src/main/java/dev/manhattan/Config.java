@@ -74,7 +74,7 @@ final class Config {
 
     /** Spatial chunking settings for large area/schematic tasks. */
     public boolean chunkEnabled = true;
-    public int chunkSize = 32;
+    public int chunkSize = 16;
     public String chunkOrder = "serpentine";
     /** clear_area also cuts the hole into bands this tall (top first), so each band is dug out, then the next. 0 = off. */
     public int chunkSizeY = 16;
@@ -122,7 +122,7 @@ final class Config {
                     if (!"monitor".equals(cfg.uiLastMode)) cfg.uiLastMode = "edit";
                     if (cfg.uiScale <= 0.5f || cfg.uiScale > 2.5f) cfg.uiScale = 1.0f;
                     if (cfg.chunkSize < 8 || cfg.chunkSize > 128) {
-                        cfg.chunkSize = cfg.chunkSize <= 0 ? 32 : Math.max(8, Math.min(128, cfg.chunkSize));
+                        cfg.chunkSize = cfg.chunkSize <= 0 ? 16 : Math.max(8, Math.min(128, cfg.chunkSize));
                     }
                     if (cfg.chunkSizeY != 0 && (cfg.chunkSizeY < 4 || cfg.chunkSizeY > 320)) cfg.chunkSizeY = cfg.chunkSizeY < 0 ? 0 : Math.max(4, Math.min(320, cfg.chunkSizeY));
                     if (cfg.chunkGap < -1 || cfg.chunkGap > 256) cfg.chunkGap = cfg.chunkGap < 0 ? -1 : 256;

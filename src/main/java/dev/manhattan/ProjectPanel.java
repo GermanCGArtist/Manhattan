@@ -575,6 +575,27 @@ final class ProjectPanel {
                 if (ImGui.smallButton("Reset##reset")) rt.resetQueue(t.id);
                 ImGui.sameLine(0f, 6f * s);
 
+                String depLabel = t.waitForPrevious == null ? "Auto"
+                        : (Boolean.TRUE.equals(t.waitForPrevious) ? "Barrier" : "Parallel");
+                int depCol = t.waitForPrevious == null ? DIM
+                        : (Boolean.TRUE.equals(t.waitForPrevious) ? WARN : OK);
+                ImGui.pushStyleColor(imgui.flag.ImGuiCol.Text, r(depCol), g(depCol), b(depCol), 1f);
+                if (ImGui.smallButton(depLabel + "##dep")) {
+                    if (t.waitForPrevious == null) t.waitForPrevious = Boolean.TRUE;
+                    else if (Boolean.TRUE.equals(t.waitForPrevious)) t.waitForPrevious = Boolean.FALSE;
+                    else t.waitForPrevious = null;
+                    rt.saveActive();
+                }
+                ImGui.popStyleColor();
+                if (ImGui.isItemHovered()) {
+                    ImGui.setTooltip("Fleet order: " + depLabel
+                            + "\nAuto: wait on phase change, parallel across same-kind tasks"
+                            + "\nBarrier: never start until all previous tasks finish"
+                            + "\nParallel: idle fleet bots may spill over into this task early"
+                            + "\nClick to cycle.");
+                }
+                ImGui.sameLine(0f, 6f * s);
+
                 ImGui.pushStyleColor(imgui.flag.ImGuiCol.Text, r(ERR), g(ERR), b(ERR), 1f);
                 boolean removed = ImGui.smallButton("x##del");
                 ImGui.popStyleColor();
@@ -665,7 +686,9 @@ final class ProjectPanel {
                 + "\nExpand: " + t.expand + "   Layers: " + t.layers
                 + (t.treeZoneDiameter != null ? "\nZone diameter: " + t.treeZoneDiameter : "")
                 + (t.dumpAfter ? "\nDump after: true" : "")
-                + "\nPartial policy: " + t.partialPolicy + "   Error policy: " + t.errorPolicy;
+                + "\nPartial policy: " + t.partialPolicy + "   Error policy: " + t.errorPolicy
+                + "\nFleet order: " + (t.waitForPrevious == null ? "Auto (phase)"
+                        : (Boolean.TRUE.equals(t.waitForPrevious) ? "Barrier" : "Parallel"));
     }
 
     private static void renderAddTaskForm(GameProjectRuntime rt, Project active, float s) {
@@ -1246,6 +1269,16 @@ final class ProjectPanel {
 
         ImGui.setNextItemWidth(90f * s);
         ImGui.inputInt("Priority##fleetPrio", fleetPriority);
+        ImGui.sameLine(0f, 12f * s);
+        ImInt chunkSizeBox = new ImInt(active.chunkSize > 0 ? active.chunkSize : Config.cfg.chunkSize);
+        ImGui.setNextItemWidth(90f * s);
+        if (ImGui.inputInt("Chunk Size##fleetChunkSize", chunkSizeBox)) {
+            active.chunkSize = Math.max(8, Math.min(128, chunkSizeBox.get()));
+            GameProjectRuntime.instance().saveActive();
+        }
+        if (ImGui.isItemHovered()) {
+            ImGui.setTooltip("Horizontal chunk size (default 16 = 1 Minecraft chunk). Embedded on submit so all workers match.");
+        }
 
         ImGui.spacing();
         List<dev.manhattan.fleet.FleetProtocol.ChunkSpec> chunks = QueueMod.collectProjectChunkSpecs(active);

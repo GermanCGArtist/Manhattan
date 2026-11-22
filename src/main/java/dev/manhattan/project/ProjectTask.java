@@ -72,6 +72,11 @@ public final class ProjectTask {
 
     public ErrorPolicy errorPolicy = ErrorPolicy.STOP;
     public int maxRetries = 1;
+    /**
+     * Fleet task ordering barrier: {@code null} = Auto (wait if kind differs from previous task, parallel spillover
+     * if same kind); {@code true} = strict barrier; {@code false} = parallel spillover allowed.
+     */
+    public Boolean waitForPrevious;
 
     public ProjectTask() {
     }

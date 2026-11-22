@@ -1244,10 +1244,26 @@ public class QueueMod implements ClientModInitializer {
         }
     }
 
+    private static int effectiveChunkSize() {
+        Project p = GameProjectRuntime.instance().runningProject();
+        if (p != null && p.chunkSize > 0) return Math.max(8, Math.min(128, p.chunkSize));
+        return cfg.chunkSize;
+    }
+
+    private static int effectiveChunkSizeY() {
+        Project p = GameProjectRuntime.instance().runningProject();
+        if (p != null && p.chunkSizeY > 0) return Math.max(4, Math.min(320, p.chunkSizeY));
+        return cfg.chunkSizeY;
+    }
+
     /** Computes canonical Fleet Server chunk specs for all enabled spatial tasks in a Project. */
     public static List<dev.manhattan.fleet.FleetProtocol.ChunkSpec> collectProjectChunkSpecs(Project project) {
         List<dev.manhattan.fleet.FleetProtocol.ChunkSpec> out = new ArrayList<>();
         if (project == null || project.tasks == null) return out;
+        int effectiveSize = project.chunkSize > 0 ? Math.max(8, Math.min(128, project.chunkSize)) : cfg.chunkSize;
+        int effectiveSizeY = project.chunkSizeY > 0 ? Math.max(4, Math.min(320, project.chunkSizeY)) : cfg.chunkSizeY;
+        project.chunkSize = effectiveSize;
+        project.chunkSizeY = effectiveSizeY;
         for (ProjectTask task : project.tasks) {
             if (task == null || !task.enabled || task.kind == null) continue;
             List<int[]> boxes = null;
@@ -1255,7 +1271,7 @@ public class QueueMod implements ClientModInitializer {
             int gap = -1;
             if (task.kind == ProjectTask.Kind.CLEAR_AREA) {
                 boxes = resolveProjectBoxes(task);
-                chunkSizeY = cfg.chunkSizeY;
+                chunkSizeY = effectiveSizeY;
                 gap = cfg.chunkGap;
             } else if (task.kind == ProjectTask.Kind.FILL_WATER || task.kind == ProjectTask.Kind.DRAIN) {
                 boxes = resolveProjectBoxes(task);
@@ -1273,7 +1289,7 @@ public class QueueMod implements ClientModInitializer {
                 project.places.areas.put(task.areaName, boxes);
             }
             List<int[]> effectiveBoxes = task.expand == 0 ? boxes : expandBoxesHorizontal(boxes, task.expand);
-            List<ChunkGrid.ColumnBox> cols = ChunkGrid.split(effectiveBoxes, cfg.chunkSize, chunkSizeY, gap);
+            List<ChunkGrid.ColumnBox> cols = ChunkGrid.split(effectiveBoxes, effectiveSize, chunkSizeY, gap);
             for (ChunkGrid.ColumnBox c : cols) {
                 String key = ChunkRunner.chunkKey(task.id, c);
                 BlockPos center = c.centerXZ(c.minY());
@@ -1325,8 +1341,10 @@ public class QueueMod implements ClientModInitializer {
         if (Shaft.current != null) {
             Util.msg("Stair shaft '" + Shaft.current.name() + "' stays standing; its steps are carved as the hole gets deeper.");
         }
+        int cs = effectiveChunkSize();
+        int csy = effectiveChunkSizeY();
         Actions.Action act;
-        if (hasActiveFleetLease() || ChunkGrid.shouldChunk(boxes, cfg.chunkSize, cfg.chunkSizeY, cfg.chunkGap, cfg.chunkEnabled)) {
+        if (hasActiveFleetLease() || ChunkGrid.shouldChunk(boxes, cs, csy, cfg.chunkGap, cfg.chunkEnabled)) {
             act = new ChunkRunner(new ChunkRunner.ChunkWorkload() {
                 @Override public String actionKind() { return "clear_area"; }
                 @Override public boolean usesSelectionNarrowing() { return false; }
@@ -1339,7 +1357,7 @@ public class QueueMod implements ClientModInitializer {
                     Minecraft mc = Minecraft.getInstance();
                     return mc == null || mc.level == null ? 0 : ClearProcess.countSolid(mc.level, clippedBoxes);
                 }
-            }).withGeometry(cfg.chunkSizeY, cfg.chunkGap).withTaskPrefix(taskId);
+            }, cs, ChunkGrid.OrderStrategy.parse(cfg.chunkOrder)).withGeometry(csy, cfg.chunkGap).withTaskPrefix(taskId);
             attachFleetLease((ChunkRunner) act);
         } else {
             act = GameBuiltins.clearFeature(layers, boxes);
@@ -1360,8 +1378,9 @@ public class QueueMod implements ClientModInitializer {
         }
         String resolvedName = it == null ? null : ChestOp.name(it);
         String chestLabel = materialChestPos == null ? null : "at " + materialChestPos.toShortString();
+        int cs = effectiveChunkSize();
         Actions.Action act;
-        if (hasActiveFleetLease() || ChunkGrid.shouldChunk(boxes, cfg.chunkSize, cfg.chunkEnabled)) {
+        if (hasActiveFleetLease() || ChunkGrid.shouldChunk(boxes, cs, cfg.chunkEnabled)) {
             act = new ChunkRunner(new ChunkRunner.ChunkWorkload() {
                 @Override public String actionKind() { return "fill_water"; }
                 @Override public boolean usesSelectionNarrowing() { return false; }
@@ -1383,7 +1402,7 @@ public class QueueMod implements ClientModInitializer {
                     int waterCount = mc == null || mc.level == null ? 0 : dev.buildtools.TerminatorProcess.countWater(mc.level, clippedBoxes);
                     return waterCount > 0 ? Map.of(resolvedName, waterCount) : Map.of();
                 }
-            }).withTaskPrefix(taskId);
+            }, cs, ChunkGrid.OrderStrategy.parse(cfg.chunkOrder)).withTaskPrefix(taskId);
             attachFleetLease((ChunkRunner) act);
         } else {
             act = GameBuiltins.fillWaterChunkAction(it, resolvedName, materialChestPos, chestLabel, 512, boxes);
@@ -1403,8 +1422,9 @@ public class QueueMod implements ClientModInitializer {
     }
 
     public static PriorityScheduler.ActionHandle projectCreateDrainHandle(List<int[]> boxes, String taskId) {
+        int cs = effectiveChunkSize();
         Actions.Action act;
-        if (hasActiveFleetLease() || ChunkGrid.shouldChunk(boxes, cfg.chunkSize, cfg.chunkEnabled)) {
+        if (hasActiveFleetLease() || ChunkGrid.shouldChunk(boxes, cs, cfg.chunkEnabled)) {
             act = new ChunkRunner(new ChunkRunner.ChunkWorkload() {
                 @Override public String actionKind() { return "drain"; }
                 @Override public boolean usesSelectionNarrowing() { return false; }
@@ -1416,7 +1436,7 @@ public class QueueMod implements ClientModInitializer {
                     Minecraft mc = Minecraft.getInstance();
                     return mc == null || mc.level == null ? 0 : dev.buildtools.DrainProcess.countFluid(mc.level, clippedBoxes);
                 }
-            }).withTaskPrefix(taskId);
+            }, cs, ChunkGrid.OrderStrategy.parse(cfg.chunkOrder)).withTaskPrefix(taskId);
             attachFleetLease((ChunkRunner) act);
         } else {
             act = GameBuiltins.drainFeature(boxes);

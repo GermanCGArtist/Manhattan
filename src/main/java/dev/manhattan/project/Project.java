@@ -14,6 +14,10 @@ public final class Project {
     public String id;
     public String name;
     public String world;
+    /** Optional chunk size override (0 = inherit local config; embedded on Fleet submit so all workers match). */
+    public int chunkSize = 0;
+    /** Optional Y-band height override (0 = inherit local config; embedded on Fleet submit so all workers match). */
+    public int chunkSizeY = 0;
     public BasePlaces places = new BasePlaces();
     public SurvivalPolicy survival = new SurvivalPolicy();
     public List<ProjectTask> tasks = new ArrayList<>();
