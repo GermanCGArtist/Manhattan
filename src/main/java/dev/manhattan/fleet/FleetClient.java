@@ -277,8 +277,13 @@ public final class FleetClient {
             public ClaimResult pollNextChunk() {
                 if (!isWorkerActive()) return ClaimResult.noWork();
                 WorkGrant g = activeGrant;
-                if (g != null && !g.idle && expectedJobId.equals(g.jobId) && g.chunkKey != null) {
-                    return ClaimResult.granted(g.chunkKey);
+                if (g != null && !g.idle && g.chunkKey != null) {
+                    if (expectedJobId.equals(g.jobId)) {
+                        return ClaimResult.granted(g.chunkKey);
+                    }
+                    // Server leased a chunk from a different job: exit this ChunkRunner cleanly so
+                    // GameProjectRuntime.tickFleetWorkerIdle() immediately starts the new job.
+                    return ClaimResult.noWork();
                 }
                 if (serverSaidIdle) {
                     return ClaimResult.noWork();

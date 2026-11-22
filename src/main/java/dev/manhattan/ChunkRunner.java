@@ -29,6 +29,7 @@ import java.util.Set;
 public class ChunkRunner extends Actions.Action {
     public static final String PROTECTED_AREA_NAME = "manhattan_completed_chunks";
     static final int WALK_TIMEOUT_TICKS = 200;
+    static final int MAX_WALK_TICKS = 20 * 180;
     static final int CHUNK_LOAD_TIMEOUT_TICKS = 60;
     static final int MAX_DEFERRED_PASSES = 2;
 
@@ -198,6 +199,8 @@ public class ChunkRunner extends Actions.Action {
     private List<int[]> currentClipped;
     private Actions.Action activeChunkAction;
     private int walkTicks;
+    private int walkStallTicks;
+    private double walkBestDistSq;
     private int waitLoadTicks;
     private boolean walkIssued;
     private boolean needsCheckedForAttempt;
@@ -481,6 +484,8 @@ public class ChunkRunner extends Actions.Action {
         currentClipped = clippedByChunk.getOrDefault(chunk.index(), List.of());
         activeChunkAction = null;
         walkTicks = 0;
+        walkStallTicks = 0;
+        walkBestDistSq = Double.MAX_VALUE;
         waitLoadTicks = 0;
         walkIssued = false;
         needsCheckedForAttempt = false;
@@ -509,13 +514,34 @@ public class ChunkRunner extends Actions.Action {
 
     private void issueWalkToChunk(ChunkGrid.ColumnBox chunk) {
         BlockPos walkTarget = chunk.centerXZ(chunk.minY());
+        BlockPos playerPos = env.playerBlockPos();
+        walkBestDistSq = playerPos != null ? chunk.distanceSqXZ(playerPos) : Double.MAX_VALUE;
+        walkStallTicks = 0;
         env.goTo(GoalSpec.xz(walkTarget.getX(), walkTarget.getZ()));
         walkIssued = true;
     }
 
     private void tickWalkToChunk() {
         walkTicks++;
-        if (walkTicks >= WALK_TIMEOUT_TICKS) {
+        BlockPos playerPos = env.playerBlockPos();
+        if (playerPos != null && currentChunk != null) {
+            double distSq = currentChunk.distanceSqXZ(playerPos);
+            if (distSq <= 64.0 && allMcChunksLoaded(currentChunk)) {
+                env.cancelPath();
+                step = Step.WAIT_CHUNK_LOAD;
+                tickWaitChunkLoad();
+                return;
+            }
+            if (distSq < walkBestDistSq - 1.0) {
+                walkBestDistSq = distSq;
+                walkStallTicks = 0;
+            } else {
+                walkStallTicks++;
+            }
+        } else {
+            walkStallTicks++;
+        }
+        if (walkStallTicks >= WALK_TIMEOUT_TICKS || walkTicks >= MAX_WALK_TICKS) {
             env.cancelPath();
             step = Step.WAIT_CHUNK_LOAD;
             return;
@@ -634,7 +660,9 @@ public class ChunkRunner extends Actions.Action {
             }
         }
         if (leaseProvider != null && leaseKey != null) {
-            if (rem == 0) {
+            if (rem == 0 && !allMcChunksLoaded(finishedChunk)) {
+                leaseProvider.reportChunk(leaseKey, "DEFERRED", "chunk not loaded");
+            } else if (rem == 0) {
                 leaseProvider.reportChunk(leaseKey, "DONE", "");
             } else {
                 leaseProvider.reportChunk(leaseKey, "DEFERRED", rem + " left");
