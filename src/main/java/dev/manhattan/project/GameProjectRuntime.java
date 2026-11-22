@@ -1146,7 +1146,11 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
             return failedHandle("No area/selection available for CLEAR_AREA task '" + task.displayLabel() + "'.");
         }
         PriorityScheduler.ActionHandle mainHandle = QueueMod.projectCreateClearAreaHandle(task.layers, boxes, task.id);
-        if (!task.collectScaffoldAfter && !task.pickupAfter && !task.dumpAfter) {
+        // Fleet workers exit ChunkRunner between layers/jobs; P3_LOGISTICS handles dumping when inventory fills up,
+        // so skip per-exit dumpAfter to avoid pointless 300-block round trips to base with a nearly-empty inventory.
+        boolean runDumpAfter = task.dumpAfter && proj.places.dumpChest != null
+                && !dev.manhattan.fleet.FleetClient.instance().isWorkerActive();
+        if (!task.collectScaffoldAfter && !task.pickupAfter && !runDumpAfter) {
             return mainHandle;
         }
         List<Supplier<PriorityScheduler.ActionHandle>> steps = new ArrayList<>();
@@ -1157,7 +1161,7 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
         if (task.pickupAfter) {
             steps.add(QueueMod::projectCreatePickupHandle);
         }
-        if (task.dumpAfter && proj.places.dumpChest != null) {
+        if (runDumpAfter) {
             BlockPos dumpPos = toBlockPos(proj.places.dumpChest);
             steps.add(() -> QueueMod.projectCreateDumpHandle(dumpPos));
         }

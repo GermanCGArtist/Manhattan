@@ -79,6 +79,12 @@ final class ChestProcess {
         planned = false;
         noItem = false;
         full = false;
+        moved = 0;
+        skipped = 0;
+        Minecraft mc = Minecraft.getInstance();
+        if (op != null && op.kind == ChestOp.Kind.DUMP && mc != null && mc.player != null && !hasItemsToDump(mc.player)) {
+            return true;   // already nothing to dump: don't walk all the way to the chest
+        }
         dev.survivalkit.Api.chestHint(chest);   // the index records this chest, not one next to it
         dev.survivalkit.Api.chestBusy(true);
         state = State.PATHING;
@@ -344,6 +350,19 @@ final class ChestProcess {
 
     private static String pathOf(ItemStack st) {
         return BuiltInRegistries.ITEM.getKey(st.getItem()).getPath();
+    }
+
+    /** Whether the player carries at least one item that {@link ChestOp.Kind#DUMP} would put away. */
+    static boolean hasItemsToDump(LocalPlayer p) {
+        if (p == null) return false;
+        JsonObject keepFile = loadChestConfig();
+        JsonObject rules = keepFile != null && keepFile.has("keep") && keepFile.get("keep").isJsonObject()
+                ? keepFile.getAsJsonObject("keep") : new JsonObject();
+        boolean[] keep = keepPlan(p, rules);
+        for (int i = 0; i < 36; i++) {
+            if (!p.getInventory().getItem(i).isEmpty() && !keep[i]) return true;
+        }
+        return false;
     }
 
     /**
