@@ -135,6 +135,12 @@ public class LoadChestMod implements ClientModInitializer {
         return cfg.keep;
     }
 
+    /** Returns the currently configured deposit chest {@code [x, y, z]} or {@code null}. */
+    public static int[] chestPos() {
+        if (cfg == null || cfg.chest == null || cfg.chest.length < 3) return null;
+        return new int[]{cfg.chest[0], cfg.chest[1], cfg.chest[2]};
+    }
+
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static Config cfg = new Config();
     private static final Map<String, Integer> baseline = new HashMap<>();

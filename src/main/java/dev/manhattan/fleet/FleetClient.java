@@ -49,6 +49,7 @@ public final class FleetClient {
 
     // Worker lease state
     private WorkGrant activeGrant;
+    private volatile Project lastFleetProject;
     private boolean claimInFlight;
     private boolean serverSaidIdle;
     private long lastClaimRequestMs;
@@ -96,6 +97,7 @@ public final class FleetClient {
         editorAllowed = false;
         worldId = "";
         activeGrant = null;
+        lastFleetProject = null;
         claimInFlight = false;
         serverSaidIdle = false;
         designatedSleeper = false;
@@ -170,6 +172,18 @@ public final class FleetClient {
 
     public String cachedProjectJson(String hash) {
         return hash != null ? cachedProjects.get(hash) : null;
+    }
+
+    /** Last Project received via a Fleet work grant (kept while connected so idle workers still see base markers). */
+    public Project lastFleetProject() {
+        return lastFleetProject;
+    }
+
+    /** Synced chest state reported by the Fleet Server ("EMPTY", "FULL", "AVAILABLE"), or null if unknown. */
+    public String chestSyncState(String dimension, BlockPos pos) {
+        if (!serverConnected || pos == null) return null;
+        ChestSync cs = syncedChests.get(chestKey(dimension, pos.getX(), pos.getY(), pos.getZ()));
+        return cs != null ? cs.state : null;
     }
 
     // ------------------------------------------------------------------ Tick & Heartbeat
@@ -467,6 +481,17 @@ public final class FleetClient {
                     serverSaidIdle = false;
                     if (grant.projectJson != null && grant.projectHash != null) {
                         cachedProjects.put(grant.projectHash, grant.projectJson);
+                    }
+                    String pJson = grant.projectJson != null ? grant.projectJson : cachedProjectJson(grant.projectHash);
+                    if (pJson != null && !pJson.isBlank()) {
+                        try {
+                            Project parsed = FleetProtocol.GSON.fromJson(pJson, Project.class);
+                            if (parsed != null) {
+                                parsed.ensureInitialized();
+                                lastFleetProject = parsed;
+                            }
+                        } catch (Exception ignored) {
+                        }
                     }
                     activeGrant = grant;
                 }

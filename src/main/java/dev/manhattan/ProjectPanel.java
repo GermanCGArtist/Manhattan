@@ -856,12 +856,12 @@ final class ProjectPanel {
         Project.SurvivalPolicy surv = active.survival;
 
         Widgets.label("Base Places");
-        renderPlaceRow(rt, "Bed", "bed", places.bed, p -> places.bed = p, s);
+        renderPlaceRow(rt, "Bed", "bed", places.bed, p -> places.bed = p, WorldOverlay.Category.BED, s);
         renderBedPoolEditor(rt, places, s);
-        renderPlaceRow(rt, "Tool Chest", "toolChest", places.toolChest, p -> places.toolChest = p, s);
-        renderPlaceRow(rt, "Return Chest", "returnChest", places.returnChest, p -> places.returnChest = p, s);
-        renderPlaceRow(rt, "Dump Chest", "dumpChest", places.dumpChest, p -> places.dumpChest = p, s);
-        renderPlaceRow(rt, "Scaffold Chest", "scaffoldChest", places.scaffoldChest, p -> places.scaffoldChest = p, s);
+        renderPlaceRow(rt, "Tool Chest", "toolChest", places.toolChest, p -> places.toolChest = p, WorldOverlay.Category.CHEST, s);
+        renderPlaceRow(rt, "Return Chest", "returnChest", places.returnChest, p -> places.returnChest = p, WorldOverlay.Category.CHEST, s);
+        renderPlaceRow(rt, "Dump Chest", "dumpChest", places.dumpChest, p -> places.dumpChest = p, WorldOverlay.Category.CHEST, s);
+        renderPlaceRow(rt, "Scaffold Chest", "scaffoldChest", places.scaffoldChest, p -> places.scaffoldChest = p, WorldOverlay.Category.CHEST, s);
 
         UiTheme.textColored(DIM, "Material chests: " + places.materialChests.size()
                 + "   |   Protected areas: " + places.protectedAreas.size());
@@ -870,6 +870,32 @@ final class ProjectPanel {
             rt.saveActive();
             setNotice("Saved base places.", false);
         }
+        ImGui.sameLine(0f, 8f * s);
+        if (Widgets.button("Check All##ProjCheckPlaces", 0)) {
+            WorldOverlay.checkReport().forEach(Util::msg);
+            setNotice("Checked base places (see chat).", false);
+        }
+
+        ImGui.spacing();
+        Widgets.label("3D World Overlay");
+        ImBoolean ov = new ImBoolean();
+        ov.set(Config.cfg.showWorldOverlay);
+        if (ImGui.checkbox("Enabled##ovMaster", ov)) { Config.cfg.showWorldOverlay = ov.get(); Config.save(); }
+        ImGui.sameLine(0f, 10f * s);
+        ov.set(Config.cfg.showOverlayChests);
+        if (ImGui.checkbox("Chests & Beds##ovChests", ov)) { Config.cfg.showOverlayChests = ov.get(); Config.save(); }
+        ImGui.sameLine(0f, 10f * s);
+        ov.set(Config.cfg.showOverlaySafeAreas);
+        if (ImGui.checkbox("Safe Areas##ovSafe", ov)) { Config.cfg.showOverlaySafeAreas = ov.get(); Config.save(); }
+
+        ov.set(Config.cfg.showOverlayTaskAreas);
+        if (ImGui.checkbox("Task Areas##ovTask", ov)) { Config.cfg.showOverlayTaskAreas = ov.get(); Config.save(); }
+        ImGui.sameLine(0f, 10f * s);
+        ov.set(Config.cfg.showOverlayLabels);
+        if (ImGui.checkbox("Labels##ovLabels", ov)) { Config.cfg.showOverlayLabels = ov.get(); Config.save(); }
+        ImGui.sameLine(0f, 10f * s);
+        ov.set(Config.cfg.showOverlayThroughWalls);
+        if (ImGui.checkbox("Through Walls##ovXray", ov)) { Config.cfg.showOverlayThroughWalls = ov.get(); Config.save(); }
 
         ImGui.separator();
         Widgets.label("Survival Policy");
@@ -954,7 +980,7 @@ final class ProjectPanel {
     }
 
     private static void renderPlaceRow(GameProjectRuntime rt, String label, String key,
-                                       int[] current, Consumer<int[]> setter, float s) {
+                                       int[] current, Consumer<int[]> setter, WorldOverlay.Category category, float s) {
         ImGui.pushID("place_" + key);
         ImGui.alignTextToFramePadding();
         ImGui.textUnformatted(label);
@@ -985,7 +1011,33 @@ final class ProjectPanel {
                 setNotice("Set " + label + " to " + t.pos() + ".", false);
             }
         }
+        if (current != null && current.length >= 3) {
+            renderPlaceStatusBadge(current, category, s);
+        }
         ImGui.popID();
+    }
+
+    private static void renderPlaceStatusBadge(int[] coords, WorldOverlay.Category category, float s) {
+        WorldOverlay.CheckResult res = WorldOverlay.checkPlace(coords, category);
+        if (res == null) return;
+        ImGui.sameLine(0f, 6f * s);
+        int col = switch (res.status()) {
+            case OK -> OK;
+            case MISSING, WRONG -> ERR;
+            case BLOCKED -> WARN;
+            case UNLOADED, INFO -> DIM;
+        };
+        String txt = switch (res.status()) {
+            case OK -> "[OK]";
+            case MISSING -> "[MISSING!]";
+            case WRONG -> "[WRONG: " + res.detail() + "]";
+            case BLOCKED -> "[BLOCKED]";
+            case UNLOADED -> "[unloaded]";
+            case INFO -> "";
+        };
+        if (!txt.isEmpty()) {
+            UiTheme.textColored(col, txt);
+        }
     }
 
     private static void renderItemCountMap(GameProjectRuntime rt, String idPrefix, String title,
@@ -1046,6 +1098,7 @@ final class ProjectPanel {
             int[] b = places.bedPool.get(i);
             if (b == null || b.length != 3) continue;
             UiTheme.textColored(FG, "  #" + (i + 1) + ": " + b[0] + ", " + b[1] + ", " + b[2]);
+            renderPlaceStatusBadge(b, WorldOverlay.Category.BED, s);
             ImGui.sameLine();
             if (Widgets.button("x##rmBed_" + i, 2)) {
                 removeIdx = i;

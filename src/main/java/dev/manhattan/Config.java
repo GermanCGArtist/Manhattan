@@ -47,6 +47,13 @@ final class Config {
     boolean captureShow = true;
     /** Draw the planned path in the world (red line, green boxes on blocks to break, blue goal). */
     boolean showPath = true;
+    /** Client-side 3D world visualization of chests, beds, safe areas and task areas (with live block verification). */
+    boolean showWorldOverlay = true;
+    boolean showOverlayChests = true;
+    boolean showOverlaySafeAreas = true;
+    boolean showOverlayTaskAreas = true;
+    boolean showOverlayLabels = true;
+    boolean showOverlayThroughWalls = true;
     boolean captureRapid = false;
     String captureType = "dump";
 

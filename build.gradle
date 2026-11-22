@@ -139,7 +139,13 @@ tasks.register('fleetClientTest', JavaExec) {
     classpath = sourceSets.test.runtimeClasspath
     mainClass = 'dev.manhattan.FleetClientTest'
 }
-tasks.named('check') { dependsOn 'langTest', 'parseScripts', 'midtownTest', 'midtownBodyTest', 'projectQueueTest', 'telemetryIncidentTest', 'chunkGridTest', 'chunkRunnerTest', 'fleetClientTest', 'nativesTest' }
+tasks.register('worldOverlayTest', JavaExec) {
+    group = 'verification'
+    description = 'Runs WorldOverlay marker collection, deduplication, and live verification transition tests.'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.manhattan.WorldOverlayTest'
+}
+tasks.named('check') { dependsOn 'langTest', 'parseScripts', 'midtownTest', 'midtownBodyTest', 'projectQueueTest', 'telemetryIncidentTest', 'chunkGridTest', 'chunkRunnerTest', 'fleetClientTest', 'worldOverlayTest', 'nativesTest' }
 tasks.named('test') { failOnNoDiscoveredTests = false }   // the tests above are plain programs, not JUnit
 
 java {

@@ -42,6 +42,10 @@ final class SleepProcess extends Feature {
         return state != State.IDLE;
     }
 
+    void resetCooldown() {
+        cooldown = 0;
+    }
+
     static boolean isNight(Minecraft mc) {
         Level lvl = mc.level;
         return lvl != null && lvl.dimension() == Level.OVERWORLD && (lvl.isDarkOutside() || (cfg.weather && lvl.isThundering()));

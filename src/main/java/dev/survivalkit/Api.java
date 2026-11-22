@@ -36,6 +36,34 @@ public final class Api {
         cfg.bed = (pos != null && pos.length == 3) ? pos.clone() : null;
     }
 
+    /** Clears the missing-bed / sleep retry cooldown so a newly replaced bed is usable immediately. */
+    public static void resetSleepCooldown() {
+        if (SurvivalKitMod.sleep != null) {
+            SurvivalKitMod.sleep.resetCooldown();
+        }
+    }
+
+    /** Returns the currently configured primary supply chest {@code [x, y, z]} or {@code null}. */
+    public static int[] supplyPos() {
+        return cfg.supply != null && cfg.supply.length == 3 ? cfg.supply.clone() : null;
+    }
+
+    /** Returns copies of any extra supply chest coordinates. */
+    public static List<int[]> extraSupplyPositions() {
+        List<int[]> out = new ArrayList<>();
+        if (cfg.extraSupplies != null) {
+            for (int[] p : cfg.extraSupplies) {
+                if (p != null && p.length == 3) out.add(p.clone());
+            }
+        }
+        return out;
+    }
+
+    /** Returns the currently configured return chest {@code [x, y, z]} or {@code null}. */
+    public static int[] returnChestPos() {
+        return cfg.returnChest != null && cfg.returnChest.length == 3 ? cfg.returnChest.clone() : null;
+    }
+
     /** True while SurvivalKit is recovering from a death. */
     public static boolean recovering() {
         return "true".equals(System.getProperty("survivalkit.recovering"));

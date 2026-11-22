@@ -68,6 +68,7 @@ public class QueueMod implements ClientModInitializer {
         dev.midtown.exec.MidtownEngine.configureDeathStorage(projectConfigDir().resolve("manhattan-deaths"), QueueMod::projectWorld);
         LevelRenderEvents.BEFORE_GIZMOS.register(ctx -> {
             Areas.renderWireframe();
+            WorldOverlay.render();
             PathRender.render();
         });
         KeyMapping.Category category = KeyMapping.Category.register(Identifier.fromNamespaceAndPath("baritonequeue", "main"));
@@ -150,6 +151,44 @@ public class QueueMod implements ClientModInitializer {
                                     Config.save();
                                     return 1;
                                 })))
+                        .then(ClientCommands.literal("overlay")
+                                .executes(ctx -> {
+                                    Util.msg("World overlay: " + (cfg.showWorldOverlay ? "ON" : "OFF")
+                                            + " (chests/beds=" + (cfg.showOverlayChests ? "on" : "off")
+                                            + ", safe=" + (cfg.showOverlaySafeAreas ? "on" : "off")
+                                            + ", areas=" + (cfg.showOverlayTaskAreas ? "on" : "off")
+                                            + ", labels=" + (cfg.showOverlayLabels ? "on" : "off")
+                                            + ", xray=" + (cfg.showOverlayThroughWalls ? "on" : "off") + ")");
+                                    WorldOverlay.checkReport().forEach(Util::msg);
+                                    return 1;
+                                })
+                                .then(ClientCommands.literal("on").executes(ctx -> setOverlayMaster(true)))
+                                .then(ClientCommands.literal("off").executes(ctx -> setOverlayMaster(false)))
+                                .then(ClientCommands.literal("toggle").executes(ctx -> setOverlayMaster(!cfg.showWorldOverlay)))
+                                .then(ClientCommands.literal("check").executes(ctx -> {
+                                    WorldOverlay.checkReport().forEach(Util::msg);
+                                    return 1;
+                                }))
+                                .then(ClientCommands.literal("chests")
+                                        .executes(ctx -> toggleOverlayLayer("chests", null))
+                                        .then(ClientCommands.literal("on").executes(ctx -> toggleOverlayLayer("chests", true)))
+                                        .then(ClientCommands.literal("off").executes(ctx -> toggleOverlayLayer("chests", false))))
+                                .then(ClientCommands.literal("safe")
+                                        .executes(ctx -> toggleOverlayLayer("safe", null))
+                                        .then(ClientCommands.literal("on").executes(ctx -> toggleOverlayLayer("safe", true)))
+                                        .then(ClientCommands.literal("off").executes(ctx -> toggleOverlayLayer("safe", false))))
+                                .then(ClientCommands.literal("areas")
+                                        .executes(ctx -> toggleOverlayLayer("areas", null))
+                                        .then(ClientCommands.literal("on").executes(ctx -> toggleOverlayLayer("areas", true)))
+                                        .then(ClientCommands.literal("off").executes(ctx -> toggleOverlayLayer("areas", false))))
+                                .then(ClientCommands.literal("labels")
+                                        .executes(ctx -> toggleOverlayLayer("labels", null))
+                                        .then(ClientCommands.literal("on").executes(ctx -> toggleOverlayLayer("labels", true)))
+                                        .then(ClientCommands.literal("off").executes(ctx -> toggleOverlayLayer("labels", false))))
+                                .then(ClientCommands.literal("xray")
+                                        .executes(ctx -> toggleOverlayLayer("xray", null))
+                                        .then(ClientCommands.literal("on").executes(ctx -> toggleOverlayLayer("xray", true)))
+                                        .then(ClientCommands.literal("off").executes(ctx -> toggleOverlayLayer("xray", false)))))
                         .then(ClientCommands.literal("chest")
                                 .executes(ctx -> chestList())
                                 .then(ClientCommands.literal("list").executes(ctx -> chestList()))
@@ -1671,5 +1710,26 @@ public class QueueMod implements ClientModInitializer {
     public static void projectApplySelection(List<int[]> boxes) {
         if (boxes == null || boxes.isEmpty()) Areas.clearSelection();
         else Areas.apply(boxes);
+    }
+
+    private static int setOverlayMaster(boolean on) {
+        cfg.showWorldOverlay = on;
+        Config.save();
+        Util.msg("World overlay " + (on ? "ON" : "OFF") + ".");
+        return 1;
+    }
+
+    private static int toggleOverlayLayer(String layer, Boolean value) {
+        boolean next = switch (layer) {
+            case "chests" -> cfg.showOverlayChests = (value != null ? value : !cfg.showOverlayChests);
+            case "safe" -> cfg.showOverlaySafeAreas = (value != null ? value : !cfg.showOverlaySafeAreas);
+            case "areas" -> cfg.showOverlayTaskAreas = (value != null ? value : !cfg.showOverlayTaskAreas);
+            case "labels" -> cfg.showOverlayLabels = (value != null ? value : !cfg.showOverlayLabels);
+            case "xray" -> cfg.showOverlayThroughWalls = (value != null ? value : !cfg.showOverlayThroughWalls);
+            default -> false;
+        };
+        Config.save();
+        Util.msg("World overlay " + layer + ": " + (next ? "ON" : "OFF") + ".");
+        return 1;
     }
 }

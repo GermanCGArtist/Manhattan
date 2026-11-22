@@ -212,6 +212,36 @@ public final class Api {
         return out;
     }
 
+    /** Immutable snapshot of a protected safe area box for client-side visualization. */
+    public record ProtectedZone(String name, String group, int x1, int y1, int z1, int x2, int y2, int z2,
+                                boolean allowBreak, boolean allowPlace) {}
+
+    public static java.util.List<ProtectedZone> protectedZones() {
+        java.util.List<ProtectedZone> out = new java.util.ArrayList<>();
+        if (cfg != null && cfg.zones != null) {
+            for (var z : cfg.zones) {
+                if (z != null) {
+                    out.add(new ProtectedZone(z.name, z.group, z.x1, z.y1, z.z1, z.x2, z.y2, z.z2, z.allowBreak, z.allowPlace));
+                }
+            }
+        }
+        return out;
+    }
+
+    public static boolean protectEnabled() {
+        return cfg != null && cfg.protect;
+    }
+
+    public static int[] pendingCorner1() {
+        return cfg != null && cfg.corner1 != null && cfg.corner1.length >= 3
+                ? new int[]{cfg.corner1[0], cfg.corner1[1], cfg.corner1[2]} : null;
+    }
+
+    public static int[] pendingCorner2() {
+        return cfg != null && cfg.corner2 != null && cfg.corner2.length >= 3
+                ? new int[]{cfg.corner2[0], cfg.corner2[1], cfg.corner2[2]} : null;
+    }
+
     /** Holds water and is not solid: water, seagrass, kelp, bubble column ... */
     public static boolean wet(net.minecraft.world.level.Level level, net.minecraft.core.BlockPos pos) {
         return TerminatorProcess.wet(level, pos);

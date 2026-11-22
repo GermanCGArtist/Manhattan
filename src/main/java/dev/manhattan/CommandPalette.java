@@ -82,6 +82,14 @@ final class CommandPalette {
             out.add(new Cmd("Workspace", "Open " + d.title, "", () -> Shell.drawer = d));
         }
         out.add(new Cmd("Workspace", "Close workspace (play)", "J", ImGuiManager::closeShell));
+        out.add(new Cmd("Overlay", "Toggle World Overlay (Chests, Beds & Safe Areas)",
+                cfg.showWorldOverlay ? "currently ON" : "currently OFF", () -> {
+                    cfg.showWorldOverlay = !cfg.showWorldOverlay;
+                    Config.save();
+                    Util.msg("World overlay " + (cfg.showWorldOverlay ? "ON" : "OFF") + ".");
+                }));
+        out.add(new Cmd("Overlay", "Check Base Places (Beds & Chests)", "live block check", () ->
+                WorldOverlay.checkReport().forEach(Util::msg)));
         out.add(new Cmd("Workspace", "UI scale 100%", "", () -> ImGuiManager.setUiScale(1.0f)));
         out.add(new Cmd("Workspace", "UI scale 125%", "", () -> ImGuiManager.setUiScale(1.25f)));
         out.add(new Cmd("Workspace", "UI scale 150%", "", () -> ImGuiManager.setUiScale(1.5f)));
