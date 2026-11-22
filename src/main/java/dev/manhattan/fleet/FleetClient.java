@@ -243,6 +243,24 @@ public final class FleetClient {
         send("job_control", body);
     }
 
+    public void controlQueue(String action) {
+        if (!isEditorAllowed() || action == null || action.isBlank()) return;
+        JsonObject body = new JsonObject();
+        body.addProperty("action", action);
+        send("job_control", body);
+    }
+
+    public void controlWorker(String botUuid, String action, String targetJobId) {
+        if (!isEditorAllowed() || botUuid == null || botUuid.isBlank() || action == null || action.isBlank()) return;
+        JsonObject body = new JsonObject();
+        body.addProperty("botUuid", botUuid);
+        body.addProperty("action", action);
+        if (targetJobId != null && !targetJobId.isBlank()) {
+            body.addProperty("targetJobId", targetJobId);
+        }
+        send("worker_control", body);
+    }
+
     public void reassignJob(String jobId, AssignmentPolicy policy) {
         if (!isEditorAllowed() || jobId == null || jobId.isBlank() || policy == null) return;
         JsonObject body = new JsonObject();
@@ -526,6 +544,27 @@ public final class FleetClient {
                 String lockedBy = body.has("lockedBy") ? body.get("lockedBy").getAsString() : "";
                 long exp = body.has("expiresAtMs") ? body.get("expiresAtMs").getAsLong() : 0L;
                 chestLocks.put(x + "," + y + "," + z, new ChestLockState(granted, lockedBy, exp, System.currentTimeMillis()));
+            }
+
+            case "worker_command" -> {
+                String action = body.has("action") ? body.get("action").getAsString() : "";
+                String jobId = body.has("jobId") ? body.get("jobId").getAsString() : "";
+                String reason = body.has("reason") ? body.get("reason").getAsString() : "Stopped by Fleet Editor";
+                if ("stop".equalsIgnoreCase(action)) {
+                    boolean matches = jobId.isBlank()
+                            || (activeGrant != null && jobId.equals(activeGrant.jobId));
+                    if (matches) {
+                        activeGrant = null;
+                        claimInFlight = false;
+                        serverSaidIdle = false;
+                        lastClaimRequestMs = 0L;
+                        dev.manhattan.project.GameProjectRuntime rt = dev.manhattan.project.GameProjectRuntime.instance();
+                        if (rt.running()) {
+                            rt.stopQueue(reason);
+                        }
+                        setNotice(reason, false);
+                    }
+                }
             }
 
             case "job_ack" -> {

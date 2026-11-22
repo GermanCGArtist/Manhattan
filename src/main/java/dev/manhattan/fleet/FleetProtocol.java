@@ -124,6 +124,7 @@ public final class FleetProtocol {
         public int food;
         public int freeSlots;
         public boolean inDanger;
+        public boolean held;
         public String activeJobId;
         public String activeChunkKey;
         public String phase;

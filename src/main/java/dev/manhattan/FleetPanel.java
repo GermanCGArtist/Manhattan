@@ -124,20 +124,80 @@ final class FleetPanel {
         if (snap.bots.isEmpty()) {
             UiTheme.textColored(DIM, "No fleet clients registered yet.");
         } else {
+            List<FleetProtocol.JobSummary> activeJobs = new ArrayList<>();
+            for (FleetProtocol.JobSummary j : snap.jobs) {
+                if ("ACTIVE".equals(j.status)) activeJobs.add(j);
+            }
             for (FleetProtocol.BotInfo bot : snap.bots) {
-                int col = !bot.online ? DIM : (bot.inDanger ? ERR : OK);
+                ImGui.pushID("bot_" + (bot.uuid != null ? bot.uuid : bot.name));
+                int col = !bot.online ? DIM : (bot.inDanger ? ERR : (bot.held ? WARN : OK));
                 String tagStr = (bot.tags != null && !bot.tags.isEmpty()) ? " [" + String.join(",", bot.tags) + "]" : "";
-                String workStr = bot.activeJobId != null ? " -> " + bot.activeJobId + " (" + bot.activeChunkKey + ")" : " (" + bot.phase + ")";
+                String workStr = bot.held ? " (HELD)"
+                        : (bot.activeJobId != null ? " -> " + bot.activeJobId + " (" + bot.activeChunkKey + ")" : " (" + bot.phase + ")");
                 UiTheme.textColored(col, (bot.online ? "[ON] " : "[OFF] ") + bot.name + " [" + bot.mode + "]" + tagStr + workStr);
                 if (bot.alertSummary != null && !bot.alertSummary.isBlank()) {
                     UiTheme.textColored(WARN, "   Alert: " + bot.alertSummary);
                 }
+                boolean isWorker = "WORKER".equalsIgnoreCase(bot.mode) || "BOTH".equalsIgnoreCase(bot.mode);
+                if (fc.isEditorAllowed() && isWorker && bot.uuid != null && !bot.uuid.isBlank()) {
+                    ImGui.indent(14f * s);
+                    if (bot.held) {
+                        if (ImGui.smallButton("Resume##botResume")) {
+                            fc.controlWorker(bot.uuid, "resume", null);
+                        }
+                    } else {
+                        if (ImGui.smallButton("Stop / Hold##botStop")) {
+                            fc.controlWorker(bot.uuid, "stop", null);
+                        }
+                        if (bot.activeJobId != null) {
+                            ImGui.sameLine(0f, 4f * s);
+                            if (ImGui.smallButton("Release Chunk##botRel")) {
+                                fc.controlWorker(bot.uuid, "release", null);
+                            }
+                        }
+                    }
+                    if (!activeJobs.isEmpty()) {
+                        ImGui.sameLine(0f, 6f * s);
+                        ImGui.setNextItemWidth(150f * s);
+                        if (ImGui.beginCombo("##botAssign", "Assign to job...")) {
+                            for (FleetProtocol.JobSummary aj : activeJobs) {
+                                String lbl = aj.jobId + " · " + aj.projectName;
+                                if (ImGui.selectable(lbl + "##asgn_" + aj.jobId, aj.jobId.equals(bot.activeJobId))) {
+                                    fc.controlWorker(bot.uuid, "reassign", aj.jobId);
+                                }
+                            }
+                            ImGui.endCombo();
+                        }
+                    }
+                    ImGui.unindent(14f * s);
+                }
+                ImGui.popID();
             }
         }
 
         // 5. Server Job Queue
         ImGui.separator();
         Widgets.label("Server Job Queue (" + snap.jobs.size() + ")");
+        if (fc.isEditorAllowed() && !snap.jobs.isEmpty()) {
+            boolean anyActive = false;
+            boolean anyFinished = false;
+            for (FleetProtocol.JobSummary j : snap.jobs) {
+                if ("ACTIVE".equals(j.status) || "PAUSED".equals(j.status)) anyActive = true;
+                if ("DONE".equals(j.status) || "CANCELLED".equals(j.status)) anyFinished = true;
+            }
+            if (anyActive) {
+                if (Widgets.button("Cancel All Active##fleetCancelAll", 2)) {
+                    fc.controlQueue("cancel_all");
+                }
+                if (anyFinished) ImGui.sameLine(0f, 6f * s);
+            }
+            if (anyFinished) {
+                if (Widgets.button("Clear Finished##fleetClearDone", 0)) {
+                    fc.controlQueue("clear_finished");
+                }
+            }
+            ImGui.spacing();
+        }
         if (snap.jobs.isEmpty()) {
             UiTheme.textColored(DIM, "No jobs queued on the server. Open Projects -> Submit to Fleet.");
         } else {
