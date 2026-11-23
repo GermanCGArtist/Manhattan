@@ -260,8 +260,10 @@ final class SchemSource {
         try {
             if (!has(placementObj, "getSchematic")) return null;
             Object schem = call(placementObj, "getSchematic");
-            if (schem == null || !has(schem, "writeToTag")) return null;
-            Object tag = call(schem, "writeToTag");
+            if (schem == null) return null;
+            Object tag = null;
+            if (has(schem, "writeToTag")) tag = call(schem, "writeToTag");
+            else if (has(schem, "writeToNBT")) tag = call(schem, "writeToNBT");
             if (!(tag instanceof net.minecraft.nbt.CompoundTag compound)) return null;
             java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
             net.minecraft.nbt.NbtIo.writeCompressed(compound, baos);
@@ -275,7 +277,8 @@ final class SchemSource {
                 Files.write(outFile, bytes);
             }
             return outFile;
-        } catch (Throwable ignored) {
+        } catch (Throwable t) {
+            System.out.println("[Queue] schem: could not materialize in-memory schematic: " + t);
             return null;
         }
     }

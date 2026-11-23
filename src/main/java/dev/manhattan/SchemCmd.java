@@ -32,11 +32,11 @@ final class SchemCmd {
         List<SchemSource.Placement> out = new ArrayList<>();
         if (sel == null || sel.isEmpty()) {
             for (SchemSource.Placement p : all) if (p.enabled()) out.add(p);
-            if (out.size() != 1) {
-                err[0] = out.isEmpty() ? "No placement is enabled. Name one: /schem list, then /schem build <n>."
-                        : out.size() + " placements are enabled; say which one: /schem build <n>, or /schem build all.";
+            if (out.isEmpty()) {
+                err[0] = "No placement is enabled. Enable a placement in Litematica or name one explicitly.";
                 return null;
             }
+            return out;
         } else if (sel.equalsIgnoreCase("all")) {
             for (SchemSource.Placement p : all) if (p.enabled()) out.add(p);
             if (out.isEmpty()) {
@@ -45,7 +45,7 @@ final class SchemCmd {
             }
         } else {
             // Support comma-separated assembly lists ("Wall, Corner, Roof"), wildcard prefixes ("Array*"),
-            // numeric 1-based indices, and duplicate-name arrays (e.g. Vitruvius arrays with identical names).
+            // numeric 1-based indices, duplicate-name arrays (Vitruvius), and normalized/filename fallback matching.
             String[] tokens = sel.contains(",") ? sel.split(",") : new String[]{sel};
             java.util.Set<String> seen = new java.util.HashSet<>();
             for (String rawTok : tokens) {
@@ -64,12 +64,19 @@ final class SchemCmd {
                 }
                 boolean prefix = tok.endsWith("*");
                 String pat = (prefix ? tok.substring(0, tok.length() - 1) : tok).toLowerCase(java.util.Locale.ROOT);
+                String normPat = normalizeSchemName(pat);
                 List<SchemSource.Placement> enabledMatches = new ArrayList<>();
                 List<SchemSource.Placement> anyMatches = new ArrayList<>();
                 for (SchemSource.Placement p : all) {
                     if (p.name() == null) continue;
                     String pn = p.name().toLowerCase(java.util.Locale.ROOT);
-                    boolean hit = prefix ? pn.startsWith(pat) : pn.equals(pat);
+                    String normPn = normalizeSchemName(pn);
+                    String fileStem = (p.file() != null && p.file().getFileName() != null)
+                            ? normalizeSchemName(p.file().getFileName().toString())
+                            : "";
+                    boolean hit = prefix
+                            ? (pn.startsWith(pat) || normPn.startsWith(normPat) || fileStem.startsWith(normPat))
+                            : (pn.equals(pat) || normPn.equals(normPat) || (!normPat.isEmpty() && fileStem.equals(normPat)));
                     if (!hit) continue;
                     anyMatches.add(p);
                     if (p.enabled()) enabledMatches.add(p);
@@ -80,11 +87,18 @@ final class SchemCmd {
                 }
             }
             if (out.isEmpty()) {
-                err[0] = "There is no placement '" + sel + "' (a number, a name, a prefix*, comma list, or \"all\"). /schem list shows them.";
+                err[0] = "There is no placement '" + sel + "' (found " + all.size() + " placement(s) via " + SchemSource.lastSource + "). /schem list shows them.";
                 return null;
             }
         }
         return out;
+    }
+
+    private static String normalizeSchemName(String s) {
+        if (s == null) return "";
+        String lower = s.trim().toLowerCase(java.util.Locale.ROOT);
+        if (lower.endsWith(".litematic")) lower = lower.substring(0, lower.length() - ".litematic".length());
+        return lower.replaceAll("[^a-z0-9]+", "_").replaceAll("^_+|_+$", "");
     }
 
     // ------------------------------------------------------------------ the actions

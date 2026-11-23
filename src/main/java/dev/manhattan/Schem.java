@@ -264,6 +264,46 @@ final class Schem {
         }
     }
 
+    /**
+     * Fast per-placement world bounding boxes ({@code [x1,y1,z1,x2,y2,z2]}) computed directly from region corners,
+     * without allocating a full {@link Plan} block array. Ideal for Fleet chunking of large Vitruvius arrays/assemblies.
+     */
+    static List<int[]> bounds(List<SchemSource.Placement> pls, String[] error) {
+        if (pls == null || pls.isEmpty()) return List.of();
+        Map<java.nio.file.Path, Litematic.Schematic> fileCache = new java.util.HashMap<>();
+        List<int[]> boxes = new ArrayList<>();
+        Plan dummy = new Plan();
+        for (SchemSource.Placement pl : pls) {
+            Litematic.Schematic s;
+            try {
+                s = fileCache.get(pl.file());
+                if (s == null) {
+                    s = Litematic.read(pl.file());
+                    fileCache.put(pl.file(), s);
+                }
+            } catch (IOException | RuntimeException e) {
+                if (error != null && error.length > 0) error[0] = "Cannot read " + pl.file() + " (" + e + ").";
+                continue;
+            }
+            List<int[]> corners = new ArrayList<>();
+            place(pl, s, dummy, null, corners);
+            if (corners.isEmpty()) continue;
+            int x0 = Integer.MAX_VALUE, y0 = x0, z0 = x0, x1 = Integer.MIN_VALUE, y1 = x1, z1 = x1;
+            for (int[] c : corners) {
+                x0 = Math.min(x0, c[0]); x1 = Math.max(x1, c[0]);
+                y0 = Math.min(y0, c[1]); y1 = Math.max(y1, c[1]);
+                z0 = Math.min(z0, c[2]); z1 = Math.max(z1, c[2]);
+            }
+            if (x0 <= x1 && y0 <= y1 && z0 <= z1) {
+                boxes.add(new int[]{x0, y0, z0, x1, y1, z1});
+            }
+        }
+        if (boxes.isEmpty() && error != null && error.length > 0 && (error[0] == null || error[0].isBlank())) {
+            error[0] = "Placement has no enabled sub-regions with blocks.";
+        }
+        return boxes;
+    }
+
     /** The plan of these placements; later placements win where they overlap (air never overwrites a block). Null + error text on failure. */
     static Plan plan(List<SchemSource.Placement> pls, String[] error) {
         List<Litematic.Schematic> loaded = new ArrayList<>();

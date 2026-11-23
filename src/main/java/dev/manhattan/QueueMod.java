@@ -1258,6 +1258,14 @@ public class QueueMod implements ClientModInitializer {
 
     /** Computes canonical Fleet Server chunk specs for all enabled spatial tasks in a Project. */
     public static List<dev.manhattan.fleet.FleetProtocol.ChunkSpec> collectProjectChunkSpecs(Project project) {
+        return collectProjectChunkSpecs(project, null);
+    }
+
+    /** Computes canonical Fleet Server chunk specs and optionally records diagnostic warnings for any 0-chunk tasks. */
+    public static List<dev.manhattan.fleet.FleetProtocol.ChunkSpec> collectProjectChunkSpecs(
+            Project project,
+            List<String> diagnostics
+    ) {
         List<dev.manhattan.fleet.FleetProtocol.ChunkSpec> out = new ArrayList<>();
         if (project == null || project.tasks == null) return out;
         int effectiveSize = project.chunkSize > 0 ? Math.max(8, Math.min(128, project.chunkSize)) : cfg.chunkSize;
@@ -1273,17 +1281,32 @@ public class QueueMod implements ClientModInitializer {
                 boxes = resolveProjectBoxes(task);
                 chunkSizeY = effectiveSizeY;
                 gap = cfg.chunkGap;
-            } else if (task.kind == ProjectTask.Kind.FILL_WATER || task.kind == ProjectTask.Kind.DRAIN) {
+            } else if (task.kind == ProjectTask.Kind.FILL_WATER
+                    || task.kind == ProjectTask.Kind.DRAIN
+                    || task.kind == ProjectTask.Kind.FLOOD
+                    || task.kind == ProjectTask.Kind.CLEAR_TREES
+                    || task.kind == ProjectTask.Kind.MINE) {
                 boxes = resolveProjectBoxes(task);
             } else if (task.kind == ProjectTask.Kind.SCHEM_BUILD) {
                 String[] err = new String[1];
                 List<SchemSource.Placement> pls = SchemCmd.select(
                         task.placement == null || task.placement.isBlank() ? null : task.placement, err);
                 if (pls != null && !pls.isEmpty()) {
-                    boxes = SchemProcess.placementBounds(pls);
+                    boxes = SchemProcess.placementBounds(pls, err);
+                    if ((boxes == null || boxes.isEmpty()) && diagnostics != null) {
+                        diagnostics.add(task.displayLabel() + ": " + (err[0] != null ? err[0] : "schematic has 0 buildable bounds"));
+                    }
+                } else if (diagnostics != null) {
+                    diagnostics.add(task.displayLabel() + ": " + (err[0] != null ? err[0] : "placement not found"));
                 }
             }
-            if (boxes == null || boxes.isEmpty()) continue;
+            if (boxes == null || boxes.isEmpty()) {
+                if (diagnostics != null && task.kind != ProjectTask.Kind.SCHEM_BUILD
+                        && task.kind != ProjectTask.Kind.DUMP && task.kind != ProjectTask.Kind.RESTOCK && task.kind != ProjectTask.Kind.SCRIPT) {
+                    diagnostics.add(task.displayLabel() + ": area '" + (task.areaName == null ? "" : task.areaName) + "' has no boxes");
+                }
+                continue;
+            }
             if (task.areaName != null && !task.areaName.isBlank() && project.places != null) {
                 project.places.ensureInitialized();
                 project.places.areas.put(task.areaName, boxes);

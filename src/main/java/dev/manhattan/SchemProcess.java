@@ -105,17 +105,12 @@ public final class SchemProcess {
     }
 
     static List<int[]> placementBounds(List<SchemSource.Placement> pls) {
+        return placementBounds(pls, new String[1]);
+    }
+
+    static List<int[]> placementBounds(List<SchemSource.Placement> pls, String[] err) {
         if (pls == null || pls.isEmpty()) return List.of();
-        Plan p = pls.equals(preparedPlacements) && preparedPlan != null
-                ? preparedPlan
-                : Schem.plan(pls, new String[1]);
-        if (p == null) return List.of();
-        preparedPlacements = pls;
-        preparedPlan = p;
-        return List.of(new int[]{
-                p.min.getX(), p.min.getY(), p.min.getZ(),
-                p.min.getX() + p.sx - 1, p.min.getY() + p.sy - 1, p.min.getZ() + p.sz - 1
-        });
+        return Schem.bounds(pls, err);
     }
 
     private static Plan resolveActivePlan() {

@@ -1434,10 +1434,22 @@ final class ProjectPanel {
         }
 
         ImGui.spacing();
-        List<dev.manhattan.fleet.FleetProtocol.ChunkSpec> chunks = QueueMod.collectProjectChunkSpecs(active);
-        UiTheme.textColored(DIM, "Project '" + active.name + "' -> " + chunks.size() + " chunk(s) ready to distribute.");
+        List<String> chunkDiags = new ArrayList<>();
+        List<dev.manhattan.fleet.FleetProtocol.ChunkSpec> chunks = QueueMod.collectProjectChunkSpecs(active, chunkDiags);
+        UiTheme.textColored(chunks.isEmpty() ? WARN : DIM,
+                "Project '" + active.name + "' -> " + chunks.size() + " chunk(s) ready to distribute.");
+        for (String diag : chunkDiags) {
+            UiTheme.textColored(ERR, "  ! " + diag);
+        }
 
         if (Widgets.button("Submit Project to Fleet##fleetSubmitBtn", 1)) {
+            if (chunks.isEmpty()) {
+                String reason = chunkDiags.isEmpty()
+                        ? "Project produced 0 chunks (enable a task with a valid area or schematic placement first)."
+                        : String.join(" | ", chunkDiags);
+                setNotice("Cannot submit 0 chunks: " + reason, true);
+                return;
+            }
             dev.manhattan.fleet.FleetProtocol.AssignmentPolicy pol = new dev.manhattan.fleet.FleetProtocol.AssignmentPolicy();
             pol.mode = fleetAssignMode;
             pol.explicitBots = new ArrayList<>(fleetSelectedBots);
