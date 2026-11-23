@@ -65,6 +65,7 @@ final class SchemPlacer {
     private boolean breaking, sneakingForPlace;
     private BlockPos breakPos, lastSpot;
     private final java.util.Set<BlockPos> badSpots = new java.util.HashSet<>();
+    private final java.util.Set<BlockPos> deferred = new java.util.HashSet<>();
     private int placed;
     final List<String> failures = new ArrayList<>();
 
@@ -129,6 +130,7 @@ final class SchemPlacer {
         stagnant = 0;
         walkCooldown = 0;
         badSpots.clear();
+        deferred.clear();
         Level level = Minecraft.getInstance().level;
         for (int y = 0; y < plan.sy; y++) for (int z = 0; z < plan.sz; z++) for (int x = 0; x < plan.sx; x++) {
             BlockState d = plan.st[plan.idx(x, y, z)];
@@ -154,6 +156,7 @@ final class SchemPlacer {
         cur = null;
         walkCooldown = 0;
         materialWaitTicks = 0;
+        deferred.clear();
         queue.clear();
     }
 
@@ -366,9 +369,20 @@ final class SchemPlacer {
     private void next(Level level, LocalPlayer p) {
         BlockPos pick = null;
         for (BlockPos q : queue) {
+            if (deferred.contains(q)) continue;
             if (pick == null) { pick = q; continue; }
             boolean better = clearing ? q.getY() > pick.getY() : q.getY() < pick.getY();
             if (better || (q.getY() == pick.getY() && q.distSqr(p.blockPosition()) < pick.distSqr(p.blockPosition()))) pick = q;
+        }
+        if (pick == null) {
+            // Every remaining block in queue was deferred with no valid placement face: fail one and drop it so we don't spin
+            BlockPos stuck = queue.pollFirst();
+            if (stuck != null) {
+                cur = stuck;
+                want = plan.at(cur.getX() - plan.min.getX(), cur.getY() - plan.min.getY(), cur.getZ() - plan.min.getZ());
+                fail(clearing ? "enclosed, no side to dig from" : "no block next to it to click against, or no way to orient it");
+            }
+            return;
         }
         queue.remove(pick);
         cur = pick;
@@ -465,8 +479,9 @@ final class SchemPlacer {
                 if (cands == null) {
                     cands = candidates(level, p);
                     if (cands.isEmpty()) {
-                        // nothing to click against / no open side yet (a block placed or dug later may give one): come back later
-                        if (++stagnant > queue.size() + 1) { fail(clearing ? "enclosed, no side to dig from" : "no block next to it to click against, or no way to orient it"); stagnant = 0; return false; }
+                        // Defer this spot so next() moves on immediately to other placeable blocks;
+                        // deferred is cleared whenever any new block is placed (creating new neighbor faces).
+                        deferred.add(cur);
                         queue.addLast(cur);
                         cur = null;
                         return false;
@@ -588,11 +603,12 @@ final class SchemPlacer {
                 if (stageTicks < 5) return false;
                 BlockState s = level.getBlockState(cur);
                 BlockState n = Schem.norm(s);
-                if (n.equals(want)) { placed++; cur = null; return false; }
+                if (n.equals(want)) { placed++; deferred.clear(); cur = null; return false; }
                 if (n.equals(aimState) && !aimState.equals(want)) {
                     if (want.getBlock() instanceof net.minecraft.world.level.block.ChestBlock) {
                         // First half of a double chest placed as SINGLE: done here, partner half will pair it!
                         placed++;
+                        deferred.clear();
                         cur = null;
                         return false;
                     }
