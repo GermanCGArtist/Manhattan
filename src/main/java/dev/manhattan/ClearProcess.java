@@ -56,6 +56,7 @@ public final class ClearProcess {
     private boolean working;
     private boolean paused;          // suspended by an "on" block: carryOn() goes on from here
     private boolean usingExplicitBoxes;
+    private boolean leftoverCleanupPass;
     private boolean scaffoldCleanupPass;
     private List<int[]> pausedBoxes;
     private int resumes, travelFails;
@@ -147,6 +148,7 @@ public final class ClearProcess {
         for (int[] b : boxes) { yTop = Math.max(yTop, b[4]); yBottom = Math.min(yBottom, b[1]); }
         feetY = Math.max(yBottom, yTop - (pass - 1));
         lastPass = feetY == yBottom;
+        leftoverCleanupPass = false;
         scaffoldCleanupPass = false;
         skipped.clear();
         ignoredItems.clear();
@@ -376,16 +378,16 @@ public final class ClearProcess {
         return false;
     }
 
-    /** Finds a safe standable spot within 4 blocks and eye reach of {@code target}, preferring floor below over bridge top. */
+    /** Finds a safe standable spot within eye reach of {@code target}, preferring floor below over bridge top. */
     private static BlockPos findStand(Level level, BlockPos target, double reachSq) {
         BlockPos best = null;
         int bestTier = Integer.MAX_VALUE;
         int bestDistSq = Integer.MAX_VALUE;
-        for (int dy = -3; dy <= 2; dy++) {
+        for (int dy = -4; dy <= 2; dy++) {
             for (int dx = -4; dx <= 4; dx++) {
                 for (int dz = -4; dz <= 4; dz++) {
                     int distSq = dx * dx + dy * dy + dz * dz;
-                    if (distSq > 16) continue;
+                    if (distSq > 25) continue;
                     BlockPos stand = target.offset(dx, dy, dz);
                     if (!level.hasChunkAt(stand)) continue;
                     if (eyeDistSq(stand, target) > reachSq) continue;
@@ -403,13 +405,52 @@ public final class ClearProcess {
         return best;
     }
 
+    /** Appends stops for any remaining wanted blocks anywhere in the selection (floor stand or pillar stand). */
+    private void addLeftoverCleanupStops(Level level) {
+        final double reach = 4.4;
+        final double reachSq = reach * reach;
+        List<BlockPos> validStops = new ArrayList<>();
+        for (int[] b : boxes) {
+            for (int y = b[4]; y >= b[1]; y--) {
+                for (int x = b[0]; x <= b[3]; x++) {
+                    for (int z = b[2]; z <= b[5]; z++) {
+                        BlockPos pos = new BlockPos(x, y, z);
+                        if (!level.hasChunkAt(pos) || !wanted(level, pos) || nextToFluid(level, pos)) continue;
+                        if (coveredByStop(validStops, pos, reachSq)) continue;
+                        BlockPos stand = findStand(level, pos, reachSq);
+                        if (stand == null) {
+                            stand = pillarStand(level, pos, reach);
+                        }
+                        if (stand != null) {
+                            stops.add(stand);
+                            validStops.add(stand);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /** Goes to the next pass down; false when this was the last one. */
     private boolean nextPass(Level level) {
         if (lastPass) {
+            if (!leftoverCleanupPass) {
+                leftoverCleanupPass = true;
+                stops.clear();
+                stop = 0;
+                deferred.clear();
+                retryingDeferred = false;
+                allowBridge = true;
+                addLeftoverCleanupStops(level);
+                if (!stops.isEmpty()) return true;
+            }
             if (!scaffoldCleanupPass) {
                 scaffoldCleanupPass = true;
                 stops.clear();
                 stop = 0;
+                deferred.clear();
+                retryingDeferred = false;
+                allowBridge = false;
                 addUncoveredScaffoldStops(level, new ArrayList<>(), 4.4 * 4.4);
                 if (!stops.isEmpty()) return true;
             }
@@ -768,8 +809,8 @@ public final class ClearProcess {
                         stop = 0;
                         continue;
                     }
-                    if (lastPass && !scaffoldCleanupPass && !allowBridge && deferred.size() >= BRIDGE_WORTH) {
-                        // a whole region only reachable over a gap: bridge it once, at the very end
+                    if (!scaffoldCleanupPass && !allowBridge && deferred.size() >= BRIDGE_WORTH) {
+                        // spots only reachable over a gap: bridge to them before moving down a pass so upper blocks aren't stranded
                         allowBridge = true;
                         Util.msg("Part of the area lies behind a gap; bridging to it once, now that everything else is done.");
                         stops.clear();
