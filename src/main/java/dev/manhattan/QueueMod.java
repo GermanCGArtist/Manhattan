@@ -1622,7 +1622,7 @@ public class QueueMod implements ClientModInitializer {
             for (int i = 0; i < 36; i++) {
                 if (inv.getItem(i).isEmpty()) freeSlots++;
             }
-            int budgetSlots = Math.max(1, freeSlots - 1);
+            int budgetSlots = Math.max(1, freeSlots - 2);
             Map<String, Integer> deficit = new java.util.LinkedHashMap<>();
             for (var e : required.entrySet()) {
                 if (budgetSlots <= 0) break;

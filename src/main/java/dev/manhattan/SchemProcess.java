@@ -135,6 +135,34 @@ public final class SchemProcess {
         return Schem.count(p, resolveActiveMode(), level, box).todoTotal();
     }
 
+    /**
+     * Returns item path -> needed count for the active schematic build (used by {@link ChestProcess#keepPlan}
+     * so dump trips never throw away building materials fetched for the current schematic).
+     */
+    public static Map<String, Integer> activeProtectedMaterials() {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc == null || mc.level == null) return Map.of();
+        boolean active = QueueMod.schem != null && QueueMod.schem.working();
+        if (!active) {
+            try {
+                var rt = dev.manhattan.project.GameProjectRuntime.instance();
+                var running = rt != null ? rt.runningProject() : null;
+                if (running != null && running.tasks != null) {
+                    for (var t : running.tasks) {
+                        if (t != null && t.enabled && t.kind == dev.manhattan.project.ProjectTask.Kind.SCHEM_BUILD) {
+                            active = true;
+                            break;
+                        }
+                    }
+                }
+            } catch (Throwable ignored) {}
+        }
+        if (!active) return Map.of();
+        Plan p = resolveActivePlan();
+        if (p == null) return Map.of();
+        return requiredItemsIn(mc.level, null);
+    }
+
     public static Map<String, Integer> requiredItemsIn(Level level, ChunkGrid.ColumnBox box) {
         if (level == null) return Map.of();
         Plan p = resolveActivePlan();

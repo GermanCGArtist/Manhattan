@@ -395,6 +395,7 @@ final class ChestProcess {
     static boolean[] keepPlan(LocalPlayer p, JsonObject rules) {
         boolean[] keep = new boolean[36];
         Map<String, Integer> keepLeft = new HashMap<>();   // keep rule -> items still to keep
+        Map<String, Integer> schemNeed = new HashMap<>(SchemProcess.activeProtectedMaterials());
         java.util.List<Integer> gear = new java.util.ArrayList<>();
         for (int i = 0; i < 36; i++) {
             ItemStack st = p.getInventory().getItem(i);
@@ -403,7 +404,10 @@ final class ChestProcess {
             if (st.isDamageableItem()) gear.add(i);
             else if (st.has(DataComponents.FOOD) && !JUNK_FOOD.contains(path)) keep[i] = true;
             else if (path.endsWith("bucket")) keep[i] = true;
-            else keep[i] = ruleKeeps(st, rules, keepLeft);
+            else if (schemNeed.getOrDefault(path, 0) > 0) {
+                keep[i] = true;
+                schemNeed.put(path, schemNeed.get(path) - st.getCount());
+            } else keep[i] = ruleKeeps(st, rules, keepLeft);
         }
         // best (most uses left) first; worn-out ones last, so a spare fresh tool wins over them
         gear.sort(java.util.Comparator.comparingInt((Integer i) -> {
