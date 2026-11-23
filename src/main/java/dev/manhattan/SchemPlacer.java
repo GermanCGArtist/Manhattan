@@ -187,7 +187,28 @@ final class SchemPlacer {
         }
     }
 
-    private static Vec3 faceCenter(BlockPos n, Direction face) {
+    /**
+     * Center of {@code face} on {@code n}'s actual collision hitbox (e.g. y+0.875 for chests, 0.0625 inset on chest sides),
+     * so raycasts ({@link #sees}) hit non-full blocks like chests, hoppers, slabs, and beds instead of missing in air.
+     */
+    private static Vec3 faceCenter(Level level, BlockPos n, Direction face) {
+        if (level != null) {
+            var shape = level.getBlockState(n).getCollisionShape(level, n);
+            if (!shape.isEmpty()) {
+                net.minecraft.world.phys.AABB bb = shape.bounds();
+                double cx = n.getX() + (bb.minX + bb.maxX) * 0.5;
+                double cy = n.getY() + (bb.minY + bb.maxY) * 0.5;
+                double cz = n.getZ() + (bb.minZ + bb.maxZ) * 0.5;
+                return switch (face) {
+                    case UP -> new Vec3(cx, n.getY() + bb.maxY, cz);
+                    case DOWN -> new Vec3(cx, n.getY() + bb.minY, cz);
+                    case NORTH -> new Vec3(cx, cy, n.getZ() + bb.minZ);
+                    case SOUTH -> new Vec3(cx, cy, n.getZ() + bb.maxZ);
+                    case WEST -> new Vec3(n.getX() + bb.minX, cy, cz);
+                    case EAST -> new Vec3(n.getX() + bb.maxX, cy, cz);
+                };
+            }
+        }
         return Vec3.atCenterOf(n).add(face.getStepX() * 0.5, face.getStepY() * 0.5, face.getStepZ() * 0.5);
     }
 
@@ -196,12 +217,12 @@ final class SchemPlacer {
         List<Cand> out = new ArrayList<>();
         if (clearing) {
             for (Direction d : Direction.values()) {
-                out.add(new Cand(cur, d, faceCenter(cur, d), 0, 0, false));
+                out.add(new Cand(cur, d, faceCenter(level, cur, d), 0, 0, false));
             }
             return out;
         }
         if (aimState != null && aimState.hasProperty(BlockStateProperties.SLAB_TYPE) && level.getBlockState(cur).is(aimState.getBlock())) {
-            out.add(new Cand(cur, Direction.UP, faceCenter(cur, Direction.UP), 0, 90f, false));   // the second slab: click the top of the first
+            out.add(new Cand(cur, Direction.UP, faceCenter(level, cur, Direction.UP), 0, 90f, false));   // the second slab: click the top of the first
             return out;
         }
         ItemStack stack = new ItemStack(item);
@@ -224,12 +245,12 @@ final class SchemPlacer {
             BlockState ns = level.getBlockState(n);
             if (ns.isAir() || Schem.replaceable(ns)) continue;
             Direction face = dir.getOpposite();
-            Vec3 center = faceCenter(n, face);
+            Vec3 center = faceCenter(level, n, face);
             List<Vec3> hits = new ArrayList<>();
             hits.add(center);
             if (face.getAxis().isHorizontal()) {
-                hits.add(center.add(0, 0.25, 0));
-                hits.add(center.add(0, -0.25, 0));
+                hits.add(center.add(0, 0.2, 0));
+                hits.add(center.add(0, -0.2, 0));
             }
             boolean interactive = isInteractive(ns.getBlock());
             boolean[] sneakModes = (interactive || forcedPartner != null) ? new boolean[]{true}
