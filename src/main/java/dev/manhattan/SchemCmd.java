@@ -87,7 +87,9 @@ final class SchemCmd {
                 }
             }
             if (out.isEmpty()) {
-                err[0] = "There is no placement '" + sel + "' (found " + all.size() + " placement(s) via " + SchemSource.lastSource + "). /schem list shows them.";
+                String avail = all.stream().map(SchemSource.Placement::name).distinct().limit(5)
+                        .collect(java.util.stream.Collectors.joining(", "));
+                err[0] = "There is no placement '" + sel + "' (available via " + SchemSource.lastSource + ": " + avail + ").";
                 return null;
             }
         }

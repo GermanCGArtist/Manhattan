@@ -1439,7 +1439,9 @@ final class ProjectPanel {
         UiTheme.textColored(chunks.isEmpty() ? WARN : DIM,
                 "Project '" + active.name + "' -> " + chunks.size() + " chunk(s) ready to distribute.");
         for (String diag : chunkDiags) {
-            UiTheme.textColored(ERR, "  ! " + diag);
+            ImGui.pushStyleColor(imgui.flag.ImGuiCol.Text, ERR);
+            ImGui.textWrapped("! " + diag);
+            ImGui.popStyleColor();
         }
 
         if (Widgets.button("Submit Project to Fleet##fleetSubmitBtn", 1)) {

@@ -1517,6 +1517,9 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
         dev.survivalkit.Api.setReturnAreas(p.places.returnAreas);
 
         if (p.places.dumpChest != null) QueueMod.projectSetPosOption("loadchest.chest", p.places.dumpChest);
+        if (p.embeddedSchematics != null && !p.embeddedSchematics.isEmpty()) {
+            QueueMod.importFleetSchematics(p.embeddedSchematics, p.embeddedSchematicFiles);
+        }
 
         // Protected areas
         for (var entry : p.places.protectedAreas.entrySet()) {

@@ -53,12 +53,14 @@ final class SchemSource {
             if ((b64 == null || b64.isBlank()) && es.fileHash != null && sharedFiles != null) {
                 b64 = sharedFiles.get(es.fileHash);
             }
-            if (b64 == null || b64.isBlank()) continue;
+            Path directPath = (es.filePath != null && !es.filePath.isBlank()) ? Path.of(es.filePath) : null;
+            boolean hasDirectFile = directPath != null && Files.isRegularFile(directPath);
+            if ((b64 == null || b64.isBlank()) && !hasDirectFile) continue;
             try {
-                Path outFile = (es.fileHash != null && writtenByHash.containsKey(es.fileHash))
-                        ? writtenByHash.get(es.fileHash)
-                        : null;
-                if (outFile == null) {
+                Path outFile = null;
+                if (es.fileHash != null && writtenByHash.containsKey(es.fileHash)) {
+                    outFile = writtenByHash.get(es.fileHash);
+                } else if (b64 != null && !b64.isBlank()) {
                     byte[] bytes = java.util.Base64.getDecoder().decode(b64);
                     if (bytes.length == 0) continue;
                     Files.createDirectories(cacheDir);
@@ -71,7 +73,10 @@ final class SchemSource {
                         Files.write(outFile, bytes);
                     }
                     if (es.fileHash != null) writtenByHash.put(es.fileHash, outFile);
+                } else if (hasDirectFile) {
+                    outFile = directPath;
                 }
+                if (outFile == null) continue;
                 List<Sub> subs = new ArrayList<>();
                 for (dev.manhattan.project.Project.EmbeddedSubRegion sr : es.subs) {
                     if (sr == null || sr.name == null) continue;

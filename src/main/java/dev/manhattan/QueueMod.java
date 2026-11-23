@@ -1268,6 +1268,9 @@ public class QueueMod implements ClientModInitializer {
     ) {
         List<dev.manhattan.fleet.FleetProtocol.ChunkSpec> out = new ArrayList<>();
         if (project == null || project.tasks == null) return out;
+        if (project.embeddedSchematics != null && !project.embeddedSchematics.isEmpty()) {
+            SchemSource.setFleetEmbedded(project.embeddedSchematics, project.embeddedSchematicFiles);
+        }
         int effectiveSize = project.chunkSize > 0 ? Math.max(8, Math.min(128, project.chunkSize)) : cfg.chunkSize;
         int effectiveSizeY = project.chunkSizeY > 0 ? Math.max(4, Math.min(320, project.chunkSizeY)) : cfg.chunkSizeY;
         project.chunkSize = effectiveSize;
@@ -1377,10 +1380,44 @@ public class QueueMod implements ClientModInitializer {
         Project copy = dev.manhattan.fleet.FleetProtocol.GSON.fromJson(json, Project.class);
         if (copy == null) return source;
         copy.ensureInitialized();
-        copy.embeddedSchematics.clear();
-        copy.embeddedSchematicFiles.clear();
 
+        // 1. Preserve any schematics already embedded in the project (e.g. exported directly by Vitruvius)
+        //    and pack any filePath-only entries into embeddedSchematicFiles so remote workers get the bytes.
         java.util.Set<String> embeddedFingerprints = new java.util.HashSet<>();
+        if (!copy.embeddedSchematics.isEmpty()) {
+            SchemSource.setFleetEmbedded(copy.embeddedSchematics, copy.embeddedSchematicFiles);
+            for (Project.EmbeddedSchematic es : copy.embeddedSchematics) {
+                if (es == null || es.name == null) continue;
+                es.ensureInitialized();
+                boolean hasPayload = (es.dataBase64 != null && !es.dataBase64.isBlank())
+                        || (es.fileHash != null && copy.embeddedSchematicFiles.containsKey(es.fileHash));
+                if (!hasPayload && es.filePath != null && !es.filePath.isBlank()) {
+                    java.nio.file.Path p = java.nio.file.Path.of(es.filePath);
+                    if (java.nio.file.Files.isRegularFile(p)) {
+                        try {
+                            byte[] bytes = java.nio.file.Files.readAllBytes(p);
+                            if (bytes.length > 0) {
+                                String hash = Integer.toHexString(java.util.Arrays.hashCode(bytes));
+                                try {
+                                    byte[] d = java.security.MessageDigest.getInstance("SHA-256").digest(bytes);
+                                    StringBuilder sb = new StringBuilder(12);
+                                    for (int i = 0; i < 6; i++) sb.append(String.format("%02x", d[i]));
+                                    hash = sb.toString();
+                                } catch (Exception ignored) {}
+                                es.fileHash = hash;
+                                copy.embeddedSchematicFiles.computeIfAbsent(hash,
+                                        k -> java.util.Base64.getEncoder().encodeToString(bytes));
+                            }
+                        } catch (Throwable ignored) {}
+                    }
+                }
+                int[] o = es.origin;
+                embeddedFingerprints.add(es.name.toLowerCase(java.util.Locale.ROOT) + "@"
+                        + o[0] + "," + o[1] + "," + o[2] + "|" + es.rotation + "|" + es.mirror);
+            }
+        }
+
+        // 2. Also auto-embed any additional Litematica placements referenced by enabled SCHEM_BUILD tasks.
         for (ProjectTask task : copy.tasks) {
             if (task == null || !task.enabled || task.kind != ProjectTask.Kind.SCHEM_BUILD) continue;
             String[] err = new String[1];

@@ -85,6 +85,8 @@ public final class Project {
     public static final class EmbeddedSchematic {
         public String name;
         public String fileName;
+        /** Optional local filesystem path to a {@code .litematic} file (auto-packed into {@link Project#embeddedSchematicFiles} on Fleet submit). */
+        public String filePath;
         /** Content hash referencing {@link Project#embeddedSchematicFiles} (deduplicates shared files in arrays). */
         public String fileHash;
         public int[] origin;
