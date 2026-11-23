@@ -790,9 +790,19 @@ public final class ClearProcess {
             if (!dev.buildtools.Api.solid(level, s.below())) {
                 BlockPos lower = lowerFloorStop(level, s, reach);
                 if (lower == null) lower = groundStop(level, s, reach);
-                if (lower == null) { stop++; continue; }
-                target = lower;
-                break;
+                if (lower != null) {
+                    target = lower;
+                    break;
+                }
+                // Floating block high above the trench floor: pillar up beside it rather than abandoning it.
+                BlockPos beside = pillarStand(level, s, reach);
+                if (beside != null) {
+                    target = beside;
+                    exactTarget = true;
+                    break;
+                }
+                stop++;
+                continue;
             }
             if (precarious(level, s.below())) {
                 // the stop stands on a lone pillar top or a floating block that is itself to be cleared:
@@ -832,7 +842,7 @@ public final class ClearProcess {
         midtownTraveling = true;
     }
 
-    private static final int BRIDGE_WORTH = 6;
+    private static final int BRIDGE_WORTH = 1;
 
     /** Can a block in the way be dug or walked through, i.e. is the cell no fluid, no bedrock and not protected? */
     private boolean openCell(Level level, BlockPos c) {
@@ -930,25 +940,25 @@ public final class ClearProcess {
     }
 
     /**
-     * A spot in the air next to {@code s} (same level or one lower) above a clear column down to steady ground
-     * (at most 11 deep), from where {@link #workAt} finds blocks to break: Midtown pillars straight up to it.
+     * A spot in the air next to {@code s} (same level or up to two lower) above a clear column down to steady ground
+     * (at most 19 deep), from where {@link #workAt} finds blocks to break: Midtown pillars straight up to it.
      * The lowest such column wins. Null if there is none.
      */
     private BlockPos pillarStand(Level level, BlockPos s, double reach) {
         int[][] dirs = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}, {1, -1}, {-1, 1}, {-1, -1}};
         BlockPos best = null;
         int bestScore = Integer.MAX_VALUE;
-        for (int dy = -1; dy <= 0; dy++) {
+        for (int dy = -2; dy <= 0; dy++) {
             for (int[] d : dirs) {
                 BlockPos c = s.offset(d[0], dy, d[1]);
                 if (!level.hasChunkAt(c) || !passable(level, c) || !passable(level, c.above())) continue;
                 int h = 0;
                 BlockPos q = c.below();
-                while (h < 12 && level.hasChunkAt(q) && passable(level, q) && level.getBlockState(q).getFluidState().isEmpty()) {
+                while (h < 20 && level.hasChunkAt(q) && passable(level, q) && level.getBlockState(q).getFluidState().isEmpty()) {
                     q = q.below();
                     h++;
                 }
-                if (h == 0 || h >= 12) continue;
+                if (h == 0 || h >= 20) continue;
                 if (!dev.buildtools.Api.solid(level, q) || precarious(level, q)) continue;
                 if (!workAt(level, c, reach)) continue;
                 int score = h * 4 + Math.abs(d[0]) + Math.abs(d[1]);

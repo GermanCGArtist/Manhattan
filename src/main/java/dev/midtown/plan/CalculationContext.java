@@ -108,6 +108,9 @@ public final class CalculationContext {
     /** Precomputed inventory tool snapshot (safe to read from background planner threads). */
     private record ToolEntry(ItemStack stack, int efficiencyLevel) {}
 
+    public static final double DEFAULT_BLOCK_BREAK_PENALTY = 35.0;
+    public static final double DEFAULT_PLACE_COST_TICKS = 60.0;
+
     private final boolean allowBreak;
     private final boolean allowPlace;
     private final boolean allowParkour;
@@ -119,6 +122,7 @@ public final class CalculationContext {
     private final int maxNodesExpanded;
     private final int breakDelayTicks;
     private final int itemSaverThreshold;
+    private final double blockBreakPenalty;
     private final double placeCostTicks;
     private final double parkourCostPenalty;
     private final HazardCost hazardCost;
@@ -148,6 +152,7 @@ public final class CalculationContext {
         this.maxNodesExpanded = b.maxNodesExpanded;
         this.breakDelayTicks = b.breakDelayTicks;
         this.itemSaverThreshold = b.itemSaverThreshold;
+        this.blockBreakPenalty = b.blockBreakPenalty;
         this.placeCostTicks = b.placeCostTicks;
         this.parkourCostPenalty = b.parkourCostPenalty;
         this.hazardCost = b.hazardCost;
@@ -295,6 +300,10 @@ public final class CalculationContext {
 
     public int itemSaverThreshold() {
         return itemSaverThreshold;
+    }
+
+    public double blockBreakPenalty() {
+        return blockBreakPenalty;
     }
 
     public double placeCostTicks() {
@@ -475,7 +484,8 @@ public final class CalculationContext {
         private int maxNodesExpanded = DEFAULT_MAX_NODES;
         private int breakDelayTicks = 5;
         private int itemSaverThreshold = DEFAULT_ITEM_SAVER_THRESHOLD;
-        private double placeCostTicks = 28.0;
+        private double blockBreakPenalty = DEFAULT_BLOCK_BREAK_PENALTY;
+        private double placeCostTicks = DEFAULT_PLACE_COST_TICKS;
         private double parkourCostPenalty = 2.0;  // distance and gap * 1.5 are paid on top; 6 made a fall + pillar out cheaper
         private HazardCost hazardCost = HazardCost.DEFAULT;
         private DeathMemory.DeathField deathField = DeathMemory.DeathField.EMPTY;
@@ -542,6 +552,11 @@ public final class CalculationContext {
         public Builder itemSaverThreshold(int v) {
             if (v < 0) throw new IllegalArgumentException("itemSaverThreshold must be >= 0");
             this.itemSaverThreshold = v;
+            return this;
+        }
+        public Builder blockBreakPenalty(double v) {
+            if (v < 0) throw new IllegalArgumentException("blockBreakPenalty must be >= 0");
+            this.blockBreakPenalty = v;
             return this;
         }
         public Builder placeCostTicks(double v) { this.placeCostTicks = v; return this; }

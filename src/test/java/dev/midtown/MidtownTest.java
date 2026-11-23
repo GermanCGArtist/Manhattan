@@ -574,6 +574,28 @@ public class MidtownTest {
             PlanResult noBridgeResult = planner.planSync(gapWorld, noBlocksCtx, new BlockPos(0, 1, 0), GoalSpec.exact(new BlockPos(2, 1, 0)));
             same("no expendable blocks returns NO_PATH", noBridgeResult.status(), PlanResult.Status.NO_PATH);
 
+            // 5b. Detour preferred over unnecessary tunneling & bridging with default penalties
+            GridWorldSnapshot detourWallWorld = GridWorldSnapshot.builder(0, 0, -6, 6, 5, 6)
+                    .fillFloor(0, BlockKind.SOLID)
+                    .fillBox(2, 1, -4, 2, 4, 4, BlockKind.SOLID)   // wall with open walkway at z = ±5
+                    .build();
+            CalculationContext detourCtx = CalculationContext.builder().allowBreak(true).allowPlace(true).build();
+            PlanResult wallDetour = planner.planSync(detourWallWorld, detourCtx, new BlockPos(0, 1, 0), GoalSpec.exact(new BlockPos(4, 1, 0)));
+            assertTrue("wall detour complete", wallDetour.isComplete());
+            assertTrue("walks around wall instead of tunneling",
+                    wallDetour.edges().stream().noneMatch(e -> e instanceof MoveEdge.BreakThroughEdge));
+
+            GridWorldSnapshot detourGapWorld = GridWorldSnapshot.builder(0, 0, -5, 4, 5, 5)
+                    .fillFloor(0, BlockKind.SOLID)
+                    .fillBox(2, 0, -3, 2, 0, 3, BlockKind.AIR)     // 1-wide trench with dry walkway at z = ±4
+                    .build();
+            CalculationContext noParkourDefaultCtx = CalculationContext.builder()
+                    .allowParkour(false).allowBreak(true).allowPlace(true).expendableBlockCount(64).build();
+            PlanResult gapDetour = planner.planSync(detourGapWorld, noParkourDefaultCtx, new BlockPos(0, 1, 0), GoalSpec.exact(new BlockPos(4, 1, 0)));
+            assertTrue("gap detour complete", gapDetour.isComplete());
+            assertTrue("walks around gap instead of bridging",
+                    gapDetour.edges().stream().noneMatch(e -> e instanceof MoveEdge.BridgeEdge));
+
             // 6. PillarEdge
             GridWorldSnapshot pillarWorld = GridWorldSnapshot.builder(0, 0, 0, 3, 6, 3)
                     .set(1, 0, 1, BlockKind.SOLID)

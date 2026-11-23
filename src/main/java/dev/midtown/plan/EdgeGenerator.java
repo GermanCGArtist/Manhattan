@@ -562,7 +562,7 @@ public final class EdgeGenerator {
             else if (breakCount == 2) aux2 = packed;
             else aux3 = packed;
 
-            breakCost += ticks + adjPen;
+            breakCost += ticks + ctx.blockBreakPenalty() + adjPen;
         }
 
         if (breakCount == 0) return;

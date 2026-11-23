@@ -81,6 +81,8 @@ public final class MidtownEngine implements PathEngine {
     private volatile boolean allowParkourPlace = false;
     private volatile boolean itemSaver = false;
     private volatile int itemSaverThreshold = 0;
+    private volatile double blockBreakPenalty = CalculationContext.DEFAULT_BLOCK_BREAK_PENALTY;
+    private volatile double placeCostTicks = CalculationContext.DEFAULT_PLACE_COST_TICKS;
     private volatile EngineStatus lastLoggedStatus = EngineStatus.IDLE;
 
     public MidtownEngine() {
@@ -601,6 +603,8 @@ public final class MidtownEngine implements PathEngine {
                 .allowBreak(allowBreak)
                 .allowPlace(allowPlace)
                 .allowParkourPlace(allowParkourPlace)
+                .blockBreakPenalty(blockBreakPenalty)
+                .placeCostTicks(placeCostTicks)
                 .deathField(currentDeathField(goal))
                 .dynamicEdgeBlacklist((fx, fy, fz, tx, ty, tz) ->
                         coordinator.edgeTracker().isBlacklisted(
@@ -835,6 +839,18 @@ public final class MidtownEngine implements PathEngine {
                 executor.setItemSaverThreshold(effectiveItemSaverThreshold());
                 yield true;
             }
+            case "blockBreakPenalty" -> {
+                double pen = Double.parseDouble(value);
+                if (pen < 0) throw new IllegalArgumentException("blockBreakPenalty must be >= 0");
+                this.blockBreakPenalty = pen;
+                yield true;
+            }
+            case "placeCostTicks" -> {
+                double cost = Double.parseDouble(value);
+                if (cost < 0) throw new IllegalArgumentException("placeCostTicks must be >= 0");
+                this.placeCostTicks = cost;
+                yield true;
+            }
             default -> false;
         };
     }
@@ -856,6 +872,8 @@ public final class MidtownEngine implements PathEngine {
             case "allowParkourPlace" -> Boolean.toString(allowParkourPlace);
             case "itemSaver" -> Boolean.toString(itemSaver);
             case "itemSaverThreshold" -> Integer.toString(itemSaverThreshold);
+            case "blockBreakPenalty" -> Double.toString(blockBreakPenalty);
+            case "placeCostTicks" -> Double.toString(placeCostTicks);
             default -> null;
         };
     }
