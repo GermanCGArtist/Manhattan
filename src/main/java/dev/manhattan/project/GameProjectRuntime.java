@@ -1061,7 +1061,9 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
         proj.ensureInitialized();
 
         List<Supplier<PriorityScheduler.ActionHandle>> stepFactories = new ArrayList<>();
-        boolean hasDump = plan.steps().contains(LogisticsPlanner.StepKind.DUMP_EXCESS) && proj.places.dumpChest != null;
+        boolean hasDump = plan.steps().contains(LogisticsPlanner.StepKind.DUMP_EXCESS)
+                && proj.places.dumpChest != null
+                && QueueMod.hasItemsToDump();
         boolean hasRestock = plan.steps().contains(LogisticsPlanner.StepKind.RESTOCK_TOOLS_FOOD) && proj.places.hasAnyToolSupply();
         boolean hasReturn = plan.steps().contains(LogisticsPlanner.StepKind.RETURN_WORN)
                 && (proj.places.hasAnyReturnStorage() || proj.places.hasAnyToolSupply());
@@ -1089,8 +1091,27 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
                 && !plan.materialsToFetch().isEmpty()
                 && (proj.places.hasAnyMaterialStorage() || proj.places.hasAnyScaffoldStorage())) {
             List<BlockPos> allMaterialChests = resolveMaterialAndScaffoldChests(proj.places);
-            if (allMaterialChests.isEmpty() && (!proj.places.materialAreas.isEmpty() || !proj.places.scaffoldAreas.isEmpty())) {
-                // Storage area chunks are currently unloaded and never scanned yet: walk near the area first so chunks load!
+            boolean needAreaWalk = false;
+            if (!proj.places.materialAreas.isEmpty() || !proj.places.scaffoldAreas.isEmpty()) {
+                // If any storage area is currently unloaded and we have no known chest with a needed item,
+                // walk near the storage area first so newly placed shulkers/chests are discovered live!
+                if (allMaterialChests.isEmpty()) {
+                    needAreaWalk = true;
+                } else {
+                    boolean anyUnloadedArea = isAnyAreaUnloaded(proj.places.materialAreas)
+                            || isAnyAreaUnloaded(proj.places.scaffoldAreas);
+                    if (anyUnloadedArea) {
+                        for (var entry : plan.materialsToFetch().entrySet()) {
+                            Item item = QueueMod.projectResolveItem(entry.getKey());
+                            if (item != null && orderMaterialChestsBlockPos(allMaterialChests, item).isEmpty()) {
+                                needAreaWalk = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            if (needAreaWalk) {
                 int[] box = !proj.places.materialAreas.isEmpty()
                         ? proj.places.materialAreas.get(0)
                         : proj.places.scaffoldAreas.get(0);
@@ -1106,8 +1127,8 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
                 Item item = QueueMod.projectResolveItem(itemName);
                 if (item == null) continue;
                 fetchItems.add(item);
-                if (!allMaterialChests.isEmpty()) {
-                    List<BlockPos> chests = orderMaterialChestsBlockPos(allMaterialChests, item);
+                List<BlockPos> chests = needAreaWalk ? List.of() : orderMaterialChestsBlockPos(allMaterialChests, item);
+                if (!chests.isEmpty()) {
                     for (BlockPos chestPos : chests) {
                         stepFactories.add(() -> {
                             int needNow = Math.max(0, qty - countExactItem(item));
@@ -1116,7 +1137,7 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
                             return bestEffort(QueueMod.projectCreateChestGetHandle(chestPos, item, needNow, false, true));
                         });
                     }
-                } else {
+                } else if (needAreaWalk) {
                     // Dynamic post-walk fetch once the storage area's chunks are loaded
                     stepFactories.add(() -> {
                         int needNow = Math.max(0, qty - countExactItem(item));
@@ -1172,8 +1193,14 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
                 RuntimeBus.emit(RuntimeEvent.Type.RESTOCK_EXHAUSTED, RuntimeEvent.Category.LOGISTICS,
                         "GameProjectRuntime",
                         "Base trip incomplete (streak " + baseTripFailStreak + ", backoff " + (baseTripCooldownTicks / 20) + "s)");
-                QueueMod.projectLog("Base trip did not clear all needs; backing off "
-                        + (baseTripCooldownTicks / 20) + "s.");
+                List<String> reasons = new ArrayList<>();
+                if (err != null) reasons.add("error: " + err);
+                if (dumpStuck) reasons.add("dump full");
+                if (returnStuck) reasons.add("return full");
+                if (restockStuck) reasons.add("restock short");
+                if (fetchStuck) reasons.add("materials short/empty");
+                QueueMod.projectLog("Base trip did not clear all needs (" + String.join(", ", reasons)
+                        + "); backing off " + (baseTripCooldownTicks / 20) + "s.");
             }
         });
     }
@@ -1804,6 +1831,18 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
         List<BlockPos> out = new ArrayList<>(cands.size());
         for (Cand c : cands) out.add(c.pos);
         return out;
+    }
+
+    private static boolean isAnyAreaUnloaded(List<int[]> areas) {
+        if (areas == null || areas.isEmpty()) return false;
+        Minecraft mc = Minecraft.getInstance();
+        if (mc == null || mc.level == null) return false;
+        for (int[] b : areas) {
+            if (b == null || b.length < 6) continue;
+            BlockPos c = new BlockPos((b[0] + b[3]) / 2, (b[1] + b[4]) / 2, (b[2] + b[5]) / 2);
+            if (!mc.level.hasChunkAt(c)) return true;
+        }
+        return false;
     }
 
     /** Returns true if {@code pos} is unloaded or currently holds a chest/barrel/shulker box. */

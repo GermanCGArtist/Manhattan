@@ -1728,6 +1728,11 @@ public class QueueMod implements ClientModInitializer {
         return wrapAction(new Actions.Chest(op, chestPos), () -> 0, null);
     }
 
+    public static boolean hasItemsToDump() {
+        Minecraft mc = Minecraft.getInstance();
+        return mc != null && mc.player != null && ChestProcess.hasItemsToDump(mc.player);
+    }
+
     public static PriorityScheduler.ActionHandle projectCreateChestGetHandle(BlockPos chestPos, Item item, int count, boolean upto, boolean soft) {
         ChestOp op = new ChestOp("at " + chestPos.toShortString(), ChestOp.Kind.GET, item, count, upto, soft);
         return wrapAction(new Actions.Chest(op, chestPos), () -> 0, null);
