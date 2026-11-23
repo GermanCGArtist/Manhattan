@@ -1160,7 +1160,16 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
         }
 
         if (stepFactories.isEmpty()) {
-            baseTripCooldownTicks = 60;
+            if (!fetchItems.isEmpty()) {
+                baseTripFailStreak = Math.min(5, baseTripFailStreak + 1);
+                baseTripCooldownTicks = Math.min(20 * 300, 20 * 30 * (1 << (baseTripFailStreak - 1)));
+                String itemList = plan.materialsToFetch().keySet().stream().limit(4)
+                        .collect(java.util.stream.Collectors.joining(", "));
+                QueueMod.projectLog("No Build Supply chests currently have [" + itemList
+                        + "] — waiting " + (baseTripCooldownTicks / 20) + "s (refill chests or place new shulkers).");
+            } else {
+                baseTripCooldownTicks = 20 * 15;
+            }
             return null;
         }
 
