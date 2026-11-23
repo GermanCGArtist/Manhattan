@@ -199,7 +199,37 @@ public final class SchemProcess {
         Schem.Counts c = Schem.count(p, resolveActiveMode(), level, box);
         if (c.items.isEmpty()) return Map.of();
         Map<String, Integer> out = new LinkedHashMap<>();
-        c.items.forEach((it, n) -> out.put(Schem.itemName(it), n));
+        // Prioritize items needed by the currently active phase so an out-of-stock earlier phase
+        // (e.g. stone_bricks in FULL) never starves Phase 2/3 items (chests, hoppers, beds, torches).
+        Phase curPhase = (QueueMod.schem != null && QueueMod.schem.working
+                && QueueMod.schem.pi >= 0 && QueueMod.schem.pi < QueueMod.schem.phases.size())
+                ? QueueMod.schem.phases.get(QueueMod.schem.pi)
+                : null;
+        if (curPhase != null) {
+            BlockPos.MutableBlockPos mp = new BlockPos.MutableBlockPos();
+            int x0 = box == null ? 0 : Math.max(0, box.minX() - p.min.getX());
+            int x1 = box == null ? p.sx - 1 : Math.min(p.sx - 1, box.maxX() - p.min.getX());
+            int y0 = box == null ? 0 : Math.max(0, box.minY() - p.min.getY());
+            int y1 = box == null ? p.sy - 1 : Math.min(p.sy - 1, box.maxY() - p.min.getY());
+            int z0 = box == null ? 0 : Math.max(0, box.minZ() - p.min.getZ());
+            int z1 = box == null ? p.sz - 1 : Math.min(p.sz - 1, box.maxZ() - p.min.getZ());
+            Mode m = resolveActiveMode();
+            for (int y = y0; y <= y1; y++) for (int z = z0; z <= z1; z++) for (int x = x0; x <= x1; x++) {
+                int i = p.idx(x, y, z);
+                BlockState d = p.st[i];
+                if (d == null || d.isAir() || p.excluded.get(i)) continue;
+                mp.set(p.min.getX() + x, p.min.getY() + y, p.min.getZ() + z);
+                if (!level.hasChunkAt(mp)) continue;
+                BlockState cur = Schem.norm(level.getBlockState(mp));
+                if (cur.equals(d) || Schem.phaseAt(p, i, d, cur) != curPhase || !Schem.todo(p, i, m, d, cur)) continue;
+                Object[] cost = Schem.cost(d);
+                if (cost != null) {
+                    String name = Schem.itemName((Item) cost[0]);
+                    out.merge(name, (Integer) cost[1], Integer::sum);
+                }
+            }
+        }
+        c.items.forEach((it, n) -> out.putIfAbsent(Schem.itemName(it), n));
         return out;
     }
 
