@@ -45,7 +45,7 @@ final class SchemPlacer {
     private static final double REACH = 4.4;
     private static final int MAX_BREAKS = 2, MAX_CLICKS = 3;
 
-    private record Cand(BlockPos against, Direction face, Vec3 hit, float yaw, float pitch) {}
+    private record Cand(BlockPos against, Direction face, Vec3 hit, float yaw, float pitch, boolean sneak) {}
 
     private enum Stage { APPROACH, BREAK, AIM, VERIFY }
 
@@ -166,9 +166,11 @@ final class SchemPlacer {
 
     private static BlockState simulate(Level level, LocalPlayer p, Block block, ItemStack stack, Cand c) {
         float oy = p.getYRot(), ox = p.getXRot();
+        boolean os = p.isShiftKeyDown();
         try {
             p.setYRot(c.yaw());
             p.setXRot(c.pitch());
+            p.setShiftKeyDown(c.sneak());
             BlockPlaceContext ctx = new BlockPlaceContext(level, p, InteractionHand.MAIN_HAND, stack, new BlockHitResult(c.hit(), c.face(), c.against(), false));
             if (!ctx.canPlace()) return null;
             return block.getStateForPlacement(ctx);
@@ -177,6 +179,7 @@ final class SchemPlacer {
         } finally {
             p.setYRot(oy);
             p.setXRot(ox);
+            p.setShiftKeyDown(os);
         }
     }
 
@@ -189,16 +192,17 @@ final class SchemPlacer {
         List<Cand> out = new ArrayList<>();
         if (clearing) {
             for (Direction d : Direction.values()) {
-                out.add(new Cand(cur, d, faceCenter(cur, d), 0, 0));
+                out.add(new Cand(cur, d, faceCenter(cur, d), 0, 0, false));
             }
             return out;
         }
         if (aimState != null && aimState.hasProperty(BlockStateProperties.SLAB_TYPE) && level.getBlockState(cur).is(aimState.getBlock())) {
-            out.add(new Cand(cur, Direction.UP, faceCenter(cur, Direction.UP), 0, 90f));   // the second slab: click the top of the first
+            out.add(new Cand(cur, Direction.UP, faceCenter(cur, Direction.UP), 0, 90f, false));   // the second slab: click the top of the first
             return out;
         }
         ItemStack stack = new ItemStack(item);
         Block block = aimState.getBlock();
+        boolean isChest = block instanceof net.minecraft.world.level.block.ChestBlock;
         float[] pitches = {0f, 60f, -60f, 90f, -90f};
         for (Direction dir : Direction.values()) {
             BlockPos n = cur.relative(dir);
@@ -212,15 +216,20 @@ final class SchemPlacer {
                 hits.add(center.add(0, 0.25, 0));
                 hits.add(center.add(0, -0.25, 0));
             }
-            for (Vec3 hit : hits) {
-                for (int i = 0; i < 16; i++) {
-                    float yaw = i * 22.5f;
-                    for (float pitch : pitches) {
-                        Cand c = new Cand(n, face, hit, yaw, pitch);
-                        BlockState s = simulate(level, p, block, stack, c);
-                        if (s != null && Schem.norm(s).equals(aimState)) {
-                            out.add(c);
-                            break;
+            boolean interactive = isInteractive(ns.getBlock());
+            boolean[] sneakModes = interactive ? new boolean[]{true}
+                    : (isChest ? new boolean[]{true, false} : new boolean[]{false});
+            for (boolean snk : sneakModes) {
+                for (Vec3 hit : hits) {
+                    for (int i = 0; i < 16; i++) {
+                        float yaw = i * 22.5f;
+                        for (float pitch : pitches) {
+                            Cand c = new Cand(n, face, hit, yaw, pitch, snk);
+                            BlockState s = simulate(level, p, block, stack, c);
+                            if (s != null && Schem.norm(s).equals(aimState)) {
+                                out.add(c);
+                                break;
+                            }
                         }
                     }
                 }
@@ -367,6 +376,23 @@ final class SchemPlacer {
         if (item == Items.AIR) { fail("has no item"); return; }
         if (want.hasProperty(BlockStateProperties.SLAB_TYPE) && want.getValue(BlockStateProperties.SLAB_TYPE) == SlabType.DOUBLE) {
             aimState = want.setValue(BlockStateProperties.SLAB_TYPE, SlabType.BOTTOM);   // first the lower slab, then the second on top
+        } else if (want.getBlock() instanceof net.minecraft.world.level.block.ChestBlock
+                && want.hasProperty(net.minecraft.world.level.block.ChestBlock.TYPE)) {
+            var wantType = want.getValue(net.minecraft.world.level.block.ChestBlock.TYPE);
+            if (wantType != net.minecraft.world.level.block.state.properties.ChestType.SINGLE) {
+                BlockPos partner = cur.relative(net.minecraft.world.level.block.ChestBlock.getConnectedDirection(want));
+                BlockState ps = level.getBlockState(partner);
+                boolean partnerReady = ps.is(want.getBlock())
+                        && ps.hasProperty(net.minecraft.world.level.block.ChestBlock.FACING)
+                        && ps.getValue(net.minecraft.world.level.block.ChestBlock.FACING)
+                                == want.getValue(net.minecraft.world.level.block.ChestBlock.FACING);
+                if (!partnerReady) {
+                    // First half of a double chest: place as SINGLE first (sneak prevents merging with wrong neighbor);
+                    // placing the partner next will pair both halves into the exact LEFT/RIGHT double chest.
+                    aimState = want.setValue(net.minecraft.world.level.block.ChestBlock.TYPE,
+                            net.minecraft.world.level.block.state.properties.ChestType.SINGLE);
+                }
+            }
         }
         if (slotOf(p, item) < 0) {
             if (SchemProcess.shouldYieldForMaterialFetch() && materialWaitTicks < 40) {
@@ -506,7 +532,7 @@ final class SchemPlacer {
                 }
                 materialWaitTicks = 0;
                 BodyController.INSTANCE.acquire(mc, MOTOR_OWNER);
-                boolean sneak = needsSneak(level, chosen.against(), want);
+                boolean sneak = chosen.sneak();
                 setSneak(mc, p, sneak);
                 if (!aim(p, chosen.yaw(), chosen.pitch())) { turned = 0; return false; }
                 if (++turned < (sneak ? 3 : 2)) return false;   // let rotation + sneak packet reach server before clicking
@@ -527,7 +553,14 @@ final class SchemPlacer {
                 BlockState s = level.getBlockState(cur);
                 BlockState n = Schem.norm(s);
                 if (n.equals(want)) { placed++; cur = null; return false; }
-                if (n.equals(aimState) && !aimState.equals(want)) {   // the lower slab is in: now the second one
+                if (n.equals(aimState) && !aimState.equals(want)) {
+                    if (want.getBlock() instanceof net.minecraft.world.level.block.ChestBlock) {
+                        // First half of a double chest placed as SINGLE: done here, partner half will pair it!
+                        placed++;
+                        cur = null;
+                        return false;
+                    }
+                    // the lower slab is in: now the second one
                     aimState = want;
                     cands = null;
                     chosen = null;
