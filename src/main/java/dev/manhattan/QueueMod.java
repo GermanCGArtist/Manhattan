@@ -1536,10 +1536,58 @@ public class QueueMod implements ClientModInitializer {
             schem.setChunkBounds(null);
             act = GameBuiltins.schemFeature(pls, finalMode, null);
         }
+        final long[] lastDeficitMs = {0L};
+        final java.util.concurrent.atomic.AtomicReference<Map<String, Integer>> cachedDeficit =
+                new java.util.concurrent.atomic.AtomicReference<>(Map.of());
         return wrapAction(act, () -> {
             if (act instanceof ChunkRunner cr) return cr.remainingWork();
             return (int) Math.round(Math.max(0.0, schem.result()));
-        }, null);
+        }, () -> {
+            long now = System.currentTimeMillis();
+            if (now - lastDeficitMs[0] < 1000L) return cachedDeficit.get();
+            lastDeficitMs[0] = now;
+            Minecraft mc = Minecraft.getInstance();
+            if (mc == null || mc.level == null || mc.player == null) {
+                cachedDeficit.set(Map.of());
+                return Map.of();
+            }
+            ChunkGrid.ColumnBox box = (act instanceof ChunkRunner cr) ? cr.currentChunk() : null;
+            Map<String, Integer> required = SchemProcess.requiredItemsIn(mc.level, box);
+            if (required.isEmpty()) {
+                cachedDeficit.set(Map.of());
+                return Map.of();
+            }
+            int freeSlots = 0;
+            var inv = mc.player.getInventory();
+            for (int i = 0; i < 36; i++) {
+                if (inv.getItem(i).isEmpty()) freeSlots++;
+            }
+            int budgetSlots = Math.max(1, freeSlots - 1);
+            Map<String, Integer> deficit = new java.util.LinkedHashMap<>();
+            for (var e : required.entrySet()) {
+                if (budgetSlots <= 0) break;
+                String itemName = e.getKey();
+                int need = e.getValue() == null ? 0 : e.getValue();
+                if (itemName == null || itemName.isBlank() || need <= 0) continue;
+                Item item = ChestOp.itemOf(itemName);
+                if (item == null) continue;
+                int have = 0;
+                for (int i = 0; i < 36; i++) {
+                    var st = inv.getItem(i);
+                    if (!st.isEmpty() && st.is(item)) have += st.getCount();
+                }
+                if (have > 0) continue; // still have stock on hand; place it before making a base trip
+                int maxStack = Math.max(1, item.getDefaultMaxStackSize());
+                int maxForItem = Math.min(need, Math.min(maxStack * 4, maxStack * budgetSlots));
+                if (maxForItem > 0) {
+                    deficit.put(itemName, maxForItem);
+                    int slotsUsed = (maxForItem + maxStack - 1) / maxStack;
+                    budgetSlots -= slotsUsed;
+                }
+            }
+            cachedDeficit.set(deficit);
+            return deficit;
+        });
     }
 
     public static PriorityScheduler.ActionHandle projectCreateMineHandle(List<String> mineBlocks, List<int[]> boxes) {

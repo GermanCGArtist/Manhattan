@@ -245,11 +245,14 @@ final class Util {
     }
 
     private static final int MAX_AREA_SCAN_VOLUME = 65_536;
+    private static final java.util.Map<String, java.util.List<BlockPos>> areaChestCache =
+            new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
      * Collects all unique storage container positions ({@code ChestBlock}, {@code BarrelBlock}, {@code ShulkerBoxBlock})
      * from explicit point coordinates plus live loaded blocks inside 6-element area boxes {@code [x1,y1,z1,x2,y2,z2]}.
      * Double chests are deduplicated to one canonical half so bots never visit both halves of the same chest.
+     * When a storage area box is currently in unloaded chunks, falls back to cached discoveries and {@link ChestIndex}.
      */
     static java.util.List<BlockPos> scanStorageAreas(
             net.minecraft.world.level.Level level,
@@ -265,7 +268,8 @@ final class Util {
                 addStorageIfCanonical(level, bp, out, seenDoubleHalves, true);
             }
         }
-        if (level != null && areas != null) {
+        if (areas != null && !areas.isEmpty()) {
+            String dim = level != null ? level.dimension().identifier().toString() : "unknown";
             BlockPos.MutableBlockPos mp = new BlockPos.MutableBlockPos();
             for (int[] box : areas) {
                 if (box == null || box.length < 6) continue;
@@ -274,18 +278,41 @@ final class Util {
                 int z1 = Math.min(box[2], box[5]), z2 = Math.max(box[2], box[5]);
                 long vol = (long) (x2 - x1 + 1) * (y2 - y1 + 1) * (z2 - z1 + 1);
                 if (vol <= 0 || vol > MAX_AREA_SCAN_VOLUME) continue;
-                for (int y = y1; y <= y2; y++) {
-                    for (int z = z1; z <= z2; z++) {
-                        for (int x = x1; x <= x2; x++) {
-                            mp.set(x, y, z);
-                            if (!level.hasChunkAt(mp)) continue;
-                            var st = level.getBlockState(mp);
-                            var b = st.getBlock();
-                            if (b instanceof net.minecraft.world.level.block.ChestBlock
-                                    || b instanceof net.minecraft.world.level.block.BarrelBlock
-                                    || b instanceof net.minecraft.world.level.block.ShulkerBoxBlock) {
-                                addStorageIfCanonical(level, mp.immutable(), out, seenDoubleHalves, false);
+                String boxKey = dim + ":" + x1 + "," + y1 + "," + z1 + ":" + x2 + "," + y2 + "," + z2;
+
+                boolean anyLoaded = false;
+                java.util.LinkedHashSet<BlockPos> boxFound = new java.util.LinkedHashSet<>();
+                if (level != null) {
+                    for (int y = y1; y <= y2; y++) {
+                        for (int z = z1; z <= z2; z++) {
+                            for (int x = x1; x <= x2; x++) {
+                                mp.set(x, y, z);
+                                if (!level.hasChunkAt(mp)) continue;
+                                anyLoaded = true;
+                                var st = level.getBlockState(mp);
+                                var b = st.getBlock();
+                                if (b instanceof net.minecraft.world.level.block.ChestBlock
+                                        || b instanceof net.minecraft.world.level.block.BarrelBlock
+                                        || b instanceof net.minecraft.world.level.block.ShulkerBoxBlock) {
+                                    BlockPos imm = mp.immutable();
+                                    addStorageIfCanonical(level, imm, boxFound, seenDoubleHalves, false);
+                                }
                             }
+                        }
+                    }
+                }
+                if (anyLoaded) {
+                    areaChestCache.put(boxKey, new java.util.ArrayList<>(boxFound));
+                    out.addAll(boxFound);
+                } else {
+                    // Unloaded chunks: use cached scan results + any ChestIndex entries inside this box
+                    java.util.List<BlockPos> cached = areaChestCache.get(boxKey);
+                    if (cached != null) out.addAll(cached);
+                    Minecraft mc = null;
+                    try { mc = Minecraft.getInstance(); } catch (Throwable ignored) {}
+                    for (ChestIndex.Entry ce : ChestIndex.all(mc)) {
+                        if (ce.x >= x1 && ce.x <= x2 && ce.y >= y1 && ce.y <= y2 && ce.z >= z1 && ce.z <= z2) {
+                            out.add(ce.pos());
                         }
                     }
                 }

@@ -141,7 +141,7 @@ public final class SchemProcess {
     }
 
     public static Map<String, Integer> requiredItemsIn(Level level, ChunkGrid.ColumnBox box) {
-        if (level == null || box == null) return Map.of();
+        if (level == null) return Map.of();
         Plan p = resolveActivePlan();
         if (p == null) return Map.of();
         Schem.Counts c = Schem.count(p, resolveActiveMode(), level, box);

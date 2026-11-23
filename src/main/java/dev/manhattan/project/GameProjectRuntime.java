@@ -1089,6 +1089,16 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
                 && !plan.materialsToFetch().isEmpty()
                 && (proj.places.hasAnyMaterialStorage() || proj.places.hasAnyScaffoldStorage())) {
             List<BlockPos> allMaterialChests = resolveMaterialAndScaffoldChests(proj.places);
+            if (allMaterialChests.isEmpty() && (!proj.places.materialAreas.isEmpty() || !proj.places.scaffoldAreas.isEmpty())) {
+                // Storage area chunks are currently unloaded and never scanned yet: walk near the area first so chunks load!
+                int[] box = !proj.places.materialAreas.isEmpty()
+                        ? proj.places.materialAreas.get(0)
+                        : proj.places.scaffoldAreas.get(0);
+                if (box != null && box.length >= 6) {
+                    BlockPos areaCenter = new BlockPos((box[0] + box[3]) / 2, (box[1] + box[4]) / 2, (box[2] + box[5]) / 2);
+                    stepFactories.add(() -> new WalkNearHandle(areaCenter, 8));
+                }
+            }
             for (var entry : plan.materialsToFetch().entrySet()) {
                 String itemName = entry.getKey();
                 int qty = entry.getValue() == null ? 0 : entry.getValue();
@@ -1096,12 +1106,31 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
                 Item item = QueueMod.projectResolveItem(itemName);
                 if (item == null) continue;
                 fetchItems.add(item);
-                List<BlockPos> chests = orderMaterialChestsBlockPos(allMaterialChests, item);
-                for (BlockPos chestPos : chests) {
+                if (!allMaterialChests.isEmpty()) {
+                    List<BlockPos> chests = orderMaterialChestsBlockPos(allMaterialChests, item);
+                    for (BlockPos chestPos : chests) {
+                        stepFactories.add(() -> {
+                            int needNow = Math.max(0, qty - countExactItem(item));
+                            if (needNow <= 0) return null;
+                            return QueueMod.projectCreateChestGetHandle(chestPos, item, needNow, false, true);
+                        });
+                    }
+                } else {
+                    // Dynamic post-walk fetch once the storage area's chunks are loaded
                     stepFactories.add(() -> {
                         int needNow = Math.max(0, qty - countExactItem(item));
                         if (needNow <= 0) return null;
-                        return QueueMod.projectCreateChestGetHandle(chestPos, item, needNow, false, true);
+                        List<BlockPos> scanned = orderMaterialChestsBlockPos(resolveMaterialAndScaffoldChests(proj.places), item);
+                        if (scanned.isEmpty()) return null;
+                        List<Supplier<PriorityScheduler.ActionHandle>> inner = new ArrayList<>();
+                        for (BlockPos cp : scanned) {
+                            inner.add(() -> {
+                                int rem = Math.max(0, qty - countExactItem(item));
+                                if (rem <= 0) return null;
+                                return QueueMod.projectCreateChestGetHandle(cp, item, rem, false, true);
+                            });
+                        }
+                        return new SequentialHandle(inner, null, null);
                     });
                 }
             }
@@ -1770,6 +1799,65 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
         List<BlockPos> out = new ArrayList<>(cands.size());
         for (Cand c : cands) out.add(c.pos);
         return out;
+    }
+
+    private static final class WalkNearHandle implements PriorityScheduler.ActionHandle {
+        private final BlockPos target;
+        private final int radius;
+        private boolean started, done, suspended;
+        private int ticks;
+        private static final int TIMEOUT_TICKS = 20 * 180;
+
+        WalkNearHandle(BlockPos target, int radius) {
+            this.target = target;
+            this.radius = Math.max(2, radius);
+        }
+
+        @Override public boolean isDone() { return done; }
+        @Override public String error() { return null; }
+        @Override public int remainingWork() { return done ? 0 : 1; }
+
+        @Override
+        public void cancel() {
+            done = true;
+            EngineSelector.current().cancel();
+        }
+
+        @Override
+        public void suspend() {
+            suspended = true;
+            EngineSelector.current().cancel();
+        }
+
+        @Override
+        public void resume() {
+            suspended = false;
+            started = false;
+        }
+
+        @Override
+        public void tick() {
+            if (done || suspended) return;
+            Minecraft mc = Minecraft.getInstance();
+            if (mc == null || mc.player == null || mc.level == null) {
+                done = true;
+                return;
+            }
+            if (mc.level.hasChunkAt(target) && target.distSqr(mc.player.blockPosition()) <= (long) radius * radius) {
+                EngineSelector.current().cancel();
+                done = true;
+                return;
+            }
+            if (++ticks > TIMEOUT_TICKS) {
+                EngineSelector.current().cancel();
+                done = true;
+                return;
+            }
+            if (!started || !EngineSelector.current().isBusy()) {
+                started = true;
+                EngineSelector.current().goTo(dev.midtown.api.GoalSpec.near(target, radius));
+            }
+        }
     }
 
     private static PriorityScheduler.ActionHandle failedHandle(String error) {
