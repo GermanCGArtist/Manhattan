@@ -60,7 +60,8 @@ final class SchemPlacer {
     private Stage stage;
     private Cand chosen;
     private List<Cand> cands;
-    private int ticks, stageTicks, attempts, clicks, stagnant, turned, walkCooldown, materialWaitTicks;
+    private int ticks, stageTicks, attempts, clicks, stagnant, turned, walkCooldown, materialWaitTicks, walkStallTicks;
+    private double walkBestDistSq = Double.MAX_VALUE;
     private boolean breaking, sneakingForPlace;
     private BlockPos breakPos, lastSpot;
     private final java.util.Set<BlockPos> badSpots = new java.util.HashSet<>();
@@ -489,19 +490,40 @@ final class SchemPlacer {
                 boolean inside = !clearing && (feet.equals(cur) || feet.above().equals(cur));
                 chosen = inside ? null : clearing ? null : reachable(level, p);
                 if (chosen == null) {
-                    if (stageTicks > 20 * 40) { fail("could not get into reach"); return false; }
-                    if (walkCooldown == 0 && !dev.midtown.api.EngineSelector.current().isBusy()) {
-                        walkCooldown = 10;
+                    if (stageTicks > 20 * 20) { fail("could not get into reach"); return false; }
+                    boolean engineBusy = dev.midtown.api.EngineSelector.current().isBusy();
+                    if (engineBusy && lastSpot != null) {
+                        double dSq = p.position().distanceToSqr(lastSpot.getX() + 0.5, lastSpot.getY(), lastSpot.getZ() + 0.5);
+                        if (dSq < walkBestDistSq - 0.15) {
+                            walkBestDistSq = dSq;
+                            walkStallTicks = 0;
+                        } else if (++walkStallTicks >= 60) {
+                            // Stalled for 3s trying to reach lastSpot: blacklist it and immediately pick another standSpot
+                            dev.midtown.api.EngineSelector.current().cancel();
+                            badSpots.add(lastSpot);
+                            lastSpot = null;
+                            walkStallTicks = 0;
+                            walkBestDistSq = Double.MAX_VALUE;
+                            walkCooldown = 0;
+                            engineBusy = false;
+                        }
+                    }
+                    if (walkCooldown == 0 && !engineBusy) {
+                        walkCooldown = 6;
                         if (lastSpot != null) badSpots.add(lastSpot);   // it walked there (or tried) and still no reach: not that one
                         BlockPos spot = standSpot(level, p);
                         lastSpot = spot;
                         if (spot == null) { fail("no spot to stand on with a clear line to it"); return false; }
+                        walkStallTicks = 0;
+                        walkBestDistSq = p.position().distanceToSqr(spot.getX() + 0.5, spot.getY(), spot.getZ() + 0.5);
                         System.out.println("[Queue] schem: " + what() + " at " + cur.toShortString() + ": walking to " + spot.toShortString());
                         BodyController.INSTANCE.releaseIfOwner(mc, MOTOR_OWNER);
                         dev.midtown.api.EngineSelector.current().goTo(dev.midtown.api.GoalSpec.exact(spot));
                     }
                     return false;
                 }
+                walkStallTicks = 0;
+                walkBestDistSq = Double.MAX_VALUE;
                 dev.midtown.api.EngineSelector.current().cancel();
                 breakPos = cur;
                 stage = !Schem.replaceable(level.getBlockState(cur)) && !wantsMerge(level) ? Stage.BREAK : Stage.AIM;

@@ -228,6 +228,9 @@ public final class SchemProcess {
                     out.merge(name, (Integer) cost[1], Integer::sum);
                 }
             }
+            // While actively building a phase, only report that phase's items so skipped earlier phases
+            // (e.g. out-of-stock stone_bricks from Phase 1) never interrupt Phase 2/3 with base-trip resets.
+            return out;
         }
         c.items.forEach((it, n) -> out.putIfAbsent(Schem.itemName(it), n));
         return out;
