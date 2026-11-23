@@ -739,8 +739,9 @@ public class TestBridge implements ClientModInitializer {
                         emitProjectBenchmark(scenario, pass, elapsedMs);
                         benchState = BenchState.DONE;
                         benchTicks = 0;
-                    } else if (benchTicks >= 20 * 360) {
+                    } else if (benchTicks >= ("project_schem_standartsetup_c".equals(scenario) ? 20 * 2100 : 20 * 360)) {
                         GameProjectRuntime.instance().stopQueue("Benchmark timeout");
+                        verifyProjectBenchmark(mc, scenario, benchProject);
                         long elapsedMs = Math.max(0L, System.currentTimeMillis() - benchStartMs);
                         emitProjectBenchmark(scenario, false, elapsedMs);
                         benchState = BenchState.DONE;
@@ -1104,12 +1105,35 @@ public class TestBridge implements ClientModInitializer {
                 cmds.add("give @s dirt 64");
                 cmds.add("effect give @s haste 10000 255 true");
             }
+            case "project_schem_standartsetup_c" -> {
+                cmds.add("fill 104 -60 82 142 -50 120 air");
+                addStockedChest(cmds, 96, -60, 92, "minecraft:stone_bricks", 20, 64);
+                addStockedChest(cmds, 96, -60, 94, "minecraft:smooth_stone", 16, 64);
+                addStockedChest(cmds, 96, -60, 96, "minecraft:chest", 10, 64);
+                addStockedChest(cmds, 96, -60, 98, "minecraft:hopper", 5, 64);
+                addStockedChest(cmds, 96, -60, 100, "minecraft:torch", 3, 64);
+                addStockedChest(cmds, 96, -60, 102, "minecraft:white_bed", 12, 1);
+                cmds.add("setblock 92 -60 100 chest");
+                addStockedChest(cmds, 92, -60, 102, "minecraft:dirt", 4, 64);
+                cmds.add("setblock 92 -60 104 red_bed");
+                cmds.add("give @s diamond_pickaxe[unbreakable={}] 1");
+                cmds.add("give @s diamond_axe[unbreakable={}] 1");
+                cmds.add("give @s diamond_shovel[unbreakable={}] 1");
+                cmds.add("give @s dirt 64");
+            }
             default -> { }
         }
         cmds.add("tp @s 100 -60 100 0 0");
         if (scenario.equals("nav_bridge_off_pillar")) cmds.add("tp @s 106.5 -57 98.5 0 0");
         for (String c : cmds) {
             mc.player.connection.sendCommand(c);
+        }
+    }
+
+    private static void addStockedChest(List<String> cmds, int x, int y, int z, String itemId, int slots, int count) {
+        cmds.add("setblock " + x + " " + y + " " + z + " chest");
+        for (int i = 0; i < slots; i++) {
+            cmds.add("item replace block " + x + " " + y + " " + z + " container." + i + " with " + itemId + " " + count);
         }
     }
 
@@ -1201,6 +1225,10 @@ public class TestBridge implements ClientModInitializer {
                             && mc.level.getBlockState(new BlockPos(114, -60, 103)).is(Blocks.OAK_LOG)
                             && mc.level.getBlockState(new BlockPos(114, -54, 103)).is(Blocks.OAK_LOG)
                             && mc.level.getBlockState(new BlockPos(116, -53, 105)).is(Blocks.OAK_LEAVES);
+            case "project_schem_standartsetup_c" ->
+                    mc.level.getBlockState(new BlockPos(96, -60, 92)).is(Blocks.CHEST)
+                            && mc.level.getBlockState(new BlockPos(96, -60, 102)).is(Blocks.CHEST)
+                            && mc.level.getBlockState(new BlockPos(92, -60, 104)).getBlock() instanceof net.minecraft.world.level.block.BedBlock;
             default -> true;
         };
     }
@@ -1478,7 +1506,8 @@ public class TestBridge implements ClientModInitializer {
                  "project_partial_stop_gate",
                  "midtown_body_interrupt",
                  "chunk_no_selection_clobber",
-                 "project_clear_trees_zones" -> true;
+                 "project_clear_trees_zones",
+                 "project_schem_standartsetup_c" -> true;
             default -> false;
         };
     }
@@ -1625,6 +1654,29 @@ public class TestBridge implements ClientModInitializer {
                 t1.areaName = "woods_test";
                 p.tasks.add(t1);
             }
+            case "project_schem_standartsetup_c" -> {
+                String schemPath = System.getProperty(
+                        "manhattan.schemFile",
+                        "C:\\Users\\PC-Julian\\AppData\\Roaming\\ModrinthApp\\profiles\\Bestes_projekt_1.26.3\\schematics\\building parts\\BaritoneBasics\\manhattan_standartsetup_c.litematic"
+                );
+                Project.EmbeddedSchematic es = new Project.EmbeddedSchematic();
+                es.name = "manhattan_standartsetup_c";
+                es.filePath = schemPath;
+                es.origin = new int[]{106, -60, 84};
+                es.enabled = true;
+                p.embeddedSchematics.add(es);
+
+                p.places.dumpChest = new int[]{92, -60, 100};
+                p.places.scaffoldChest = new int[]{92, -60, 102};
+                p.places.bed = new int[]{92, -60, 104};
+                p.places.materialAreas.add(new int[]{95, -60, 91, 97, -60, 103});
+
+                ProjectTask t1 = new ProjectTask("t_schem", "Build standartsetup_c", ProjectTask.Kind.SCHEM_BUILD);
+                t1.placement = "manhattan_standartsetup_c";
+                t1.schemMode = "add";
+                t1.schemMissing = "skip";
+                p.tasks.add(t1);
+            }
             default -> {
                 return null;
             }
@@ -1707,6 +1759,43 @@ public class TestBridge implements ClientModInitializer {
                         + " taskDone=" + taskDone);
                 yield noOakLogs && keepMeOk && zonesClean && allowedZoneCleared
                         && autoSweepRestored && bodyIdle && taskDone;
+            }
+            case "project_schem_standartsetup_c" -> {
+                TaskQueue.TaskLedger.State st = rt.taskState("t_schem");
+                String[] err = new String[1];
+                List<SchemSource.Placement> pls = SchemCmd.select("manhattan_standartsetup_c", err);
+                if (pls == null || pls.isEmpty()) {
+                    System.out.println("[testbridge] project_schem_standartsetup_c verify: placement missing (" + err[0] + ")");
+                    yield false;
+                }
+                try {
+                    Schem.Plan plan = Schem.plan(pls, err);
+                    if (plan == null) {
+                        System.out.println("[testbridge] project_schem_standartsetup_c verify: plan null (" + err[0] + ")");
+                        yield false;
+                    }
+                    java.util.Map<Long, Schem.Why> left = Schem.leftCells(plan, Schem.Mode.ADD, mc.level);
+                    java.util.Map<String, Integer> byBlock = new java.util.LinkedHashMap<>();
+                    int shown = 0;
+                    for (var entry : left.entrySet()) {
+                        BlockPos bp = BlockPos.of(entry.getKey());
+                        int idx = plan.idx(bp.getX() - plan.min.getX(), bp.getY() - plan.min.getY(), bp.getZ() - plan.min.getZ());
+                        var want = plan.st[idx];
+                        var cur = Schem.norm(mc.level.getBlockState(bp));
+                        String key = net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(want.getBlock()).getPath();
+                        byBlock.merge(key, 1, Integer::sum);
+                        if (shown < 20) {
+                            System.out.println("[testbridge]   left #" + (++shown) + " at " + bp.toShortString()
+                                    + " want=" + want + " actual=" + cur + " why=" + entry.getValue().reason());
+                        }
+                    }
+                    System.out.println("[testbridge] project_schem_standartsetup_c verify: taskState=" + st
+                            + " leftTotal=" + left.size() + " byBlock=" + byBlock);
+                    yield st == TaskQueue.TaskLedger.State.DONE && left.isEmpty();
+                } catch (Exception e) {
+                    System.out.println("[testbridge] project_schem_standartsetup_c verify failed: " + e);
+                    yield false;
+                }
             }
             default -> false;
         };

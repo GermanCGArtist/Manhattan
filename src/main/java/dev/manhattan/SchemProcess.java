@@ -317,7 +317,7 @@ public final class SchemProcess {
     private BlockState mtWant;
     private Item mtItem;
     private boolean mtMoving, mtBreaking;
-    private int mtMoveTicks, mtNoProgress, mtBreakTicks, mtPlaced, mtStallPass, mtSpotRetries;
+    private int mtMoveTicks, mtNoProgress, mtBreakTicks, mtPlaceTicks, mtPlaced, mtStallPass, mtSpotRetries;
     private double mtBestDist;
     private Map<Item, Integer> mtNeededCounts = Map.of();
 
@@ -661,6 +661,7 @@ public final class SchemProcess {
         mtCur = null;
         mtStand = null;
         mtSpotRetries = 0;
+        mtPlaceTicks = 0;
     }
 
     private void mtTickPhase(Minecraft mc, Phase ph, boolean itemsChanged) {
@@ -702,6 +703,7 @@ public final class SchemProcess {
                 mtCur = null;
                 mtStand = null;
                 mtSpotRetries = 0;
+                mtPlaceTicks = 0;
                 if (mtMoving) {
                     EngineSelector.current().cancel();
                     mtMoving = false;
@@ -710,6 +712,7 @@ public final class SchemProcess {
                 mtCur = null;
                 mtStand = null;
                 mtSpotRetries = 0;
+                mtPlaceTicks = 0;
                 if (mtMoving) {
                     EngineSelector.current().cancel();
                     mtMoving = false;
@@ -772,7 +775,7 @@ public final class SchemProcess {
         // Avoid self-trapping: if standing inside target cell, step out first
         if (p.getBoundingBox().intersects(new AABB(mtCur))) {
             if (!mtMoving) {
-                mtStand = mtFindStandSpot(level, p, mtCur);
+                mtStand = mtFindStandSpot(level, p, mtCur, mtWant);
                 if (mtStand != null) {
                     EngineSelector.current().goTo(GoalSpec.exact(mtStand));
                     mtMoving = true;
@@ -784,12 +787,12 @@ public final class SchemProcess {
                     mtCur = null;
                 }
             } else {
-                mtPollMove(level, p, mtCur);
+                mtPollMove(level, p, mtCur, mtWant);
             }
             return;
         }
 
-        BlockPos workPos = mtHasSupportNeighbor(level, mtCur) ? mtCur : mtFindScaffoldStep(level, mtCur);
+        BlockPos workPos = mtHasSupportNeighbor(level, mtCur, mtWant) ? mtCur : mtFindScaffoldStep(level, mtCur);
         if (workPos == null) {
             mtDeferred.add(mtCur);
             mtCur = null;
@@ -799,7 +802,7 @@ public final class SchemProcess {
         if (!workPos.equals(mtCur)) {
             if (p.getBoundingBox().intersects(new AABB(workPos))) {
                 if (!mtMoving) {
-                    mtStand = mtFindStandSpot(level, p, workPos);
+                    mtStand = mtFindStandSpot(level, p, workPos, null);
                     if (mtStand != null) {
                         EngineSelector.current().goTo(GoalSpec.exact(mtStand));
                         mtMoving = true;
@@ -811,11 +814,11 @@ public final class SchemProcess {
                         mtCur = null;
                     }
                 } else {
-                    mtPollMove(level, p, workPos);
+                    mtPollMove(level, p, workPos, null);
                 }
                 return;
             }
-            BlockHitResult scaffoldHit = mtFindSupportHit(level, p, workPos);
+            BlockHitResult scaffoldHit = mtFindSupportHit(level, p, workPos, null);
             if (scaffoldHit != null && p.getEyePosition().distanceTo(scaffoldHit.getLocation()) <= MT_REACH) {
                 if (mtPlaceScaffold(mc, p, level, workPos)) {
                     mtNoProgress = 0;
@@ -829,7 +832,7 @@ public final class SchemProcess {
                 return;
             }
             if (!mtMoving) {
-                mtStand = mtFindStandSpot(level, p, workPos);
+                mtStand = mtFindStandSpot(level, p, workPos, null);
                 BlockPos supportTarget = mtFindSupportNeighbor(level, workPos);
                 GoalSpec goal = mtStand != null
                         ? GoalSpec.exact(mtStand)
@@ -840,20 +843,29 @@ public final class SchemProcess {
                 mtNoProgress = 0;
                 mtBestDist = p.getEyePosition().distanceTo(Vec3.atCenterOf(workPos));
             } else {
-                mtPollMove(level, p, workPos);
+                mtPollMove(level, p, workPos, null);
             }
             return;
         }
 
-        BlockHitResult hit = mtFindSupportHit(level, p, mtCur);
+        BlockHitResult hit = mtFindSupportHit(level, p, mtCur, mtWant);
         if (hit != null && p.getEyePosition().distanceTo(hit.getLocation()) <= MT_REACH) {
             if (mtMoving) {
                 EngineSelector.current().cancel();
                 mtMoving = false;
             }
+            if (++mtPlaceTicks > 20) {
+                mtBadSpots.add(p.blockPosition());
+                mtDeferred.add(mtCur);
+                mtCur = null;
+                mtStand = null;
+                mtPlaceTicks = 0;
+                return;
+            }
             if (!mtEquip(mc, p, mtItem)) {
                 mtDeferred.add(mtCur);
                 mtCur = null;
+                mtPlaceTicks = 0;
                 return;
             }
             if (mtAim(p, hit.getLocation())) {
@@ -862,9 +874,10 @@ public final class SchemProcess {
                     return;
                 }
                 boolean sneak = SchemPlacer.isInteractive(level.getBlockState(hit.getBlockPos()).getBlock());
-                if (sneak) {
+                if (sneak && !p.isShiftKeyDown()) {
                     if (mc.options != null) mc.options.keyShift.setDown(true);
                     p.setShiftKeyDown(true);
+                    return; // let shift=true sync to server before useItemOn
                 }
                 mc.gameMode.useItemOn(p, InteractionHand.MAIN_HAND, hit);
                 p.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
@@ -877,8 +890,8 @@ public final class SchemProcess {
         }
 
         if (!mtMoving) {
-            mtStand = mtFindStandSpot(level, p, mtCur);
-            BlockPos supportTarget = mtFindSupportNeighbor(level, mtCur);
+            mtStand = mtFindStandSpot(level, p, mtCur, mtWant);
+            BlockPos supportTarget = mtFloorOnly(mtWant) ? mtCur.below() : mtFindSupportNeighbor(level, mtCur);
             GoalSpec goal = mtStand != null
                     ? GoalSpec.exact(mtStand)
                     : GoalSpec.lineOfSight(supportTarget != null ? supportTarget : mtCur, MT_REACH - 0.3);
@@ -888,11 +901,11 @@ public final class SchemProcess {
             mtNoProgress = 0;
             mtBestDist = p.getEyePosition().distanceTo(Vec3.atCenterOf(mtCur));
         } else {
-            mtPollMove(level, p, mtCur);
+            mtPollMove(level, p, mtCur, mtWant);
         }
     }
 
-    private void mtPollMove(Level level, LocalPlayer p, BlockPos targetPos) {
+    private void mtPollMove(Level level, LocalPlayer p, BlockPos targetPos, BlockState want) {
         double dist = p.getEyePosition().distanceTo(Vec3.atCenterOf(targetPos));
         if (dist < mtBestDist - 0.5) {
             mtBestDist = dist;
@@ -904,11 +917,11 @@ public final class SchemProcess {
         if (++mtMoveTicks > MT_MOVE_TIMEOUT || mtNoProgress > MT_NO_PROGRESS || st == EngineStatus.FAILED) {
             EngineSelector.current().cancel();
             mtMoving = false;
-            if (mtFindSupportHit(level, p, targetPos) == null) {
+            if (mtFindSupportHit(level, p, targetPos, want) == null) {
                 mtBadSpots.add(p.blockPosition());
                 if (mtStand != null) mtBadSpots.add(mtStand);
                 mtStand = null;
-                if (++mtSpotRetries < 4 && mtFindStandSpot(level, p, targetPos) != null) {
+                if (++mtSpotRetries < 4 && mtFindStandSpot(level, p, targetPos, want) != null) {
                     return;
                 }
             }
@@ -917,19 +930,21 @@ public final class SchemProcess {
             mtCur = null;
             mtStand = null;
             mtSpotRetries = 0;
+            mtPlaceTicks = 0;
         } else if (st == EngineStatus.DONE) {
             EngineSelector.current().cancel();
             mtMoving = false;
-            if (mtCur != null && (mtFindSupportHit(level, p, targetPos) == null || p.getBoundingBox().intersects(new AABB(targetPos)))) {
+            if (mtCur != null && (mtFindSupportHit(level, p, targetPos, want) == null || p.getBoundingBox().intersects(new AABB(targetPos)))) {
                 mtBadSpots.add(p.blockPosition());
                 if (mtStand != null) mtBadSpots.add(mtStand);
                 mtStand = null;
-                if (mtFindSupportHit(level, p, targetPos) == null && ++mtSpotRetries < 4 && mtFindStandSpot(level, p, targetPos) != null) {
+                if (mtFindSupportHit(level, p, targetPos, want) == null && ++mtSpotRetries < 4 && mtFindStandSpot(level, p, targetPos, want) != null) {
                     return;
                 }
                 mtDeferred.add(mtCur);
                 mtCur = null;
                 mtSpotRetries = 0;
+                mtPlaceTicks = 0;
             }
         }
     }
@@ -947,7 +962,7 @@ public final class SchemProcess {
                 break;
             }
         }
-        if (lowestAir != null && mtHasSupportNeighbor(level, lowestAir)) {
+        if (lowestAir != null && mtHasSupportNeighbor(level, lowestAir, null)) {
             return lowestAir;
         }
         return null;
@@ -1028,10 +1043,10 @@ public final class SchemProcess {
             int idx = plan.idx(w.getX() - plan.min.getX(), w.getY() - plan.min.getY(), w.getZ() - plan.min.getZ());
             BlockState d = plan.st[idx];
             Item item = (Item) Schem.cost(d)[0];
-            boolean supported = mtHasSupportNeighbor(level, w);
+            boolean supported = mtHasSupportNeighbor(level, w, d);
             boolean overlaps = p.getBoundingBox().intersects(new AABB(w));
             double dist = eye.distanceTo(Vec3.atCenterOf(w));
-            boolean inReach = dist <= MT_REACH && !overlaps && mtFindSupportHit(level, p, w) != null;
+            boolean inReach = dist <= MT_REACH && !overlaps && mtFindSupportHit(level, p, w, d) != null;
 
             double score = dist;
             if (!inReach) score += 100.0;
@@ -1053,10 +1068,29 @@ public final class SchemProcess {
         mtWant = bestWant;
         mtItem = bestItem;
         mtSpotRetries = 0;
+        mtPlaceTicks = 0;
         return true;
     }
 
-    private static boolean mtHasSupportNeighbor(Level level, BlockPos pos) {
+    private static boolean mtFloorOnly(BlockState want) {
+        if (want == null) return false;
+        Block b = want.getBlock();
+        String path = net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(b).getPath();
+        return b == net.minecraft.world.level.block.Blocks.TORCH
+                || b == net.minecraft.world.level.block.Blocks.SOUL_TORCH
+                || b == net.minecraft.world.level.block.Blocks.REDSTONE_TORCH
+                || path.endsWith("_carpet") || path.endsWith("_pressure_plate")
+                || path.endsWith("_rail") || path.equals("rail")
+                || path.equals("redstone_wire") || path.equals("repeater") || path.equals("comparator")
+                || path.equals("snow") || path.endsWith("_sapling")
+                || (path.endsWith("_sign") && !path.contains("wall_") && !path.contains("hanging_"));
+    }
+
+    private static boolean mtHasSupportNeighbor(Level level, BlockPos pos, BlockState want) {
+        if (mtFloorOnly(want)) {
+            BlockState ns = level.getBlockState(pos.below());
+            return !ns.isAir() && !Schem.replaceable(ns);
+        }
         for (Direction d : Direction.values()) {
             BlockState ns = level.getBlockState(pos.relative(d));
             if (!ns.isAir() && !Schem.replaceable(ns)) return true;
@@ -1064,28 +1098,34 @@ public final class SchemProcess {
         return false;
     }
 
-    private static BlockHitResult mtFindSupportHit(Level level, LocalPlayer p, BlockPos target) {
-        return mtFindSupportHitFrom(level, p, p.getEyePosition(), target);
+    private static BlockHitResult mtFindSupportHit(Level level, LocalPlayer p, BlockPos target, BlockState want) {
+        return mtFindSupportHitFrom(level, p, p.getEyePosition(), target, want);
     }
 
-    private static BlockHitResult mtFindSupportHitFrom(Level level, LocalPlayer p, Vec3 eye, BlockPos target) {
-        for (Direction d : Direction.values()) {
+    private static BlockHitResult mtFindSupportHitFrom(Level level, LocalPlayer p, Vec3 eye, BlockPos target, BlockState want) {
+        Direction[] dirs = mtFloorOnly(want) ? new Direction[]{Direction.DOWN} : Direction.values();
+        for (Direction d : dirs) {
             BlockPos n = target.relative(d);
             BlockState ns = level.getBlockState(n);
             if (ns.isAir() || Schem.replaceable(ns)) continue;
             Direction face = d.getOpposite();
-            Vec3 hit = Vec3.atCenterOf(n).add(face.getStepX() * 0.5, face.getStepY() * 0.5, face.getStepZ() * 0.5);
+            var shape = ns.getShape(level, n);
+            AABB bb = shape.isEmpty() ? new AABB(0, 0, 0, 1, 1, 1) : shape.bounds();
+            double hx = n.getX() + (face == Direction.WEST ? bb.minX : face == Direction.EAST ? bb.maxX : (bb.minX + bb.maxX) * 0.5);
+            double hy = n.getY() + (face == Direction.DOWN ? bb.minY : face == Direction.UP ? bb.maxY : (bb.minY + bb.maxY) * 0.5);
+            double hz = n.getZ() + (face == Direction.NORTH ? bb.minZ : face == Direction.SOUTH ? bb.maxZ : (bb.minZ + bb.maxZ) * 0.5);
+            Vec3 hit = new Vec3(hx, hy, hz);
             if (eye.distanceTo(hit) > MT_REACH) continue;
             Vec3 end = hit.subtract(face.getStepX() * 0.02, face.getStepY() * 0.02, face.getStepZ() * 0.02);
-            BlockHitResult r = level.clip(new ClipContext(eye, end, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, p));
-            if (r.getType() == HitResult.Type.BLOCK && r.getBlockPos().equals(n)) {
+            BlockHitResult r = level.clip(new ClipContext(eye, end, ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, p));
+            if (r.getType() == HitResult.Type.BLOCK && r.getBlockPos().equals(n) && r.getDirection() == face) {
                 return new BlockHitResult(hit, face, n, false);
             }
         }
         return null;
     }
 
-    private BlockPos mtFindStandSpot(Level level, LocalPlayer p, BlockPos target) {
+    private BlockPos mtFindStandSpot(Level level, LocalPlayer p, BlockPos target, BlockState want) {
         BlockPos best = null;
         double bestDist = Double.MAX_VALUE;
         for (int dy = -4; dy <= 2; dy++) {
@@ -1099,7 +1139,7 @@ public final class SchemProcess {
                     Vec3 eye = new Vec3(s.getX() + 0.5, s.getY() + 1.62, s.getZ() + 0.5);
                     double eyeDist = Vec3.atCenterOf(target).distanceTo(eye);
                     if (eyeDist > MT_REACH - 0.2 || eyeDist < 1.2) continue;
-                    if (mtFindSupportHitFrom(level, p, eye, target) == null) continue;
+                    if (mtFindSupportHitFrom(level, p, eye, target, want) == null) continue;
                     double d = p.blockPosition().distSqr(s) + Math.abs(dy) * 4.0;
                     if (d < bestDist) {
                         bestDist = d;
@@ -1121,7 +1161,7 @@ public final class SchemProcess {
 
     private boolean mtPlaceScaffold(Minecraft mc, LocalPlayer p, Level level, BlockPos pos) {
         if (dev.buildtools.Api.protectedAt(pos)) return false;
-        BlockHitResult hit = mtFindSupportHit(level, p, pos);
+        BlockHitResult hit = mtFindSupportHit(level, p, pos, null);
         if (hit == null || p.getEyePosition().distanceTo(hit.getLocation()) > MT_REACH) return false;
         Item scaffoldItem = null;
         // Prefer non-schematic solid block items (hotbar first), then fallback to surplus schematic items

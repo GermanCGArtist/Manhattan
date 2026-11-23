@@ -43,6 +43,9 @@ public final class MidtownExecutor {
         }
 
         LocalPlayer player = mc.player;
+        if (player.containerMenu != player.inventoryMenu) {
+            player.closeContainer();
+        }
 
         double targetX = target.pos().getX() + 0.5;
         double targetZ = target.pos().getZ() + 0.5;
@@ -141,7 +144,21 @@ public final class MidtownExecutor {
         boolean right = moveAllowed && horizDist > moveThresh && relAngle > 25.0f && relAngle < 155.0f;
 
         boolean jump = shouldJump(player, target, horizDist, relAngle, landingMissing);
-        boolean sneak = target.sneak();
+        boolean needsSneakForPlace = false;
+        if (mc.level != null && target.targetBlock() != null) {
+            BlockPos tb = target.targetBlock();
+            if (target.action() == PathNode.ActionType.PILLAR) {
+                needsSneakForPlace = BodyController.isInteractiveSupport(mc.level.getBlockState(tb.below()).getBlock());
+            } else if (target.action() == PathNode.ActionType.BRIDGE || target.action() == PathNode.ActionType.PARKOUR) {
+                for (net.minecraft.core.Direction d : net.minecraft.core.Direction.values()) {
+                    if (BodyController.isInteractiveSupport(mc.level.getBlockState(tb.relative(d)).getBlock())) {
+                        needsSneakForPlace = true;
+                        break;
+                    }
+                }
+            }
+        }
+        boolean sneak = target.sneak() || needsSneakForPlace;
         boolean sprint = target.sprint() && forward && !sneak && !player.isInWater();
 
         body.setKeys(mc, forward, back, left, right, jump, sneak, sprint, attack, false);

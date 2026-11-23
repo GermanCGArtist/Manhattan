@@ -66,6 +66,7 @@ final class SchemPlacer {
     private BlockPos breakPos, lastSpot;
     private final java.util.Set<BlockPos> badSpots = new java.util.HashSet<>();
     private final java.util.Set<BlockPos> deferred = new java.util.HashSet<>();
+    private final java.util.Set<Integer> retriedLayers = new java.util.HashSet<>();
     private int placed;
     final List<String> failures = new ArrayList<>();
 
@@ -131,6 +132,7 @@ final class SchemPlacer {
         walkCooldown = 0;
         badSpots.clear();
         deferred.clear();
+        retriedLayers.clear();
         Level level = Minecraft.getInstance().level;
         for (int y = 0; y < plan.sy; y++) for (int z = 0; z < plan.sz; z++) for (int x = 0; x < plan.sx; x++) {
             BlockState d = plan.st[plan.idx(x, y, z)];
@@ -193,7 +195,7 @@ final class SchemPlacer {
      */
     private static Vec3 faceCenter(Level level, BlockPos n, Direction face) {
         if (level != null) {
-            var shape = level.getBlockState(n).getCollisionShape(level, n);
+            var shape = level.getBlockState(n).getShape(level, n);
             if (!shape.isEmpty()) {
                 net.minecraft.world.phys.AABB bb = shape.bounds();
                 double cx = n.getX() + (bb.minX + bb.maxX) * 0.5;
@@ -277,7 +279,7 @@ final class SchemPlacer {
     private static boolean sees(Level level, LocalPlayer p, Vec3 eye, Cand c) {
         if (eye.distanceTo(c.hit()) > REACH - 0.2) return false;
         Vec3 end = c.hit().subtract(c.face().getStepX() * 0.02, c.face().getStepY() * 0.02, c.face().getStepZ() * 0.02);
-        BlockHitResult r = level.clip(new ClipContext(eye, end, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, p));
+        BlockHitResult r = level.clip(new ClipContext(eye, end, ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, p));
         return r.getType() == HitResult.Type.BLOCK && r.getBlockPos().equals(c.against());
     }
 
@@ -389,11 +391,27 @@ final class SchemPlacer {
 
     private void next(Level level, LocalPlayer p) {
         BlockPos pick = null;
+        int minDeferredY = Integer.MAX_VALUE;
         for (BlockPos q : queue) {
-            if (deferred.contains(q)) continue;
+            if (deferred.contains(q)) {
+                if (q.getY() < minDeferredY) minDeferredY = q.getY();
+                continue;
+            }
             if (pick == null) { pick = q; continue; }
             boolean better = clearing ? q.getY() > pick.getY() : q.getY() < pick.getY();
             if (better || (q.getY() == pick.getY() && q.distSqr(p.blockPosition()) < pick.distSqr(p.blockPosition()))) pick = q;
+        }
+        // Retry deferred blocks on a lower Y layer once before building a higher Y layer that could bury them
+        if (!clearing && minDeferredY < Integer.MAX_VALUE && (pick == null || minDeferredY < pick.getY()) && !retriedLayers.contains(minDeferredY)) {
+            retriedLayers.add(minDeferredY);
+            final int retryY = minDeferredY;
+            deferred.removeIf(pos -> pos.getY() == retryY);
+            badSpots.clear();
+            pick = null;
+            for (BlockPos q : queue) {
+                if (q.getY() != retryY) continue;
+                if (pick == null || q.distSqr(p.blockPosition()) < pick.distSqr(p.blockPosition())) pick = q;
+            }
         }
         if (pick == null) {
             // Every remaining block in queue was deferred with no valid placement face: fail one and drop it so we don't spin
@@ -523,7 +541,8 @@ final class SchemPlacer {
                     }
                 }
                 BlockPos feet = p.blockPosition();
-                boolean inside = !clearing && (feet.equals(cur) || feet.above().equals(cur));
+                boolean inside = !clearing && (feet.equals(cur) || feet.above().equals(cur)
+                        || p.getBoundingBox().intersects(new net.minecraft.world.phys.AABB(cur)));
                 chosen = inside ? null : clearing ? null : reachable(level, p);
                 if (chosen == null) {
                     if (stageTicks > 20 * 20) { fail("could not get into reach"); return false; }

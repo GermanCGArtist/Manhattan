@@ -320,9 +320,49 @@ public final class BodyController {
         return mc != null && placeBlock(mc, mc.player, placePos, horizontalFirst);
     }
 
+    /** Returns true if right-clicking {@code block} without sneaking would open a GUI or interact instead of placing. */
+    public static boolean isInteractiveSupport(net.minecraft.world.level.block.Block block) {
+        return block instanceof net.minecraft.world.level.block.EntityBlock
+                || block instanceof net.minecraft.world.level.block.CraftingTableBlock
+                || block instanceof net.minecraft.world.level.block.AnvilBlock
+                || block instanceof net.minecraft.world.level.block.DoorBlock
+                || block instanceof net.minecraft.world.level.block.TrapDoorBlock
+                || block instanceof net.minecraft.world.level.block.FenceGateBlock
+                || block instanceof net.minecraft.world.level.block.ButtonBlock
+                || block instanceof net.minecraft.world.level.block.LeverBlock
+                || block instanceof net.minecraft.world.level.block.BedBlock
+                || block instanceof net.minecraft.world.level.block.NoteBlock
+                || block instanceof net.minecraft.world.level.block.RepeaterBlock
+                || block instanceof net.minecraft.world.level.block.ComparatorBlock
+                || block instanceof net.minecraft.world.level.block.CakeBlock
+                || block instanceof net.minecraft.world.level.block.RespawnAnchorBlock
+                || block instanceof net.minecraft.world.level.block.GrindstoneBlock
+                || block instanceof net.minecraft.world.level.block.LoomBlock
+                || block instanceof net.minecraft.world.level.block.CartographyTableBlock
+                || block instanceof net.minecraft.world.level.block.StonecutterBlock
+                || block instanceof net.minecraft.world.level.block.SmithingTableBlock
+                || block instanceof net.minecraft.world.level.block.ComposterBlock;
+    }
+
+    private static Vec3 supportFaceHit(Minecraft mc, BlockPos support, Direction face) {
+        var shape = mc.level.getBlockState(support).getShape(mc.level, support);
+        if (!shape.isEmpty()) {
+            net.minecraft.world.phys.AABB bb = shape.bounds();
+            double hx = support.getX() + (face == Direction.WEST ? bb.minX : face == Direction.EAST ? bb.maxX : (bb.minX + bb.maxX) * 0.5);
+            double hy = support.getY() + (face == Direction.DOWN ? bb.minY : face == Direction.UP ? bb.maxY : (bb.minY + bb.maxY) * 0.5);
+            double hz = support.getZ() + (face == Direction.NORTH ? bb.minZ : face == Direction.SOUTH ? bb.maxZ : (bb.minZ + bb.maxZ) * 0.5);
+            return new Vec3(hx, hy, hz);
+        }
+        return Vec3.atCenterOf(support).add(face.getStepX() * 0.5, face.getStepY() * 0.5, face.getStepZ() * 0.5);
+    }
+
     /** Places the held main-hand block at {@code placePos} against any adjacent solid neighbor. */
     public boolean placeBlock(Minecraft mc, LocalPlayer player, BlockPos placePos, boolean horizontalFirst) {
         if (mc == null || mc.gameMode == null || mc.level == null || player == null || placePos == null) {
+            return false;
+        }
+        if (player.containerMenu != player.inventoryMenu) {
+            player.closeContainer();
             return false;
         }
         Direction[] dirs = horizontalFirst
@@ -330,11 +370,18 @@ public final class BodyController {
                 : Direction.values();
         for (Direction dir : dirs) {
             BlockPos support = placePos.relative(dir);
-            if (mc.level.getBlockState(support).canBeReplaced()) continue;
+            var supportState = mc.level.getBlockState(support);
+            if (supportState.canBeReplaced()) continue;
             Direction face = dir.getOpposite();
-            Vec3 hitVec = Vec3.atCenterOf(support).add(face.getStepX() * 0.5, face.getStepY() * 0.5, face.getStepZ() * 0.5);
+            Vec3 hitVec = supportFaceHit(mc, support, face);
             if (player.getEyePosition().distanceToSqr(hitVec) > 20.25) continue;
             BlockHitResult hit = new BlockHitResult(hitVec, face, support, false);
+            boolean sneak = isInteractiveSupport(supportState.getBlock());
+            if (sneak && !player.isShiftKeyDown()) {
+                if (mc.options != null) mc.options.keyShift.setDown(true);
+                player.setShiftKeyDown(true);
+                return false; // wait 1 tick for shift=true to sync to server
+            }
             var res = mc.gameMode.useItemOn(player, InteractionHand.MAIN_HAND, hit);
             if (res.consumesAction()) {
                 player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
@@ -355,10 +402,21 @@ public final class BodyController {
         if (mc == null || mc.gameMode == null || mc.level == null || player == null || placePos == null) {
             return false;
         }
+        if (player.containerMenu != player.inventoryMenu) {
+            player.closeContainer();
+            return false;
+        }
         BlockPos support = placePos.below();
-        if (mc.level.getBlockState(support).canBeReplaced()) return false;
-        Vec3 hitVec = Vec3.atCenterOf(support).add(0.0, 0.5, 0.0);
+        var supportState = mc.level.getBlockState(support);
+        if (supportState.canBeReplaced()) return false;
+        Vec3 hitVec = supportFaceHit(mc, support, Direction.UP);
         BlockHitResult hit = new BlockHitResult(hitVec, Direction.UP, support, false);
+        boolean sneak = isInteractiveSupport(supportState.getBlock());
+        if (sneak && !player.isShiftKeyDown()) {
+            if (mc.options != null) mc.options.keyShift.setDown(true);
+            player.setShiftKeyDown(true);
+            return false; // wait 1 tick for shift=true to sync to server
+        }
         var res = mc.gameMode.useItemOn(player, InteractionHand.MAIN_HAND, hit);
         if (res.consumesAction()) {
             player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);

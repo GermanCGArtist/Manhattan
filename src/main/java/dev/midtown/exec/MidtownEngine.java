@@ -634,6 +634,16 @@ public final class MidtownEngine implements PathEngine {
      */
     static BlockPos groundedStart(Minecraft mc, LocalPlayer player, BlockPos feet) {
         if (mc.level == null || player == null || feet == null) return feet;
+        // Standing on a partial-height or concave solid block (chest y+0.875, hopper bowl y+0.6875,
+        // bed y+0.5625, soul sand, farmland, bottom slab): floor(player.getY()) lands inside the
+        // support block itself, so A* thinks the player is buried in solid and returns NO_PATH.
+        // Snap up to feet.above() when feet is solid and the 2-block standing space above it is clear.
+        if (!mc.level.getBlockState(feet).getCollisionShape(mc.level, feet).isEmpty()
+                && (player.getY() - feet.getY()) >= 0.45
+                && mc.level.getBlockState(feet.above()).getCollisionShape(mc.level, feet.above()).isEmpty()
+                && mc.level.getBlockState(feet.above(2)).getCollisionShape(mc.level, feet.above(2)).isEmpty()) {
+            return feet.above();
+        }
         // on the ground it is supported, maybe by the edge of a neighbouring block: never snap down then
         if (player.onGround() || player.isInWater() || player.isInLava() || player.onClimbable()) return feet;
         // anything under the hitbox within 0.6 (also a neighbour's edge): it lands on this level
