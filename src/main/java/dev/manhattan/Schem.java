@@ -387,7 +387,7 @@ final class Schem {
             String n = prop.getName();
             boolean derived = (wire && (DERIVED.contains(n))) || (conn && (n.equals("north") || n.equals("east") || n.equals("south") || n.equals("west") || n.equals("up") || n.equals("waterlogged")))
                     || (stairs && (n.equals("shape") || n.equals("waterlogged"))) || n.equals("waterlogged");
-            if (config && (n.equals("delay") || n.equals("locked") || n.equals("mode") || n.equals("note") || n.equals("hinge") || (n.equals("type") && p.endsWith("chest")) || n.equals("powered") || n.equals("open"))) derived = true;
+            if (config && (n.equals("delay") || n.equals("locked") || n.equals("mode") || n.equals("note") || n.equals("hinge") || n.equals("powered") || n.equals("open"))) derived = true;
             if (derived) st = st.setValue((net.minecraft.world.level.block.state.properties.Property) prop, (Comparable) def.getValue(prop));
         }
         return st;

@@ -203,9 +203,20 @@ final class SchemPlacer {
         ItemStack stack = new ItemStack(item);
         Block block = aimState.getBlock();
         boolean isChest = block instanceof net.minecraft.world.level.block.ChestBlock;
+        // For the second half of a double chest (aimState is LEFT/RIGHT), modern MC connects chests reliably
+        // by shift-clicking the side face of the already-placed partner chest.
+        BlockPos forcedPartner = null;
+        if (isChest && aimState.hasProperty(net.minecraft.world.level.block.ChestBlock.TYPE)
+                && aimState.getValue(net.minecraft.world.level.block.ChestBlock.TYPE) != net.minecraft.world.level.block.state.properties.ChestType.SINGLE) {
+            BlockPos partner = cur.relative(net.minecraft.world.level.block.ChestBlock.getConnectedDirection(aimState));
+            if (level.getBlockState(partner).is(block)) {
+                forcedPartner = partner;
+            }
+        }
         float[] pitches = {0f, 60f, -60f, 90f, -90f};
         for (Direction dir : Direction.values()) {
             BlockPos n = cur.relative(dir);
+            if (forcedPartner != null && !n.equals(forcedPartner)) continue;
             BlockState ns = level.getBlockState(n);
             if (ns.isAir() || Schem.replaceable(ns)) continue;
             Direction face = dir.getOpposite();
@@ -217,7 +228,7 @@ final class SchemPlacer {
                 hits.add(center.add(0, -0.25, 0));
             }
             boolean interactive = isInteractive(ns.getBlock());
-            boolean[] sneakModes = interactive ? new boolean[]{true}
+            boolean[] sneakModes = (interactive || forcedPartner != null) ? new boolean[]{true}
                     : (isChest ? new boolean[]{true, false} : new boolean[]{false});
             for (boolean snk : sneakModes) {
                 for (Vec3 hit : hits) {
@@ -346,6 +357,8 @@ final class SchemPlacer {
     private void fail(String why) {
         failures.add(cur.toShortString() + " " + what() + ": " + why);
         stopBreaking();
+        Minecraft mc = Minecraft.getInstance();
+        setSneak(mc, mc != null ? mc.player : null, false);
         cur = null;
     }
 
@@ -430,6 +443,7 @@ final class SchemPlacer {
         if (ticks > 20 * 90) { fail("took too long"); return false; }
         switch (stage) {
             case APPROACH -> {
+                setSneak(mc, p, false);
                 if (cands == null && !clearing && !Schem.replaceable(level.getBlockState(cur)) && !wantsMerge(level)) {
                     // a block in the cell (scaffolding put there during the build): take it away first, then aim
                     if (p.getEyePosition().distanceTo(Vec3.atCenterOf(cur)) <= REACH - 0.3) {
