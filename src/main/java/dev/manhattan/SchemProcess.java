@@ -135,6 +135,35 @@ public final class SchemProcess {
         return Schem.count(p, resolveActiveMode(), level, box).todoTotal();
     }
 
+    private static volatile boolean waitingForMaterials;
+    private int mtMaterialWaitTicks;
+
+    static void markWaitingForMaterials() {
+        waitingForMaterials = true;
+    }
+
+    static boolean consumeWaitingForMaterials() {
+        if (!waitingForMaterials) return false;
+        waitingForMaterials = false;
+        return true;
+    }
+
+    /**
+     * True when a running project has material/scaffold storage configured and can currently launch a
+     * {@code FETCH_MATERIALS} base trip (i.e. not in post-empty-trip cooldown).
+     */
+    static boolean shouldYieldForMaterialFetch() {
+        try {
+            var rt = dev.manhattan.project.GameProjectRuntime.instance();
+            if (rt == null || !rt.running() || !rt.canStartBaseTrip()) return false;
+            var proj = rt.runningProject();
+            if (proj == null || proj.places == null) return false;
+            return proj.places.hasAnyMaterialStorage() || proj.places.hasAnyScaffoldStorage();
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
     /**
      * Returns item path -> needed count for the active schematic build (used by {@link ChestProcess#keepPlan}
      * so dump trips never throw away building materials fetched for the current schematic).
@@ -661,16 +690,27 @@ public final class SchemProcess {
                     mtDeferred.clear();
                     mtStallPass++;
                     if (!mtPickNext(level, p, ph)) {
+                        if (skipMissing && !missingNow.isEmpty() && shouldYieldForMaterialFetch() && mtMaterialWaitTicks < 40) {
+                            mtMaterialWaitTicks++;
+                            markWaitingForMaterials();
+                            return;
+                        }
                         mtStop();
                         endPhase(ph, null);
                         return;
                     }
                 } else {
+                    if (skipMissing && !missingNow.isEmpty() && shouldYieldForMaterialFetch() && mtMaterialWaitTicks < 40) {
+                        mtMaterialWaitTicks++;
+                        markWaitingForMaterials();
+                        return;
+                    }
                     mtStop();
                     endPhase(ph, mtDeferred.isEmpty() ? null : mtDeferred.size() + " blocks unreachable");
                     return;
                 }
             }
+            mtMaterialWaitTicks = 0;
         }
 
         if (mtCur == null) return;
@@ -784,8 +824,21 @@ public final class SchemProcess {
                 return;
             }
             if (mtAim(p, hit.getLocation())) {
+                if (p.containerMenu != p.inventoryMenu) {
+                    p.closeContainer();
+                    return;
+                }
+                boolean sneak = SchemPlacer.isInteractive(level.getBlockState(hit.getBlockPos()).getBlock());
+                if (sneak) {
+                    if (mc.options != null) mc.options.keyShift.setDown(true);
+                    p.setShiftKeyDown(true);
+                }
                 mc.gameMode.useItemOn(p, InteractionHand.MAIN_HAND, hit);
                 p.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+                if (sneak) {
+                    if (mc.options != null) mc.options.keyShift.setDown(false);
+                    p.setShiftKeyDown(false);
+                }
             }
             return;
         }

@@ -1604,7 +1604,8 @@ public class QueueMod implements ClientModInitializer {
             return (int) Math.round(Math.max(0.0, schem.result()));
         }, () -> {
             long now = System.currentTimeMillis();
-            if (now - lastDeficitMs[0] < 1000L) return cachedDeficit.get();
+            boolean urgent = SchemProcess.consumeWaitingForMaterials();
+            if (!urgent && now - lastDeficitMs[0] < 1000L) return cachedDeficit.get();
             lastDeficitMs[0] = now;
             Minecraft mc = Minecraft.getInstance();
             if (mc == null || mc.level == null || mc.player == null) {

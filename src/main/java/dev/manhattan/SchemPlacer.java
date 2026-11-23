@@ -60,12 +60,60 @@ final class SchemPlacer {
     private Stage stage;
     private Cand chosen;
     private List<Cand> cands;
-    private int ticks, stageTicks, attempts, clicks, stagnant, turned, walkCooldown;
-    private boolean breaking;
+    private int ticks, stageTicks, attempts, clicks, stagnant, turned, walkCooldown, materialWaitTicks;
+    private boolean breaking, sneakingForPlace;
     private BlockPos breakPos, lastSpot;
     private final java.util.Set<BlockPos> badSpots = new java.util.HashSet<>();
     private int placed;
     final List<String> failures = new ArrayList<>();
+
+    static boolean isInteractive(Block b) {
+        return b instanceof net.minecraft.world.level.block.ChestBlock
+                || b instanceof net.minecraft.world.level.block.BarrelBlock
+                || b instanceof net.minecraft.world.level.block.ShulkerBoxBlock
+                || b instanceof net.minecraft.world.level.block.HopperBlock
+                || b instanceof net.minecraft.world.level.block.AbstractFurnaceBlock
+                || b instanceof net.minecraft.world.level.block.CraftingTableBlock
+                || b instanceof net.minecraft.world.level.block.DispenserBlock
+                || b instanceof net.minecraft.world.level.block.DoorBlock
+                || b instanceof net.minecraft.world.level.block.TrapDoorBlock
+                || b instanceof net.minecraft.world.level.block.FenceGateBlock
+                || b instanceof net.minecraft.world.level.block.ButtonBlock
+                || b instanceof net.minecraft.world.level.block.LeverBlock
+                || b instanceof net.minecraft.world.level.block.BedBlock
+                || b instanceof net.minecraft.world.level.block.AnvilBlock
+                || b instanceof net.minecraft.world.level.block.BrewingStandBlock
+                || b instanceof net.minecraft.world.level.block.EnchantingTableBlock
+                || b instanceof net.minecraft.world.level.block.EnderChestBlock
+                || b instanceof net.minecraft.world.level.block.GrindstoneBlock
+                || b instanceof net.minecraft.world.level.block.LecternBlock
+                || b instanceof net.minecraft.world.level.block.LoomBlock
+                || b instanceof net.minecraft.world.level.block.SmithingTableBlock
+                || b instanceof net.minecraft.world.level.block.StonecutterBlock
+                || b instanceof net.minecraft.world.level.block.DiodeBlock
+                || b instanceof net.minecraft.world.level.block.NoteBlock
+                || b instanceof net.minecraft.world.level.block.BeaconBlock
+                || b instanceof net.minecraft.world.level.block.BellBlock;
+    }
+
+    static boolean needsSneak(Level level, BlockPos against, BlockState want) {
+        if (level != null && against != null && isInteractive(level.getBlockState(against).getBlock())) {
+            return true;
+        }
+        if (want != null && want.getBlock() instanceof net.minecraft.world.level.block.ChestBlock
+                && want.hasProperty(net.minecraft.world.level.block.ChestBlock.TYPE)
+                && want.getValue(net.minecraft.world.level.block.ChestBlock.TYPE) == net.minecraft.world.level.block.state.properties.ChestType.SINGLE) {
+            return true;
+        }
+        return false;
+    }
+
+    private void setSneak(Minecraft mc, LocalPlayer p, boolean down) {
+        if (sneakingForPlace == down) return;
+        sneakingForPlace = down;
+        if (mc != null && mc.options != null) mc.options.keyShift.setDown(down);
+        if (p != null) p.setShiftKeyDown(down);
+    }
 
     int placed() { return placed; }
 
@@ -99,9 +147,12 @@ final class SchemPlacer {
     void stop() {
         dev.midtown.api.EngineSelector.current().cancel();
         stopBreaking();
-        BodyController.INSTANCE.releaseIfOwner(Minecraft.getInstance(), MOTOR_OWNER);
+        Minecraft mc = Minecraft.getInstance();
+        setSneak(mc, mc != null ? mc.player : null, false);
+        BodyController.INSTANCE.releaseIfOwner(mc, MOTOR_OWNER);
         cur = null;
         walkCooldown = 0;
+        materialWaitTicks = 0;
         queue.clear();
     }
 
@@ -317,7 +368,18 @@ final class SchemPlacer {
         if (want.hasProperty(BlockStateProperties.SLAB_TYPE) && want.getValue(BlockStateProperties.SLAB_TYPE) == SlabType.DOUBLE) {
             aimState = want.setValue(BlockStateProperties.SLAB_TYPE, SlabType.BOTTOM);   // first the lower slab, then the second on top
         }
-        if (slotOf(p, item) < 0) { fail("no " + Schem.itemName(item) + " in the inventory"); return; }
+        if (slotOf(p, item) < 0) {
+            if (SchemProcess.shouldYieldForMaterialFetch() && materialWaitTicks < 40) {
+                queue.addLast(cur);
+                cur = null;
+                materialWaitTicks++;
+                SchemProcess.markWaitingForMaterials();
+                return;
+            }
+            fail("no " + Schem.itemName(item) + " in the inventory");
+            return;
+        }
+        materialWaitTicks = 0;
         breakPos = null;
         stage = Stage.APPROACH;
     }
@@ -425,21 +487,42 @@ final class SchemPlacer {
                 breaking = BodyController.INSTANCE.breakBlockTick(mc, bp);
             }
             case AIM -> {
-                if (stageTicks > 20 * 6) { fail("could not turn / click"); return false; }
-                if (!Schem.replaceable(level.getBlockState(cur)) && !wantsMerge(level)) { stage = Stage.BREAK; stageTicks = 0; return false; }
-                if (chosen == null || p.getEyePosition().distanceTo(chosen.hit()) > REACH) { stage = Stage.APPROACH; stageTicks = 0; return false; }
-                if (!equipItem(mc, p, item)) { fail("no " + Schem.itemName(item) + " in the inventory"); return false; }
+                if (p.containerMenu != p.inventoryMenu) {
+                    p.closeContainer();
+                    return false;
+                }
+                if (stageTicks > 20 * 6) { setSneak(mc, p, false); fail("could not turn / click"); return false; }
+                if (!Schem.replaceable(level.getBlockState(cur)) && !wantsMerge(level)) { setSneak(mc, p, false); stage = Stage.BREAK; stageTicks = 0; return false; }
+                if (chosen == null || p.getEyePosition().distanceTo(chosen.hit()) > REACH) { setSneak(mc, p, false); stage = Stage.APPROACH; stageTicks = 0; return false; }
+                if (!equipItem(mc, p, item)) {
+                    setSneak(mc, p, false);
+                    if (SchemProcess.shouldYieldForMaterialFetch() && materialWaitTicks < 40) {
+                        materialWaitTicks++;
+                        SchemProcess.markWaitingForMaterials();
+                        return false;
+                    }
+                    fail("no " + Schem.itemName(item) + " in the inventory");
+                    return false;
+                }
+                materialWaitTicks = 0;
                 BodyController.INSTANCE.acquire(mc, MOTOR_OWNER);
+                boolean sneak = needsSneak(level, chosen.against(), want);
+                setSneak(mc, p, sneak);
                 if (!aim(p, chosen.yaw(), chosen.pitch())) { turned = 0; return false; }
-                if (++turned < 2) return false;   // let the rotation reach the server before clicking
+                if (++turned < (sneak ? 3 : 2)) return false;   // let rotation + sneak packet reach server before clicking
                 turned = 0;
                 mc.gameMode.useItemOn(p, InteractionHand.MAIN_HAND, new BlockHitResult(chosen.hit(), chosen.face(), chosen.against(), false));
                 p.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+                setSneak(mc, p, false);
                 clicks++;
                 stage = Stage.VERIFY;
                 stageTicks = 0;
             }
             case VERIFY -> {
+                setSneak(mc, p, false);
+                if (p.containerMenu != p.inventoryMenu) {
+                    p.closeContainer();
+                }
                 if (stageTicks < 5) return false;
                 BlockState s = level.getBlockState(cur);
                 BlockState n = Schem.norm(s);
