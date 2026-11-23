@@ -880,11 +880,20 @@ final class ProjectPanel {
 
         Widgets.label("Base Places");
         renderPlaceRow(rt, "Bed", "bed", places.bed, p -> places.bed = p, WorldOverlay.Category.BED, s);
+        renderPosListEditor(rt, "Backup Beds", "extraBeds", places.extraBeds, WorldOverlay.Category.BED, s);
         renderBedPoolEditor(rt, places, s);
         renderPlaceRow(rt, "Tool Chest", "toolChest", places.toolChest, p -> places.toolChest = p, WorldOverlay.Category.CHEST, s);
         renderPlaceRow(rt, "Return Chest", "returnChest", places.returnChest, p -> places.returnChest = p, WorldOverlay.Category.CHEST, s);
+        renderPosListEditor(rt, "Extra Return Chests", "extraReturnChests", places.extraReturnChests, WorldOverlay.Category.CHEST, s);
         renderPlaceRow(rt, "Dump Chest", "dumpChest", places.dumpChest, p -> places.dumpChest = p, WorldOverlay.Category.CHEST, s);
         renderPlaceRow(rt, "Scaffold Chest", "scaffoldChest", places.scaffoldChest, p -> places.scaffoldChest = p, WorldOverlay.Category.CHEST, s);
+
+        ImGui.spacing();
+        Widgets.label("Storage Areas (auto-scan chests/barrels inside)");
+        renderStorageAreaEditor(rt, "Supply Chest Areas", "supplyAreas", places.supplyAreas, s);
+        renderStorageAreaEditor(rt, "Return Chest Areas", "returnAreas", places.returnAreas, s);
+        renderStorageAreaEditor(rt, "Build Supply Areas", "materialAreas", places.materialAreas, s);
+        renderStorageAreaEditor(rt, "Scaffolding Chest Areas", "scaffoldAreas", places.scaffoldAreas, s);
 
         UiTheme.textColored(DIM, "Material chests: " + places.materialChests.size()
                 + "   |   Protected areas: " + places.protectedAreas.size());
@@ -1180,6 +1189,146 @@ final class ProjectPanel {
                 setNotice("Added " + item + " to " + idPrefix + ".", false);
             }
         }
+    }
+
+    private static void renderPosListEditor(GameProjectRuntime rt, String label, String id,
+                                            List<int[]> list, WorldOverlay.Category category, float s) {
+        if (list == null) return;
+        ImGui.pushID("poslist_" + id);
+        UiTheme.textColored(DIM, label + " (" + list.size() + "):");
+        ImGui.sameLine(0f, 6f * s);
+        if (Widgets.button("+ Aimed##addAim", 0)) {
+            Places.Target t = Places.target();
+            if (t == null) {
+                setNotice("Look at a block first.", true);
+            } else {
+                int[] pos = new int[]{t.pos().x(), t.pos().y(), t.pos().z()};
+                boolean dup = list.stream().anyMatch(e -> e != null && e.length >= 3 && e[0] == pos[0] && e[1] == pos[1] && e[2] == pos[2]);
+                if (!dup) {
+                    list.add(pos);
+                    rt.saveActive();
+                    setNotice("Added " + label + " spot at " + t.pos() + ".", false);
+                } else {
+                    setNotice("That block is already in " + label + ".", false);
+                }
+            }
+        }
+        int removeIdx = -1;
+        for (int i = 0; i < list.size(); i++) {
+            int[] p = list.get(i);
+            if (p == null || p.length < 3) continue;
+            ImGui.indent(10f * s);
+            ImBoolean vis = new ImBoolean(WorldOverlay.isPointVisible(category, p));
+            if (ImGui.checkbox("##vis_" + i, vis)) {
+                WorldOverlay.setPointVisible(category, p[0], p[1], p[2], vis.get());
+            }
+            if (ImGui.isItemHovered()) ImGui.setTooltip("Show/hide in 3D World Overlay");
+            ImGui.sameLine(0f, 4f * s);
+            UiTheme.textColored(FG, "#" + (i + 1) + ": " + p[0] + ", " + p[1] + ", " + p[2]);
+            renderPlaceStatusBadge(p, category, s);
+            ImGui.sameLine(0f, 6f * s);
+            if (Widgets.button("x##rm_" + i, 2)) {
+                removeIdx = i;
+            }
+            ImGui.unindent(10f * s);
+        }
+        if (removeIdx >= 0) {
+            list.remove(removeIdx);
+            rt.saveActive();
+        }
+        ImGui.popID();
+    }
+
+    private static void renderStorageAreaEditor(GameProjectRuntime rt, String label, String id,
+                                                List<int[]> areas, float s) {
+        if (areas == null) return;
+        ImGui.pushID("sarea_" + id);
+        net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+        int detectedChests = (mc != null && mc.level != null && !areas.isEmpty())
+                ? dev.survivalkit.Api.scanStorageAreas(mc.level, List.of(), areas).size()
+                : 0;
+        UiTheme.textColored(DIM, label + " (" + areas.size() + " box" + (areas.size() == 1 ? "" : "es")
+                + (areas.isEmpty() ? "" : ", " + detectedChests + " chest" + (detectedChests == 1 ? "" : "s")) + "):");
+        ImGui.sameLine(0f, 6f * s);
+        if (Widgets.button("+ Selection##addSel", 0)) {
+            List<int[]> sel = Areas.read();
+            if (sel == null || sel.isEmpty()) {
+                setNotice("No current area selection. Select a box with Litematica or /queue area first.", true);
+            } else {
+                int added = 0;
+                for (int[] b : sel) {
+                    if (b == null || b.length < 6) continue;
+                    int[] norm = new int[]{
+                            Math.min(b[0], b[3]), Math.min(b[1], b[4]), Math.min(b[2], b[5]),
+                            Math.max(b[0], b[3]), Math.max(b[1], b[4]), Math.max(b[2], b[5])
+                    };
+                    boolean dup = areas.stream().anyMatch(e -> java.util.Arrays.equals(e, norm));
+                    if (!dup) {
+                        areas.add(norm);
+                        added++;
+                    }
+                }
+                if (added > 0) {
+                    rt.saveActive();
+                    setNotice("Added " + added + " box(es) to " + label + ".", false);
+                } else {
+                    setNotice("Selection box already in " + label + ".", false);
+                }
+            }
+        }
+        ImGui.sameLine(0f, 4f * s);
+        ImGui.setNextItemWidth(115f * s);
+        if (ImGui.beginCombo("##pickArea", "+ Saved Area...")) {
+            List<String> names = (Config.cfg != null && Config.cfg.areas != null)
+                    ? new ArrayList<>(Config.cfg.areas.keySet())
+                    : List.of();
+            if (names.isEmpty()) {
+                ImGui.textDisabled("No saved areas.");
+            } else {
+                for (String areaName : names) {
+                    if (ImGui.selectable(areaName + "##sa_" + areaName, false)) {
+                        List<int[]> boxes = Areas.getBoxes(areaName);
+                        int added = 0;
+                        if (boxes != null) {
+                            for (int[] b : boxes) {
+                                if (b == null || b.length < 6) continue;
+                                int[] norm = new int[]{
+                                        Math.min(b[0], b[3]), Math.min(b[1], b[4]), Math.min(b[2], b[5]),
+                                        Math.max(b[0], b[3]), Math.max(b[1], b[4]), Math.max(b[2], b[5])
+                                };
+                                boolean dup = areas.stream().anyMatch(e -> java.util.Arrays.equals(e, norm));
+                                if (!dup) {
+                                    areas.add(norm);
+                                    added++;
+                                }
+                            }
+                        }
+                        if (added > 0) {
+                            rt.saveActive();
+                            setNotice("Added '" + areaName + "' (" + added + " box(es)) to " + label + ".", false);
+                        }
+                    }
+                }
+            }
+            ImGui.endCombo();
+        }
+        int removeIdx = -1;
+        for (int i = 0; i < areas.size(); i++) {
+            int[] b = areas.get(i);
+            if (b == null || b.length < 6) continue;
+            ImGui.indent(10f * s);
+            UiTheme.textColored(FG, "#" + (i + 1) + ": [" + b[0] + "," + b[1] + "," + b[2] + "] -> [" + b[3] + "," + b[4] + "," + b[5] + "]");
+            ImGui.sameLine(0f, 6f * s);
+            if (Widgets.button("x##rmBox_" + i, 2)) {
+                removeIdx = i;
+            }
+            ImGui.unindent(10f * s);
+        }
+        if (removeIdx >= 0) {
+            areas.remove(removeIdx);
+            rt.saveActive();
+        }
+        ImGui.popID();
     }
 
     private static void renderBedPoolEditor(GameProjectRuntime rt, Project.BasePlaces places, float s) {

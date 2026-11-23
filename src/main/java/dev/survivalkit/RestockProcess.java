@@ -53,6 +53,9 @@ final class RestockProcess extends Feature {
     private final Map<String, Integer> emptyTrips = new HashMap<>();
     private long returnExhaustedUntil;
     private int returnEmptyTrips;
+    private List<BlockPos> returnRoute = new ArrayList<>();   // return chests to try in order (nearest first)
+    private int returnRouteIdx;
+    private boolean returnChestWasFull;
     private List<BlockPos> route = new ArrayList<>();   // supply chests to visit this trip, most promising first
     private int routeIdx;
     private final Map<String, int[]> shortHere = new HashMap<>();   // rule -> {got, need} at the chest just emptied
@@ -90,7 +93,7 @@ final class RestockProcess extends Feature {
     }
 
     private static boolean isStorage(Block b) {
-        return b instanceof ChestBlock || b instanceof BarrelBlock;
+        return b instanceof ChestBlock || b instanceof BarrelBlock || b instanceof net.minecraft.world.level.block.ShulkerBoxBlock;
     }
 
     @Override
@@ -125,7 +128,7 @@ final class RestockProcess extends Feature {
         // Passing the base already: refilling now costs a few steps instead of a separate trip later, so stock that
         // is only a bit low (under 75%) counts too. Not while LoadChest is on its way, and at most every 3 minutes.
         if (topUpCooldown > 0) topUpCooldown -= 10;
-        boolean atBase = cfg.topUp && topUpCooldown <= 0 && cfg.supply != null && Util.nearBase(p) && !Util.loadChestBusy();
+        boolean atBase = cfg.topUp && topUpCooldown <= 0 && Api.hasAnySupply() && Util.nearBase(p) && !Util.loadChestBusy();
 
         List<String> stock = new ArrayList<>(), worn = new ArrayList<>();
         boolean topUp = false;
@@ -138,7 +141,7 @@ final class RestockProcess extends Feature {
             else if (atBase && have * 4 < e.getValue() * 3) { stock.add(key); topUp = true; }
         }
         if (worn.isEmpty() && stock.isEmpty()) return;
-        if (cfg.supply == null) {
+        if (!Api.hasAnySupply()) {
             Util.warn("nosupply", "Need " + String.join(", ", worn.isEmpty() ? stock : worn)
                     + " but no supply chest is set. Look at the chest and run /survival supply set.");
             return;
@@ -150,7 +153,7 @@ final class RestockProcess extends Feature {
         }
         if (!worn.isEmpty()) {
             Util.msg("Tool at the item-saver limit (" + String.join(", ", worn) + ") - "
-                    + (cfg.returnChest != null ? "returning it and getting a new one." : "swapping it at the supply chest."));
+                    + (Api.hasAnyReturnChest() ? "returning it and getting a new one." : "swapping it at the supply chest."));
         } else if (topUp) {
             Util.msg("At the base anyway - topping up " + String.join(", ", stock) + ".");
             topUpCooldown = 20 * 60 * 3;
@@ -172,7 +175,7 @@ final class RestockProcess extends Feature {
     private boolean neededNow(LocalPlayer p) {
         // far from the base a trip costs minutes: only for what cannot wait (a worn tool, something used up). Stock that is
         // merely low waits for the next time at the base (the bed trip tops it up, see topUpWanted).
-        boolean far = cfg.supply != null && !Util.nearBase(p);
+        boolean far = Api.hasAnySupply() && !Util.nearBase(p);
         for (Map.Entry<String, Integer> e : cfg.want.entrySet()) {
             if (exhausted.getOrDefault(e.getKey(), 0L) > now) continue;
             int have = Util.countHave(p, e.getKey());
@@ -188,7 +191,7 @@ final class RestockProcess extends Feature {
     }
 
     private boolean topUpNow(LocalPlayer p) {
-        if (cfg.supply == null || cfg.want.isEmpty()) return false;
+        if (!Api.hasAnySupply() || cfg.want.isEmpty()) return false;
         for (Map.Entry<String, Integer> e : cfg.want.entrySet()) {
             if (exhausted.getOrDefault(e.getKey(), 0L) > now) continue;
             int have = Util.countHave(p, e.getKey());
@@ -216,7 +219,7 @@ final class RestockProcess extends Feature {
     private boolean hasReturnableWornNow(LocalPlayer p) {
         if (p == null || cfg.want.isEmpty()) return false;
         if (returnExhaustedUntil > now) return false;
-        boolean hasSeparateReturn = cfg.returnChest != null;
+        boolean hasSeparateReturn = Api.hasAnyReturnChest();
         for (String key : cfg.want.keySet()) {
             if (!Util.hasWorn(p, key)) continue;
             if (hasSeparateReturn || exhausted.getOrDefault(key, 0L) <= now) {
@@ -241,7 +244,7 @@ final class RestockProcess extends Feature {
     void startNow() {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.level == null) return;
-        if (cfg.supply == null) { Util.msg("No supply chest saved. Look at a chest and run /survival supply set"); return; }
+        if (!Api.hasAnySupply() && !Api.hasAnyReturnChest()) { Util.msg("No supply chest saved. Look at a chest and run /survival supply set"); return; }
         if (cfg.want.isEmpty()) { Util.msg("The want-list is empty. Add rules with /survival want <item> <count>"); return; }
         if (state != State.IDLE) { Util.msg("Already restocking."); return; }
         if (!dev.midtown.api.RuntimeBus.isScriptActive()) {
@@ -261,18 +264,20 @@ final class RestockProcess extends Feature {
     }
 
     /**
-     * With a return chest set and a worn-out tool in the inventory, the first stop is the return chest (drop the worn
-     * tools there, which also frees their hotbar slot); then comes the supply chest for the replacement.
+     * With one or more return chests (or return areas) set and a worn-out tool in the inventory, the first stop is
+     * the return chest(s) (drop the worn tools there, spilling over to the next return chest if full); then comes
+     * the supply chest(s) for the replacement.
      */
     private void start(Minecraft mc, LocalPlayer p) {
-        BlockPos ret = Util.pos(cfg.returnChest);
+        returnRoute = buildReturnRoute(mc, p);
+        returnRouteIdx = 0;
+        returnChestWasFull = false;
         returnLeg = false;
-        if (ret != null && hasWornWanted(p)) {
-            if (isStorage(mc.level.getBlockState(ret).getBlock())) {
+        if (Api.hasAnyReturnChest() && hasWornWanted(p)) {
+            if (!returnRoute.isEmpty()) {
                 returnLeg = true;
             } else {
-                Util.warn("returnmissing", "No chest at the return chest position " + ret.toShortString()
-                        + " (not loaded, or it was removed) - worn tools go into the supply chest instead.");
+                Util.warn("returnmissing", "No loaded return chest found (not loaded, or removed) - worn tools go into the supply chest instead.");
                 returnExhaustedUntil = Math.max(returnExhaustedUntil, now + RETRY_IDLE);
             }
         }
@@ -280,7 +285,7 @@ final class RestockProcess extends Feature {
         routeIdx = 0;
         tripGot.clear();
         shortHere.clear();
-        chest = returnLeg ? ret : route.isEmpty() ? null : route.get(0);
+        chest = returnLeg ? returnRoute.get(0) : route.isEmpty() ? null : route.get(0);
         if (chest == null || !isStorage(mc.level.getBlockState(chest).getBlock())) {
             Util.msg("No supply chest found" + (chest == null ? "" : " at " + chest.toShortString())
                     + " (not loaded, or it was removed). Checking again in 2 minutes.");
@@ -295,23 +300,38 @@ final class RestockProcess extends Feature {
         EngineSelector.current().goTo(GoalSpec.near(chest, 2));
     }
 
+    /** All loaded return chests (explicit return chests + chests scanned inside returnAreas), nearest first. */
+    private List<BlockPos> buildReturnRoute(Minecraft mc, LocalPlayer p) {
+        List<int[]> explicit = Api.allReturnChests();
+        List<BlockPos> scanned = Util.scanStorageAreas(mc.level, explicit, cfg.returnAreas);
+        List<BlockPos> valid = new ArrayList<>();
+        for (BlockPos pos : scanned) {
+            if (mc.level.hasChunkAt(pos) && isStorage(mc.level.getBlockState(pos).getBlock())) {
+                valid.add(pos);
+            }
+        }
+        valid.sort(java.util.Comparator.comparingDouble(pos -> pos.distSqr(p.blockPosition())));
+        return valid;
+    }
+
     /**
      * The supply chests in the order to visit: those the index says hold something that is missing first, then the
      * ones never seen, then those that looked empty last time (they may have been refilled). Nearest first within that.
+     * Includes explicit supply chests plus any chests/barrels auto-discovered inside {@code cfg.supplyAreas}.
      */
     private List<BlockPos> buildRoute(Minecraft mc, LocalPlayer p) {
         List<String> need = new ArrayList<>();
         for (Map.Entry<String, Integer> e : cfg.want.entrySet()) {
             if (Util.countHave(p, e.getKey()) < e.getValue()) need.add(e.getKey());
         }
-        List<int[]> all = new ArrayList<>();
-        if (cfg.supply != null) all.add(cfg.supply);
-        all.addAll(cfg.extraSupplies);
+        List<int[]> explicit = new ArrayList<>();
+        if (cfg.supply != null) explicit.add(cfg.supply);
+        if (cfg.extraSupplies != null) explicit.addAll(cfg.extraSupplies);
+        List<BlockPos> all = Util.scanStorageAreas(mc.level, explicit, cfg.supplyAreas);
         record Cand(BlockPos pos, int rank, double dist) {}
         List<Cand> cands = new ArrayList<>();
-        for (int[] a : all) {
-            BlockPos pos = Util.pos(a);
-            if (!isStorage(mc.level.getBlockState(pos).getBlock())) continue;
+        for (BlockPos pos : all) {
+            if (!mc.level.hasChunkAt(pos) || !isStorage(mc.level.getBlockState(pos).getBlock())) continue;
             ChestIndex.Entry e = ChestIndex.at(mc, pos);
             int rank = 1;
             if (e != null) {
@@ -483,9 +503,21 @@ final class RestockProcess extends Feature {
         EngineSelector.current().cancel();
     }
 
-    /** Worn tools are dropped off: report it and carry on to the supply chest for the replacement. */
+    /** Worn tools are dropped off: spill over to the next return chest if this one was full, else carry on to the supply chest. */
     private void afterReturnLeg(Minecraft mc, LocalPlayer p) {
         if (!summary.isEmpty()) Util.msg("Return chest: " + String.join(", ", summary) + ".");
+        if (returnChestWasFull && returnRouteIdx + 1 < returnRoute.size()) {
+            returnRouteIdx++;
+            returnChestWasFull = false;
+            chest = returnRoute.get(returnRouteIdx);
+            queue = null;
+            timer = 0;
+            pathFails = 0;
+            Util.msg("Return chest was full - trying next return chest (" + (returnRouteIdx + 1) + "/" + returnRoute.size() + ").");
+            state = State.PATHING;
+            EngineSelector.current().goTo(GoalSpec.near(chest, 2));
+            return;
+        }
         returnLeg = false;
         queue = null;
         routeIdx = 0;
@@ -518,17 +550,19 @@ final class RestockProcess extends Feature {
             if (!wanted) continue;
             wornTotal++;
             if (returned >= free) {
-                Util.warn("returnfull", "The return chest is full - some worn tools stay in the inventory. Empty it.");
                 continue;
             }
             plan.add(new Action(s.index, 0, ContainerInput.QUICK_MOVE));
             returned++;
         }
-        if (wornTotal > returned) {
+        returnChestWasFull = wornTotal > returned;
+        boolean hasMoreReturnChests = returnRouteIdx + 1 < returnRoute.size();
+        if (returnChestWasFull && !hasMoreReturnChests) {
+            Util.warn("returnfull", "All return chests are full - some worn tools stay in the inventory. Empty them.");
             int streak = ++returnEmptyTrips;
             long wait = Math.min(RETRY_MAX, RETRY_IDLE * (1L << Math.min(5, Math.max(0, streak - 1))));
             returnExhaustedUntil = now + wait;
-        } else if (returned > 0) {
+        } else if (returned > 0 && !returnChestWasFull) {
             returnEmptyTrips = 0;
             returnExhaustedUntil = 0;
         }
@@ -562,7 +596,7 @@ final class RestockProcess extends Feature {
         for (Slot s : supply) {
             if (s.getItem().isEmpty()) freeSupply++;
         }
-        if (cfg.returnChest != null) freeSupply = 0;   // a return chest is set: worn tools never go into the supply chest
+        if (Api.hasAnyReturnChest()) freeSupply = 0;   // return chest(s) set: worn tools never go into the supply chest
 
         Set<Integer> used = new HashSet<>();   // player slots already earmarked by this plan
         for (Map.Entry<String, Integer> rule : cfg.want.entrySet()) {

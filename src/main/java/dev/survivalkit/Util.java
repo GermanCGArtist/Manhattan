@@ -82,7 +82,19 @@ final class Util {
             sitesAge = 0;
             java.util.ArrayList<BlockPos> out = new java.util.ArrayList<>();
             for (int[] a : new int[][]{cfg.supply, cfg.returnChest, cfg.bed}) if (a != null) out.add(pos(a));
-            for (int[] a : cfg.extraSupplies) out.add(pos(a));
+            if (cfg.extraBeds != null) for (int[] a : cfg.extraBeds) if (a != null && a.length >= 3) out.add(pos(a));
+            if (cfg.extraSupplies != null) for (int[] a : cfg.extraSupplies) if (a != null && a.length >= 3) out.add(pos(a));
+            if (cfg.extraReturnChests != null) for (int[] a : cfg.extraReturnChests) if (a != null && a.length >= 3) out.add(pos(a));
+            if (cfg.supplyAreas != null) {
+                for (int[] b : cfg.supplyAreas) {
+                    if (b != null && b.length >= 6) out.add(new BlockPos((b[0] + b[3]) / 2, (b[1] + b[4]) / 2, (b[2] + b[5]) / 2));
+                }
+            }
+            if (cfg.returnAreas != null) {
+                for (int[] b : cfg.returnAreas) {
+                    if (b != null && b.length >= 6) out.add(new BlockPos((b[0] + b[3]) / 2, (b[1] + b[4]) / 2, (b[2] + b[5]) / 2));
+                }
+            }
             try {
                 var path = net.fabricmc.loader.api.FabricLoader.getInstance().getConfigDir().resolve("loadchest.json");
                 if (java.nio.file.Files.exists(path)) {
@@ -230,5 +242,84 @@ final class Util {
         if (!level.getBlockState(above).isRedstoneConductor(level, above)) return "";
         return " A " + net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(level.getBlockState(above).getBlock()).getPath()
                 + " is on top of it (" + above.toShortString() + "): a chest does not open with a block on top. Take it away.";
+    }
+
+    private static final int MAX_AREA_SCAN_VOLUME = 65_536;
+
+    /**
+     * Collects all unique storage container positions ({@code ChestBlock}, {@code BarrelBlock}, {@code ShulkerBoxBlock})
+     * from explicit point coordinates plus live loaded blocks inside 6-element area boxes {@code [x1,y1,z1,x2,y2,z2]}.
+     * Double chests are deduplicated to one canonical half so bots never visit both halves of the same chest.
+     */
+    static java.util.List<BlockPos> scanStorageAreas(
+            net.minecraft.world.level.Level level,
+            java.util.List<int[]> explicitPoints,
+            java.util.List<int[]> areas
+    ) {
+        java.util.LinkedHashSet<BlockPos> out = new java.util.LinkedHashSet<>();
+        java.util.HashSet<BlockPos> seenDoubleHalves = new java.util.HashSet<>();
+        if (explicitPoints != null) {
+            for (int[] p : explicitPoints) {
+                if (p == null || p.length < 3) continue;
+                BlockPos bp = new BlockPos(p[0], p[1], p[2]);
+                addStorageIfCanonical(level, bp, out, seenDoubleHalves, true);
+            }
+        }
+        if (level != null && areas != null) {
+            BlockPos.MutableBlockPos mp = new BlockPos.MutableBlockPos();
+            for (int[] box : areas) {
+                if (box == null || box.length < 6) continue;
+                int x1 = Math.min(box[0], box[3]), x2 = Math.max(box[0], box[3]);
+                int y1 = Math.min(box[1], box[4]), y2 = Math.max(box[1], box[4]);
+                int z1 = Math.min(box[2], box[5]), z2 = Math.max(box[2], box[5]);
+                long vol = (long) (x2 - x1 + 1) * (y2 - y1 + 1) * (z2 - z1 + 1);
+                if (vol <= 0 || vol > MAX_AREA_SCAN_VOLUME) continue;
+                for (int y = y1; y <= y2; y++) {
+                    for (int z = z1; z <= z2; z++) {
+                        for (int x = x1; x <= x2; x++) {
+                            mp.set(x, y, z);
+                            if (!level.hasChunkAt(mp)) continue;
+                            var st = level.getBlockState(mp);
+                            var b = st.getBlock();
+                            if (b instanceof net.minecraft.world.level.block.ChestBlock
+                                    || b instanceof net.minecraft.world.level.block.BarrelBlock
+                                    || b instanceof net.minecraft.world.level.block.ShulkerBoxBlock) {
+                                addStorageIfCanonical(level, mp.immutable(), out, seenDoubleHalves, false);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return new java.util.ArrayList<>(out);
+    }
+
+    private static void addStorageIfCanonical(
+            net.minecraft.world.level.Level level,
+            BlockPos bp,
+            java.util.LinkedHashSet<BlockPos> out,
+            java.util.HashSet<BlockPos> seenDoubleHalves,
+            boolean keepEvenIfUnloaded
+    ) {
+        if (seenDoubleHalves.contains(bp) || out.contains(bp)) return;
+        if (level != null && level.hasChunkAt(bp)) {
+            var st = level.getBlockState(bp);
+            if (st.getBlock() instanceof net.minecraft.world.level.block.ChestBlock
+                    && st.hasProperty(net.minecraft.world.level.block.ChestBlock.TYPE)) {
+                var type = st.getValue(net.minecraft.world.level.block.ChestBlock.TYPE);
+                if (type != net.minecraft.world.level.block.state.properties.ChestType.SINGLE) {
+                    BlockPos other = bp.relative(net.minecraft.world.level.block.ChestBlock.getConnectedDirection(st));
+                    if (out.contains(other) || seenDoubleHalves.contains(other)) {
+                        seenDoubleHalves.add(bp);
+                        return;
+                    }
+                    // Keep this half and mark the connected half as seen so we never visit both halves.
+                    seenDoubleHalves.add(other);
+                }
+            }
+            out.add(bp);
+        } else if (keepEvenIfUnloaded) {
+            out.add(bp);
+        }
     }
 }

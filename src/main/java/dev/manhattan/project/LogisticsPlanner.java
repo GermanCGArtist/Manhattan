@@ -105,7 +105,7 @@ public final class LogisticsPlanner {
                 && !suppressReturn
                 && survival.itemSaver
                 && inv.hasWornTools()
-                && (places.returnChest != null || places.toolChest != null);
+                && (places.hasAnyReturnStorage() || places.hasAnyToolSupply());
 
         boolean needDump = survival.dumpEnabled
                 && !suppressDump
@@ -114,13 +114,12 @@ public final class LogisticsPlanner {
 
         boolean needRestock = survival.restockEnabled
                 && !suppressRestock
-                && places.toolChest != null
+                && places.hasAnyToolSupply()
                 && (inv.restockNeeded() || hasUnexhaustedWantDeficit(survival, activeOverrides, inv));
 
         Map<String, Integer> positiveDeficit = filterPositive(materialDeficit);
         boolean needMaterials = !positiveDeficit.isEmpty()
-                && places.materialChests != null
-                && !places.materialChests.isEmpty();
+                && (places.hasAnyMaterialStorage() || places.hasAnyScaffoldStorage());
 
         if (!needReturn && !needDump && !needRestock && !needMaterials) {
             return BaseTripPlan.empty();

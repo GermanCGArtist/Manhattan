@@ -64,12 +64,20 @@ final class Config {
     boolean logoffOnMissingBed = false;
 
     int[] bed = null;
+    /** Optional backup beds used automatically if the primary bed disappears or is destroyed. */
+    java.util.List<int[]> extraBeds = new java.util.ArrayList<>();
     int[] supply = null;
     /** More supply chests (the first one is "supply"); the chest index decides which to visit first. */
     java.util.List<int[]> extraSupplies = new java.util.ArrayList<>();
+    /** Optional supply chest areas ({@code [x1, y1, z1, x2, y2, z2]}); chests/barrels inside are auto-discovered. */
+    java.util.List<int[]> supplyAreas = new java.util.ArrayList<>();
 
     /** Where worn-out tools are dropped off (optional; without it they go into the supply chest). */
     int[] returnChest = null;
+    /** Optional additional return chests for overflow failover when the primary return chest is full or missing. */
+    java.util.List<int[]> extraReturnChests = new java.util.ArrayList<>();
+    /** Optional return chest areas ({@code [x1, y1, z1, x2, y2, z2]}); chests/barrels inside are auto-discovered. */
+    java.util.List<int[]> returnAreas = new java.util.ArrayList<>();
 
     /** Restock rules: item id fragment (or @food) -> how many to carry. */
     Map<String, Integer> want = new LinkedHashMap<>();
@@ -94,7 +102,11 @@ final class Config {
                 save();
             }
             if (cfg.want == null) cfg.want = new LinkedHashMap<>();
+            if (cfg.extraBeds == null) cfg.extraBeds = new java.util.ArrayList<>();
             if (cfg.extraSupplies == null) cfg.extraSupplies = new java.util.ArrayList<>();
+            if (cfg.supplyAreas == null) cfg.supplyAreas = new java.util.ArrayList<>();
+            if (cfg.extraReturnChests == null) cfg.extraReturnChests = new java.util.ArrayList<>();
+            if (cfg.returnAreas == null) cfg.returnAreas = new java.util.ArrayList<>();
         } catch (Exception e) {
             e.printStackTrace();
         }

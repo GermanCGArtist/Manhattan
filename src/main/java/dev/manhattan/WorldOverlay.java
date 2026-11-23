@@ -727,6 +727,10 @@ public final class WorldOverlay {
             case "dig", "clear", "mine" -> COL_AREA_DIG;
             case "fill", "flood", "drain" -> COL_AREA_FILL;
             case "build" -> COL_AREA_BUILD;
+            case "supply_area" -> COL_TOOL_CHEST;
+            case "return_area" -> COL_RETURN_CHEST;
+            case "material_area" -> COL_MATERIAL_CHEST;
+            case "scaffold_area" -> COL_SCAFFOLD_CHEST;
             default -> COL_AREA_CUSTOM;
         };
     }
@@ -860,15 +864,35 @@ public final class WorldOverlay {
         if (p == null || p.places == null) return;
         Project.BasePlaces pl = p.places;
         addPoint(acc, pl.bed, "Bed", Category.BED, Role.BED);
+        if (pl.extraBeds != null) {
+            for (int i = 0; i < pl.extraBeds.size(); i++) {
+                addPoint(acc, pl.extraBeds.get(i), "Backup Bed #" + (i + 1), Category.BED, Role.BED);
+            }
+        }
         if (pl.bedPool != null) {
             for (int i = 0; i < pl.bedPool.size(); i++) {
                 addPoint(acc, pl.bedPool.get(i), "Bed #" + (i + 1), Category.BED, Role.BED_POOL);
             }
         }
         addPoint(acc, pl.toolChest, "Tool Chest", Category.CHEST, Role.TOOL_CHEST);
+        if (pl.extraToolChests != null) {
+            for (int i = 0; i < pl.extraToolChests.size(); i++) {
+                addPoint(acc, pl.extraToolChests.get(i), "Tool Chest #" + (i + 2), Category.CHEST, Role.TOOL_CHEST);
+            }
+        }
         addPoint(acc, pl.returnChest, "Return Chest", Category.CHEST, Role.RETURN_CHEST);
+        if (pl.extraReturnChests != null) {
+            for (int i = 0; i < pl.extraReturnChests.size(); i++) {
+                addPoint(acc, pl.extraReturnChests.get(i), "Return Chest #" + (i + 2), Category.CHEST, Role.RETURN_CHEST);
+            }
+        }
         addPoint(acc, pl.dumpChest, "Dump Chest", Category.CHEST, Role.DUMP_CHEST);
         addPoint(acc, pl.scaffoldChest, "Scaffold Chest", Category.CHEST, Role.SCAFFOLD_CHEST);
+        if (pl.extraScaffoldChests != null) {
+            for (int i = 0; i < pl.extraScaffoldChests.size(); i++) {
+                addPoint(acc, pl.extraScaffoldChests.get(i), "Scaffold Chest #" + (i + 2), Category.CHEST, Role.SCAFFOLD_CHEST);
+            }
+        }
         if (pl.materialChests != null) {
             for (int i = 0; i < pl.materialChests.size(); i++) {
                 addPoint(acc, pl.materialChests.get(i), "Material Chest #" + (i + 1), Category.CHEST, Role.MATERIAL_CHEST);
@@ -925,15 +949,39 @@ public final class WorldOverlay {
             }
         }
 
-        // 5. Embedded fleet/project task areas
+        // 5. Embedded fleet/project task areas & storage areas
         if (includeTask) {
             collectProjectTaskAreas(dedup, src.runningProject());
+            collectProjectStorageAreas(dedup, src.runningProject());
             if (src.fleetProject() != null && src.fleetProject() != src.runningProject()) {
                 collectProjectTaskAreas(dedup, src.fleetProject());
+                collectProjectStorageAreas(dedup, src.fleetProject());
+            }
+            if (src.activeProject() != null && src.activeProject() != src.runningProject()) {
+                collectProjectStorageAreas(dedup, src.activeProject());
             }
         }
 
         return new ArrayList<>(dedup.values());
+    }
+
+    private static void collectProjectStorageAreas(Map<String, AreaMarker> dedup, Project p) {
+        if (p == null || p.places == null) return;
+        addStorageAreaList(dedup, p.places.supplyAreas, "Supply Area", "supply_area");
+        addStorageAreaList(dedup, p.places.returnAreas, "Return Area", "return_area");
+        addStorageAreaList(dedup, p.places.materialAreas, "Build Supply Area", "material_area");
+        addStorageAreaList(dedup, p.places.scaffoldAreas, "Scaffolding Area", "scaffold_area");
+    }
+
+    private static void addStorageAreaList(Map<String, AreaMarker> dedup, List<int[]> boxes, String baseLabel, String role) {
+        if (boxes == null) return;
+        for (int i = 0; i < boxes.size(); i++) {
+            int[] b = boxes.get(i);
+            if (b != null && b.length >= 6) {
+                String lbl = boxes.size() == 1 ? baseLabel : baseLabel + " #" + (i + 1);
+                addArea(dedup, b[0], b[1], b[2], b[3], b[4], b[5], lbl, false, role);
+            }
+        }
     }
 
     private static void collectProjectProtectedAreas(Map<String, AreaMarker> dedup, Project p) {

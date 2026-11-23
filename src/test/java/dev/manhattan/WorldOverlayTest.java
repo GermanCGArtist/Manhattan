@@ -23,6 +23,7 @@ public final class WorldOverlayTest {
         testAdjacentAreaMerging();
         testOverlapResolutionDistinctLayers();
         testPerElementVisibility();
+        testMultiBedAndStorageAreasOverlay();
         System.out.println("WorldOverlayTest: ALL " + passed + " tests passed.");
     }
 
@@ -197,6 +198,30 @@ public final class WorldOverlayTest {
         assertEquals(2, WorldOverlay.hiddenCount(), "2 hidden elements");
         WorldOverlay.resetHidden();
         assertEquals(0, WorldOverlay.hiddenCount(), "Reset clears all hidden elements");
+        passed++;
+    }
+
+    private static void testMultiBedAndStorageAreasOverlay() {
+        Project p = new Project("storage", "Storage", "world");
+        p.places.bed = new int[]{0, 64, 0};
+        p.places.extraBeds.add(new int[]{4, 64, 0});
+        p.places.returnChest = new int[]{8, 64, 0};
+        p.places.extraReturnChests.add(new int[]{10, 64, 0});
+        p.places.supplyAreas.add(new int[]{0, 63, 10, 5, 66, 15});
+        p.places.materialAreas.add(new int[]{10, 63, 10, 15, 66, 15});
+        p.places.materialAreas.add(new int[]{20, 63, 10, 25, 66, 15});
+        p.places.scaffoldAreas.add(new int[]{30, 63, 10, 35, 66, 15});
+
+        WorldOverlay.Sources src = new WorldOverlay.Sources(
+                p, p, null, null, List.of(),
+                null, null, List.of(), null, null,
+                Map.of(), List.of(), true, null, null,
+                Map.of(), Map.of()
+        );
+        List<WorldOverlay.PointMarker> pts = WorldOverlay.collectPoints(src);
+        assertEquals(4, pts.size(), "2 beds + 2 return chests");
+        List<WorldOverlay.AreaMarker> areas = WorldOverlay.collectAreas(src, true, true);
+        assertEquals(4, areas.size(), "1 supply area + 2 build supply areas + 1 scaffolding area");
         passed++;
     }
 

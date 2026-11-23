@@ -240,6 +240,28 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
         return null;
     }
 
+    private List<int[]> resolveAllBedPositions() {
+        List<int[]> out = new ArrayList<>();
+        dev.manhattan.fleet.FleetClient fc = dev.manhattan.fleet.FleetClient.instance();
+        if (fc.isConnected() && fc.mode().canWork()) {
+            addUniqueBed(out, fc.assignedBedPos());
+        }
+        Project exec = currentExecutionProject();
+        if (exec != null && exec.places != null) {
+            for (int[] b : exec.places.allBeds()) addUniqueBed(out, b);
+        }
+        for (int[] b : dev.survivalkit.Api.allBeds()) addUniqueBed(out, b);
+        return out;
+    }
+
+    private static void addUniqueBed(List<int[]> out, int[] p) {
+        if (p == null || p.length < 3) return;
+        for (int[] e : out) {
+            if (e[0] == p[0] && e[1] == p[1] && e[2] == p[2]) return;
+        }
+        out.add(new int[]{p[0], p[1], p[2]});
+    }
+
     private boolean checkAssignedBedMissing(Minecraft mc) {
         if (mc.level.dimension() != Level.OVERWORLD) return false;
         int[] bed = resolveActiveBedPos();
@@ -249,7 +271,29 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
         if (bedPos.distSqr(mc.player.blockPosition()) > (long) BED_TRUST_RADIUS * BED_TRUST_RADIUS) return false;
         if (mc.level.getBlockState(bedPos).getBlock() instanceof net.minecraft.world.level.block.BedBlock) return false;
 
-        String msg = "Bed missing at " + bedPos.toShortString() + " — halting immediately before death can send bot to world spawn!";
+        // Check backup beds before halting: if another configured bed is present (or unloaded), fail over to it.
+        List<int[]> allBeds = resolveAllBedPositions();
+        for (int[] cand : allBeds) {
+            if (cand[0] == bed[0] && cand[1] == bed[1] && cand[2] == bed[2]) continue;
+            BlockPos candPos = new BlockPos(cand[0], cand[1], cand[2]);
+            boolean candLoadedNearby = mc.level.hasChunkAt(candPos)
+                    && candPos.distSqr(mc.player.blockPosition()) <= (long) BED_TRUST_RADIUS * BED_TRUST_RADIUS;
+            if (!candLoadedNearby || mc.level.getBlockState(candPos).getBlock() instanceof net.minecraft.world.level.block.BedBlock) {
+                Project exec = currentExecutionProject();
+                if (exec != null && exec.places != null) {
+                    exec.places.bed = cand.clone();
+                }
+                dev.survivalkit.Api.setBedPos(cand);
+                dev.survivalkit.Api.resetSleepCooldown();
+                QueueMod.projectLog("Primary bed missing at " + bedPos.toShortString()
+                        + " — switched to backup bed at " + candPos.toShortString() + ".");
+                return false;
+            }
+        }
+
+        String msg = (allBeds.size() > 1 ? "All " + allBeds.size() + " configured beds are missing (last checked " : "Bed missing at ")
+                + bedPos.toShortString() + (allBeds.size() > 1 ? ")" : "")
+                + " — halting immediately before death can send bot to world spawn!";
         boolean shouldDisconnect = dev.survivalkit.Api.isLogoffOnMissingBed();
         haltForSafety(msg);
         if (shouldDisconnect) {
@@ -1015,9 +1059,9 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
 
         List<Supplier<PriorityScheduler.ActionHandle>> stepFactories = new ArrayList<>();
         boolean hasDump = plan.steps().contains(LogisticsPlanner.StepKind.DUMP_EXCESS) && proj.places.dumpChest != null;
-        boolean hasRestock = plan.steps().contains(LogisticsPlanner.StepKind.RESTOCK_TOOLS_FOOD) && proj.places.toolChest != null;
+        boolean hasRestock = plan.steps().contains(LogisticsPlanner.StepKind.RESTOCK_TOOLS_FOOD) && proj.places.hasAnyToolSupply();
         boolean hasReturn = plan.steps().contains(LogisticsPlanner.StepKind.RETURN_WORN)
-                && (proj.places.returnChest != null || proj.places.toolChest != null);
+                && (proj.places.hasAnyReturnStorage() || proj.places.hasAnyToolSupply());
 
         // Order: DUMP_EXCESS frees slots before RESTOCK; RETURN_WORN is performed via RestockProcess
         // (which visits returnChest first, then toolChest) so fresh tools are never accidentally deposited.
@@ -1040,7 +1084,8 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
         List<Item> fetchItems = new ArrayList<>();
         if (plan.steps().contains(LogisticsPlanner.StepKind.FETCH_MATERIALS)
                 && !plan.materialsToFetch().isEmpty()
-                && !proj.places.materialChests.isEmpty()) {
+                && (proj.places.hasAnyMaterialStorage() || proj.places.hasAnyScaffoldStorage())) {
+            List<BlockPos> allMaterialChests = resolveMaterialAndScaffoldChests(proj.places);
             for (var entry : plan.materialsToFetch().entrySet()) {
                 String itemName = entry.getKey();
                 int qty = entry.getValue() == null ? 0 : entry.getValue();
@@ -1048,7 +1093,7 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
                 Item item = QueueMod.projectResolveItem(itemName);
                 if (item == null) continue;
                 fetchItems.add(item);
-                List<BlockPos> chests = orderMaterialChests(proj.places.materialChests, item);
+                List<BlockPos> chests = orderMaterialChestsBlockPos(allMaterialChests, item);
                 for (BlockPos chestPos : chests) {
                     stepFactories.add(() -> {
                         int needNow = Math.max(0, qty - countExactItem(item));
@@ -1217,10 +1262,11 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
             return failedHandle("No area/selection available for FILL_WATER task '" + task.displayLabel() + "'.");
         }
         BlockPos chestPos = null;
-        if (!proj.places.materialChests.isEmpty()) {
-            chestPos = toBlockPos(proj.places.materialChests.get(0));
-        } else if (proj.places.scaffoldChest != null) {
-            chestPos = toBlockPos(proj.places.scaffoldChest);
+        List<BlockPos> matChests = resolveMaterialAndScaffoldChests(proj.places);
+        if (!matChests.isEmpty()) {
+            Item fillItem = task.block != null && !task.block.isBlank() ? QueueMod.projectResolveItem(task.block) : null;
+            List<BlockPos> ordered = fillItem != null ? orderMaterialChestsBlockPos(matChests, fillItem) : matChests;
+            chestPos = !ordered.isEmpty() ? ordered.get(0) : matChests.get(0);
         }
         return QueueMod.projectCreateFillWaterHandle(task.block, boxes, chestPos, task.id);
     }
@@ -1288,8 +1334,8 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
     }
 
     private PriorityScheduler.ActionHandle startRestockTask(Project proj) {
-        if (proj.places.toolChest == null) {
-            return failedHandle("No toolChest configured on project for RESTOCK task.");
+        if (!proj.places.hasAnyToolSupply()) {
+            return failedHandle("No toolChest or supplyArea configured on project for RESTOCK task.");
         }
         return QueueMod.projectCreateFeatureHandle(
                 dev.survivalkit.Api::restockNow,
@@ -1320,11 +1366,19 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
     private static Map<String, Object> buildProjectPlacesMap(Project proj) {
         Map<String, Object> places = new LinkedHashMap<>();
         places.put("bed", proj.places.bed);
+        places.put("beds", proj.places.allBeds());
         places.put("tool_chest", proj.places.toolChest);
+        places.put("tool_chests", proj.places.allToolChests());
         places.put("return_chest", proj.places.returnChest);
+        places.put("return_chests", proj.places.allReturnChests());
         places.put("dump_chest", proj.places.dumpChest);
         places.put("scaffold_chest", proj.places.scaffoldChest);
+        places.put("scaffold_chests", proj.places.allScaffoldChests());
         places.put("material_chests", new ArrayList<>(proj.places.materialChests));
+        places.put("supply_areas", new ArrayList<>(proj.places.supplyAreas));
+        places.put("return_areas", new ArrayList<>(proj.places.returnAreas));
+        places.put("scaffold_areas", new ArrayList<>(proj.places.scaffoldAreas));
+        places.put("material_areas", new ArrayList<>(proj.places.materialAreas));
         return places;
     }
 
@@ -1390,11 +1444,38 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
         snap.prevHotbarPins = QueueMod.projectSnapshotHotbarPins();
         snap.prevItemSaver = EngineSelector.current().getSetting("itemSaver");
         snap.prevItemSaverThreshold = EngineSelector.current().getSetting("itemSaverThreshold");
+        snap.prevExtraBeds = dev.survivalkit.Api.extraBeds();
+        snap.prevExtraSupplies = dev.survivalkit.Api.extraSupplyPositions();
+        snap.prevSupplyAreas = dev.survivalkit.Api.supplyAreas();
+        snap.prevExtraReturnChests = dev.survivalkit.Api.extraReturnChests();
+        snap.prevReturnAreas = dev.survivalkit.Api.returnAreas();
 
-        // Places
-        if (p.places.bed != null) QueueMod.projectSetPosOption("survival.bed", p.places.bed);
-        if (p.places.toolChest != null) QueueMod.projectSetPosOption("survival.supply", p.places.toolChest);
-        if (p.places.returnChest != null) QueueMod.projectSetPosOption("survival.returnChest", p.places.returnChest);
+        // Places (primary + backup beds, multi-return chests, and storage areas)
+        List<int[]> allBeds = p.places.allBeds();
+        if (!allBeds.isEmpty()) {
+            QueueMod.projectSetPosOption("survival.bed", allBeds.get(0));
+            dev.survivalkit.Api.setExtraBeds(allBeds.size() > 1 ? allBeds.subList(1, allBeds.size()) : List.of());
+        } else {
+            dev.survivalkit.Api.setExtraBeds(List.of());
+        }
+        List<int[]> allTools = p.places.allToolChests();
+        if (!allTools.isEmpty()) {
+            QueueMod.projectSetPosOption("survival.supply", allTools.get(0));
+            dev.survivalkit.Api.setExtraSupplies(allTools.size() > 1 ? allTools.subList(1, allTools.size()) : List.of());
+        } else {
+            dev.survivalkit.Api.setExtraSupplies(List.of());
+        }
+        dev.survivalkit.Api.setSupplyAreas(p.places.supplyAreas);
+
+        List<int[]> allReturns = p.places.allReturnChests();
+        if (!allReturns.isEmpty()) {
+            QueueMod.projectSetPosOption("survival.returnChest", allReturns.get(0));
+            dev.survivalkit.Api.setExtraReturnChests(allReturns.size() > 1 ? allReturns.subList(1, allReturns.size()) : List.of());
+        } else {
+            dev.survivalkit.Api.setExtraReturnChests(List.of());
+        }
+        dev.survivalkit.Api.setReturnAreas(p.places.returnAreas);
+
         if (p.places.dumpChest != null) QueueMod.projectSetPosOption("loadchest.chest", p.places.dumpChest);
 
         // Protected areas
@@ -1474,6 +1555,11 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
         for (var entry : snap.prevOptions.entrySet()) {
             QueueMod.projectSetOption(entry.getKey(), entry.getValue());
         }
+        dev.survivalkit.Api.setExtraBeds(snap.prevExtraBeds);
+        dev.survivalkit.Api.setExtraSupplies(snap.prevExtraSupplies);
+        dev.survivalkit.Api.setSupplyAreas(snap.prevSupplyAreas);
+        dev.survivalkit.Api.setExtraReturnChests(snap.prevExtraReturnChests);
+        dev.survivalkit.Api.setReturnAreas(snap.prevReturnAreas);
         var want = dev.survivalkit.Api.wantList();
         want.clear();
         want.putAll(snap.prevWant);
@@ -1644,14 +1730,25 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
         return n;
     }
 
-    private static List<BlockPos> orderMaterialChests(List<int[]> rawChests, Item item) {
+    private static List<BlockPos> resolveMaterialAndScaffoldChests(Project.BasePlaces places) {
+        Minecraft mc = Minecraft.getInstance();
+        Level level = mc != null ? mc.level : null;
+        List<int[]> points = new ArrayList<>();
+        if (places.materialChests != null) points.addAll(places.materialChests);
+        points.addAll(places.allScaffoldChests());
+        List<int[]> areas = new ArrayList<>();
+        if (places.materialAreas != null) areas.addAll(places.materialAreas);
+        if (places.scaffoldAreas != null) areas.addAll(places.scaffoldAreas);
+        return dev.survivalkit.Api.scanStorageAreas(level, points, areas);
+    }
+
+    private static List<BlockPos> orderMaterialChestsBlockPos(List<BlockPos> rawChests, Item item) {
         String itemId = BuiltInRegistries.ITEM.getKey(item).toString();
         Minecraft mc = Minecraft.getInstance();
         BlockPos me = (mc != null && mc.player != null) ? mc.player.blockPosition() : BlockPos.ZERO;
         record Cand(BlockPos pos, int rank, double dist) {}
         List<Cand> cands = new ArrayList<>();
-        for (int[] c : rawChests) {
-            BlockPos pos = toBlockPos(c);
+        for (BlockPos pos : rawChests) {
             if (pos == null) continue;
             var info = dev.survivalkit.Api.chestInfo(pos, itemId);
             if (info.known() && info.fresh() && info.count() == 0) continue;
@@ -1846,6 +1943,11 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
         Map<Integer, String> prevHotbarPins = new LinkedHashMap<>();
         String prevItemSaver;
         String prevItemSaverThreshold;
+        List<int[]> prevExtraBeds = new ArrayList<>();
+        List<int[]> prevExtraSupplies = new ArrayList<>();
+        List<int[]> prevSupplyAreas = new ArrayList<>();
+        List<int[]> prevExtraReturnChests = new ArrayList<>();
+        List<int[]> prevReturnAreas = new ArrayList<>();
         final List<String> addedProtectGroups = new ArrayList<>();
     }
 

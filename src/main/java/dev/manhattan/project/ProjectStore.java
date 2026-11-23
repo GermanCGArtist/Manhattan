@@ -278,6 +278,32 @@ public final class ProjectStore {
                 continue;
             }
 
+            // 1b. area_box("name", pos(x1,y1,z1), pos(x2,y2,z2)) // supply_area | return_area | material_area | scaffold_area
+            if (code.startsWith("area_box") && positions.size() >= 2) {
+                int[] a = positions.get(0);
+                int[] b = positions.get(1);
+                int[] box = new int[]{
+                        Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.min(a[2], b[2]),
+                        Math.max(a[0], b[0]), Math.max(a[1], b[1]), Math.max(a[2], b[2])
+                };
+                String areaRole = resolveStorageAreaRole(code, role);
+                if (areaRole != null) {
+                    List<int[]> targetList = switch (areaRole) {
+                        case "supply_area" -> project.places.supplyAreas;
+                        case "return_area" -> project.places.returnAreas;
+                        case "material_area" -> project.places.materialAreas;
+                        case "scaffold_area" -> project.places.scaffoldAreas;
+                        default -> null;
+                    };
+                    if (targetList != null && !containsIntArray(targetList, box)) {
+                        targetList.add(box);
+                        if ("material_area".equals(areaRole)) materialChestsImported++;
+                        else placesImported++;
+                    }
+                    continue;
+                }
+            }
+
             // 2. let <var> = pos(x, y, z) [// role: ...]
             Matcher letMatcher = LET_PATTERN.matcher(code);
             if (!letMatcher.find()) continue;
@@ -289,24 +315,44 @@ public final class ProjectStore {
 
             switch (target) {
                 case "bed" -> {
-                    project.places.bed = pos;
-                    placesImported++;
+                    if (project.places.bed == null) {
+                        project.places.bed = pos;
+                        placesImported++;
+                    } else if (!sameIntArray(project.places.bed, pos) && !containsIntArray(project.places.extraBeds, pos)) {
+                        project.places.extraBeds.add(pos);
+                        placesImported++;
+                    }
                 }
                 case "dump" -> {
                     project.places.dumpChest = pos;
                     placesImported++;
                 }
                 case "tool" -> {
-                    project.places.toolChest = pos;
-                    placesImported++;
+                    if (project.places.toolChest == null) {
+                        project.places.toolChest = pos;
+                        placesImported++;
+                    } else if (!sameIntArray(project.places.toolChest, pos) && !containsIntArray(project.places.extraToolChests, pos)) {
+                        project.places.extraToolChests.add(pos);
+                        placesImported++;
+                    }
                 }
                 case "return" -> {
-                    project.places.returnChest = pos;
-                    placesImported++;
+                    if (project.places.returnChest == null) {
+                        project.places.returnChest = pos;
+                        placesImported++;
+                    } else if (!sameIntArray(project.places.returnChest, pos) && !containsIntArray(project.places.extraReturnChests, pos)) {
+                        project.places.extraReturnChests.add(pos);
+                        placesImported++;
+                    }
                 }
                 case "scaffold" -> {
-                    project.places.scaffoldChest = pos;
-                    placesImported++;
+                    if (project.places.scaffoldChest == null) {
+                        project.places.scaffoldChest = pos;
+                        placesImported++;
+                    } else if (!sameIntArray(project.places.scaffoldChest, pos) && !containsIntArray(project.places.extraScaffoldChests, pos)) {
+                        project.places.extraScaffoldChests.add(pos);
+                        placesImported++;
+                    }
                 }
                 case "material" -> {
                     if (!containsIntArray(project.places.materialChests, pos)) {
@@ -321,6 +367,26 @@ public final class ProjectStore {
         }
 
         return new ImportResult(placesImported, materialChestsImported, protectedAreasImported);
+    }
+
+    private static String resolveStorageAreaRole(String code, String role) {
+        switch (role) {
+            case "supply_area", "tool_area", "tools_area" -> { return "supply_area"; }
+            case "return_area", "returns_area" -> { return "return_area"; }
+            case "material_area", "materials_area", "build_supply", "build_supply_area" -> { return "material_area"; }
+            case "scaffold_area", "scaffolding_area" -> { return "scaffold_area"; }
+            default -> { /* inspect quoted area name */ }
+        }
+        String lower = code.toLowerCase(Locale.ROOT);
+        if (lower.contains("\"supply_area")) return "supply_area";
+        if (lower.contains("\"return_area")) return "return_area";
+        if (lower.contains("\"material_area") || lower.contains("\"build_supply")) return "material_area";
+        if (lower.contains("\"scaffold_area") || lower.contains("\"scaffolding_area")) return "scaffold_area";
+        return null;
+    }
+
+    private static boolean sameIntArray(int[] a, int[] b) {
+        return a != null && b != null && java.util.Arrays.equals(a, b);
     }
 
     private static String resolvePlaceTarget(String varName, String role) {

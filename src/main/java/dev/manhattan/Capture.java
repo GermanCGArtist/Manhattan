@@ -40,9 +40,13 @@ final class Capture {
     enum Type {
         DUMP("dump", "dump", "dump_chest", Kind.POINT, "dump() puts the inventory in here"),
         SUPPLY("supply", "supply / tools", "tool_chest", Kind.POINT, "restock() takes tools and food from here"),
+        SUPPLY_AREA("supply_area", "supply chest area", "supply_area", Kind.AREA, "area containing tool/food supply chests"),
         RETURN("return", "return chest", "return_chest", Kind.POINT, "worn-out tools go here"),
+        RETURN_AREA("return_area", "return chest area", "return_area", Kind.AREA, "area containing worn-tool return chests"),
         MATERIAL("material", "material chest", "material_chest", Kind.POINT, "blocks for fill_water / building"),
+        MATERIAL_AREA("material_area", "build supply area", "material_area", Kind.AREA, "area containing building material chests"),
         SCAFFOLDING("scaffolding", "scaffolding chest", "scaffold_chest", Kind.POINT, "blocks to bridge and climb with"),
+        SCAFFOLD_AREA("scaffold_area", "scaffolding chest area", "scaffold_area", Kind.AREA, "area containing scaffolding chests"),
         BED("bed", "bed", "bed", Kind.POINT, "sleep() uses it"),
         MINE("mine", "mine area", "mine", Kind.AREA, "clear_area() mines it out"),
         FILL("fill", "fill area", "fill", Kind.AREA, "fill_water() fills its water"),

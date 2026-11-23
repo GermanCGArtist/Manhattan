@@ -28,6 +28,7 @@ final class SleepProcess extends Feature {
 
     private State state = State.IDLE;
     private BlockPos bed;
+    private final java.util.Set<BlockPos> tripMissingBeds = new java.util.HashSet<>();
     private int timer, tries, cooldown, check, pathTimeout = MIN_PATH_TIMEOUT;
     private double startDist;
     private boolean wasThunder;
@@ -102,30 +103,59 @@ final class SleepProcess extends Feature {
         if (!Util.mayAct() || p.isSleeping() || Util.guiOpen(p)) return;
         boolean night = isNight(mc);
         if (!night && !(cfg.bedPlan && departureDue(mc, p))) return;
-        if (cfg.bed == null) {
+        if (Api.allBeds().isEmpty()) {
             if (night) Util.warn("nobed", "It is night but no bed is saved. Look at your bed and run /survival bed set (or /survival sleep off).");
             return;
         }
         start(mc);
     }
 
-    /** Walking time to the bed in ticks, from the straight-line distance, plus the configured slack. */
-    private static double travelTicks(LocalPlayer p) {
-        BlockPos bed = Util.pos(cfg.bed);
-        double dist = Math.sqrt(bed.distSqr(p.blockPosition()));
+    private static java.util.List<BlockPos> configuredBeds() {
+        java.util.List<BlockPos> out = new java.util.ArrayList<>();
+        for (int[] b : Api.allBeds()) {
+            BlockPos bp = Util.pos(b);
+            if (bp != null) out.add(bp);
+        }
+        return out;
+    }
+
+    private static boolean bedGoneAt(Minecraft mc, LocalPlayer p, BlockPos pos) {
+        if (pos == null || mc == null || mc.level == null || p == null) return false;
+        if (!mc.level.hasChunkAt(pos)) return false;
+        if (pos.distSqr(p.blockPosition()) > TRUST_BED_WITHIN * TRUST_BED_WITHIN) return false;
+        return !(mc.level.getBlockState(pos).getBlock() instanceof BedBlock);
+    }
+
+    private static BlockPos pickAvailableBed(Minecraft mc, LocalPlayer p, java.util.Set<BlockPos> skip) {
+        for (BlockPos cand : configuredBeds()) {
+            if (skip != null && skip.contains(cand)) continue;
+            if (!bedGoneAt(mc, p, cand)) return cand;
+        }
+        return null;
+    }
+
+    /** Walking time to the active/backup bed in ticks, from the straight-line distance, plus the configured slack. */
+    private static double travelTicks(Minecraft mc, LocalPlayer p) {
+        BlockPos target = pickAvailableBed(mc, p, null);
+        if (target == null) {
+            var all = configuredBeds();
+            if (all.isEmpty()) return 0;
+            target = all.get(0);
+        }
+        double dist = Math.sqrt(target.distSqr(p.blockPosition()));
         return dist * cfg.ticksPerBlock + cfg.bedLead * 20.0;
     }
 
     private static boolean departureDue(Minecraft mc, LocalPlayer p) {
         Level lvl = mc.level;
-        if (lvl == null || lvl.dimension() != Level.OVERWORLD || cfg.bed == null) return false;
+        if (lvl == null || lvl.dimension() != Level.OVERWORLD || Api.allBeds().isEmpty()) return false;
         long time = lvl.getOverworldClockTime() % 24000L;
         if (time < 6000 || time >= SLEEP_FROM) return false;
-        return ARRIVE_BY - time <= travelTicks(p);
+        return ARRIVE_BY - time <= travelTicks(mc, p);
     }
 
     static boolean bedTime(Minecraft mc, LocalPlayer p) {
-        return cfg.bed != null && (isNight(mc) || (cfg.bedPlan && departureDue(mc, p)));
+        return !Api.allBeds().isEmpty() && (isNight(mc) || (cfg.bedPlan && departureDue(mc, p)));
     }
 
     void startNow() {
@@ -136,7 +166,7 @@ final class SleepProcess extends Feature {
     void startNow(boolean allowPreDusk) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.level == null) return;
-        if (cfg.bed == null) { Util.msg("No bed saved. Look at a bed and run /survival bed set"); return; }
+        if (Api.allBeds().isEmpty()) { Util.msg("No bed saved. Look at a bed and run /survival bed set"); return; }
         if (state != State.IDLE) { Util.msg("Already on the way to bed."); return; }
         if (!allowPreDusk && !isNight(mc) && !departureDue(mc, mc.player)) {
             Util.msg("It is not night yet (or you are not in the overworld).");
@@ -151,19 +181,41 @@ final class SleepProcess extends Feature {
     private static final double TRUST_BED_WITHIN = 48;
 
     private boolean bedGone(Minecraft mc, LocalPlayer p) {
-        if (!mc.level.hasChunkAt(bed)) return false;
-        if (bed.distSqr(p.blockPosition()) > TRUST_BED_WITHIN * TRUST_BED_WITHIN) return false;
-        return !(mc.level.getBlockState(bed).getBlock() instanceof BedBlock);
+        return bedGoneAt(mc, p, bed);
+    }
+
+    private boolean tryFailoverBackupBed(Minecraft mc, LocalPlayer p) {
+        if (bed != null) tripMissingBeds.add(bed);
+        BlockPos backup = pickAvailableBed(mc, p, tripMissingBeds);
+        if (backup == null) return false;
+        BlockPos old = bed;
+        bed = backup;
+        timer = 0;
+        tries = 0;
+        startDist = Math.sqrt(bed.distSqr(p.blockPosition()));
+        double travel = startDist * cfg.ticksPerBlock + cfg.bedLead * 20.0;
+        pathTimeout = (int) Math.max(MIN_PATH_TIMEOUT, travel * 2 + 400);
+        state = State.PATHING;
+        Util.msg("Bed missing at " + (old != null ? old.toShortString() : "?")
+                + " — switching to backup bed at " + bed.toShortString() + ".");
+        EngineSelector.current().goTo(GoalSpec.near(bed, 1));
+        return true;
     }
 
     private void start(Minecraft mc) {
-        bed = Util.pos(cfg.bed);
-        if (bedGone(mc, mc.player)) {
-            String msg = "Bed missing at " + bed.toShortString() + " — halting for safety.";
+        tripMissingBeds.clear();
+        var all = configuredBeds();
+        if (all.isEmpty()) return;
+        BlockPos primary = all.get(0);
+        BlockPos chosen = pickAvailableBed(mc, mc.player, tripMissingBeds);
+        if (chosen == null) {
+            bed = primary;
+            String msg = (all.size() > 1 ? "All " + all.size() + " configured beds are missing (last checked " : "Bed missing at ")
+                    + bed.toShortString() + (all.size() > 1 ? ")" : "") + " — halting for safety.";
             if (cfg.logoffOnMissingBed) {
                 Util.warn("nobed", msg);
                 dev.midtown.api.RuntimeBus.requestHalt(msg);
-                Api.disconnect("Bed missing at " + bed.toShortString());
+                Api.disconnect(msg);
                 return;
             }
             if (dev.midtown.api.RuntimeBus.isScriptActive()) {
@@ -175,13 +227,17 @@ final class SleepProcess extends Feature {
             cooldown = 20 * 120;
             return;
         }
+        bed = chosen;
+        if (!bed.equals(primary)) {
+            Util.msg("Primary bed missing at " + primary.toShortString() + " — using backup bed at " + bed.toShortString() + ".");
+        }
         timer = 0;
         tries = 0;
         toppedUp = false;
         disableBreakForTravel();
         state = State.PATHING;
         startDist = Math.sqrt(bed.distSqr(mc.player.blockPosition()));
-        double travel = travelTicks(mc.player);
+        double travel = startDist * cfg.ticksPerBlock + cfg.bedLead * 20.0;
         pathTimeout = (int) Math.max(MIN_PATH_TIMEOUT, travel * 2 + 400);
         if (isNight(mc)) {
             Util.msg((mc.level.isThundering() && !mc.level.isDarkOutside() ? "Thunderstorm" : "Night") + ": going to bed at " + bed.toShortString());
@@ -215,12 +271,15 @@ final class SleepProcess extends Feature {
                 }
                 if (timer > pathTimeout) { fail("Could not reach the bed in time."); return; }
                 if (bedGone(mc, p)) {
-                    String msg = "Bed missing at " + bed.toShortString() + " — halting for safety.";
+                    if (tryFailoverBackupBed(mc, p)) {
+                        return;
+                    }
+                    String msg = "Bed missing at " + bed.toShortString() + " (no backup beds available) — halting for safety.";
                     if (cfg.logoffOnMissingBed) {
                         enterIdle();
                         EngineSelector.current().cancel();
                         dev.midtown.api.RuntimeBus.requestHalt(msg);
-                        Api.disconnect("Bed missing at " + bed.toShortString());
+                        Api.disconnect(msg);
                         return;
                     }
                     if (dev.midtown.api.RuntimeBus.isScriptActive()) {

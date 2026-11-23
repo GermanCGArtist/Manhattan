@@ -80,6 +80,7 @@ public class ProjectQueueTest {
         testProjectLayerLivePreemptionAndResume();
         testProjectLayerPreemptionWaitsForCombat();
         testProjectLayerErrorPolicies();
+        testMultiBedAndStorageAreas();
 
         System.out.println("ProjectQueueTest: " + passes + " passed, " + fails + " failed.");
         if (fails > 0) System.exit(1);
@@ -1338,5 +1339,69 @@ public class ProjectQueueTest {
             eq("A status FAILED", ls.layerStatus(pq.find("a")), ProjectLayerScheduler.LayerStatus.FAILED);
             eq("B status DONE", ls.layerStatus(pq.find("b")), ProjectLayerScheduler.LayerStatus.DONE);
         }
+    }
+
+    private static void testMultiBedAndStorageAreas() throws Exception {
+        Project p = new Project("multi", "Multi Storage", "testworld");
+        String capture = """
+                // --- places
+                let bed = pos(10, 64, 10) // bed
+                let bed_2 = pos(14, 64, 10) // bed
+                let bed_3 = pos(10, 64, 10) // bed duplicate ignored
+                let return_chest = pos(20, 64, 10) // return
+                let return_chest_2 = pos(22, 64, 10) // return
+                // --- areas
+                area_box("supply_area_1", pos(0, 63, 0), pos(5, 66, 5)) // supply_area
+                area_box("return_area_1", pos(6, 63, 0), pos(9, 66, 5)) // return_area
+                area_box("material_area_1", pos(10, 63, 0), pos(20, 66, 5)) // material_area
+                area_box("material_area_2", pos(21, 63, 0), pos(30, 66, 5)) // build_supply
+                area_box("scaffold_area_1", pos(31, 63, 0), pos(35, 66, 5)) // scaffold_area
+                """;
+        ProjectStore.ImportResult res = ProjectStore.importFromCaptureText(p, capture);
+        check("capture imported multiple items", res.totalImported() >= 9);
+        eq("allBeds count deduplicated", p.places.allBeds().size(), 2);
+        eqArr("primary bed", p.places.bed, new int[]{10, 64, 10});
+        eqArr("backup bed", p.places.extraBeds.get(0), new int[]{14, 64, 10});
+        eq("allReturnChests count", p.places.allReturnChests().size(), 2);
+        eq("supplyAreas count", p.places.supplyAreas.size(), 1);
+        eq("returnAreas count", p.places.returnAreas.size(), 1);
+        eq("materialAreas count", p.places.materialAreas.size(), 2);
+        eq("scaffoldAreas count", p.places.scaffoldAreas.size(), 1);
+
+        // Round-trip save/load preserves all new fields
+        Path tmp = Files.createTempDirectory("manhattan-multi-test");
+        try {
+            ProjectStore.save(tmp, p);
+            Project loaded = ProjectStore.load(tmp, "testworld", "multi");
+            check("loaded project not null", loaded != null);
+            eq("loaded allBeds", loaded.places.allBeds().size(), 2);
+            eq("loaded allReturnChests", loaded.places.allReturnChests().size(), 2);
+            eq("loaded supplyAreas", loaded.places.supplyAreas.size(), 1);
+            eq("loaded materialAreas", loaded.places.materialAreas.size(), 2);
+            eq("loaded scaffoldAreas", loaded.places.scaffoldAreas.size(), 1);
+        } finally {
+            Files.walk(tmp).sorted(Comparator.reverseOrder()).forEach(path -> {
+                try { Files.deleteIfExists(path); } catch (IOException ignored) {}
+            });
+        }
+
+        // LogisticsPlanner triggers using ONLY storage areas (no single-chest coordinates set)
+        Project areaOnly = new Project("areaonly", "Area Only", "testworld");
+        areaOnly.places.supplyAreas.add(new int[]{0, 63, 0, 5, 66, 5});
+        areaOnly.places.returnAreas.add(new int[]{6, 63, 0, 9, 66, 5});
+        areaOnly.places.materialAreas.add(new int[]{10, 63, 0, 20, 66, 5});
+        areaOnly.survival.want.put("@food", 16);
+
+        LogisticsPlanner.InventoryView inv = new LogisticsPlanner.InventoryView() {
+            @Override public int freeSlots() { return 10; }
+            @Override public int count(String item) { return 0; }
+            @Override public boolean restockNeeded() { return true; }
+            @Override public boolean hasWornTools() { return true; }
+        };
+        LogisticsPlanner.BaseTripPlan plan = LogisticsPlanner.planBaseTrip(
+                areaOnly, null, inv, Map.of("stone", 64));
+        check("plan includes RETURN_WORN from returnAreas", plan.steps().contains(LogisticsPlanner.StepKind.RETURN_WORN));
+        check("plan includes RESTOCK_TOOLS_FOOD from supplyAreas", plan.steps().contains(LogisticsPlanner.StepKind.RESTOCK_TOOLS_FOOD));
+        check("plan includes FETCH_MATERIALS from materialAreas", plan.steps().contains(LogisticsPlanner.StepKind.FETCH_MATERIALS));
     }
 }

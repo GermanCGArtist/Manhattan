@@ -36,6 +36,26 @@ public final class Api {
         cfg.bed = (pos != null && pos.length == 3) ? pos.clone() : null;
     }
 
+    /** Returns copies of any configured backup bed coordinates. */
+    public static List<int[]> extraBeds() {
+        return copyPosList(cfg.extraBeds);
+    }
+
+    /** Overrides backup bed coordinates in memory (used by Project activation & failover). */
+    public static void setExtraBeds(List<int[]> beds) {
+        cfg.extraBeds = copyPosList(beds);
+    }
+
+    /** Ordered, deduplicated list of all configured beds (primary first, then backups). */
+    public static List<int[]> allBeds() {
+        List<int[]> out = new ArrayList<>();
+        addUniquePos(out, cfg.bed);
+        if (cfg.extraBeds != null) {
+            for (int[] p : cfg.extraBeds) addUniquePos(out, p);
+        }
+        return out;
+    }
+
     /** Clears the missing-bed / sleep retry cooldown so a newly replaced bed is usable immediately. */
     public static void resetSleepCooldown() {
         if (SurvivalKitMod.sleep != null) {
@@ -50,18 +70,111 @@ public final class Api {
 
     /** Returns copies of any extra supply chest coordinates. */
     public static List<int[]> extraSupplyPositions() {
+        return copyPosList(cfg.extraSupplies);
+    }
+
+    /** Overrides extra supply chest coordinates in memory (used by Project activation). */
+    public static void setExtraSupplies(List<int[]> positions) {
+        cfg.extraSupplies = copyPosList(positions);
+    }
+
+    /** Returns copies of any configured supply chest area boxes {@code [x1,y1,z1,x2,y2,z2]}. */
+    public static List<int[]> supplyAreas() {
+        return copyBoxList(cfg.supplyAreas);
+    }
+
+    /** Overrides supply chest area boxes in memory (used by Project activation). */
+    public static void setSupplyAreas(List<int[]> boxes) {
+        cfg.supplyAreas = copyBoxList(boxes);
+    }
+
+    /** Returns the currently configured primary return chest {@code [x, y, z]} or {@code null}. */
+    public static int[] returnChestPos() {
+        return cfg.returnChest != null && cfg.returnChest.length == 3 ? cfg.returnChest.clone() : null;
+    }
+
+    /** Returns copies of any extra return chest coordinates. */
+    public static List<int[]> extraReturnChests() {
+        return copyPosList(cfg.extraReturnChests);
+    }
+
+    /** Overrides extra return chest coordinates in memory (used by Project activation). */
+    public static void setExtraReturnChests(List<int[]> positions) {
+        cfg.extraReturnChests = copyPosList(positions);
+    }
+
+    /** Returns copies of any configured return chest area boxes {@code [x1,y1,z1,x2,y2,z2]}. */
+    public static List<int[]> returnAreas() {
+        return copyBoxList(cfg.returnAreas);
+    }
+
+    /** Overrides return chest area boxes in memory (used by Project activation). */
+    public static void setReturnAreas(List<int[]> boxes) {
+        cfg.returnAreas = copyBoxList(boxes);
+    }
+
+    /** Ordered, deduplicated list of all explicitly configured return chests. */
+    public static List<int[]> allReturnChests() {
         List<int[]> out = new ArrayList<>();
-        if (cfg.extraSupplies != null) {
-            for (int[] p : cfg.extraSupplies) {
-                if (p != null && p.length == 3) out.add(p.clone());
+        addUniquePos(out, cfg.returnChest);
+        if (cfg.extraReturnChests != null) {
+            for (int[] p : cfg.extraReturnChests) addUniquePos(out, p);
+        }
+        return out;
+    }
+
+    /** True if any tool/food supply chest or supply area is configured. */
+    public static boolean hasAnySupply() {
+        return cfg.supply != null
+                || (cfg.extraSupplies != null && !cfg.extraSupplies.isEmpty())
+                || (cfg.supplyAreas != null && !cfg.supplyAreas.isEmpty());
+    }
+
+    /** True if any return chest or return area is configured. */
+    public static boolean hasAnyReturnChest() {
+        return cfg.returnChest != null
+                || (cfg.extraReturnChests != null && !cfg.extraReturnChests.isEmpty())
+                || (cfg.returnAreas != null && !cfg.returnAreas.isEmpty());
+    }
+
+    /** Scans explicit chest positions plus any chests/barrels/shulkers inside 6-int area boxes (double-chest deduplicated). */
+    public static List<BlockPos> scanStorageAreas(
+            net.minecraft.world.level.Level level,
+            List<int[]> explicitPoints,
+            List<int[]> areas
+    ) {
+        return Util.scanStorageAreas(level, explicitPoints, areas);
+    }
+
+    private static List<int[]> copyPosList(List<int[]> src) {
+        List<int[]> out = new ArrayList<>();
+        if (src != null) {
+            for (int[] p : src) addUniquePos(out, p);
+        }
+        return out;
+    }
+
+    private static List<int[]> copyBoxList(List<int[]> src) {
+        List<int[]> out = new ArrayList<>();
+        if (src != null) {
+            for (int[] b : src) {
+                if (b != null && b.length >= 6) {
+                    out.add(new int[]{
+                            Math.min(b[0], b[3]), Math.min(b[1], b[4]), Math.min(b[2], b[5]),
+                            Math.max(b[0], b[3]), Math.max(b[1], b[4]), Math.max(b[2], b[5])
+                    });
+                }
             }
         }
         return out;
     }
 
-    /** Returns the currently configured return chest {@code [x, y, z]} or {@code null}. */
-    public static int[] returnChestPos() {
-        return cfg.returnChest != null && cfg.returnChest.length == 3 ? cfg.returnChest.clone() : null;
+    private static void addUniquePos(List<int[]> out, int[] p) {
+        if (p == null || p.length < 3) return;
+        for (int[] e : out) {
+            if (e[0] == p[0] && e[1] == p[1] && e[2] == p[2]) return;
+        }
+        out.add(new int[]{p[0], p[1], p[2]});
     }
 
     /** True while SurvivalKit is recovering from a death. */
@@ -103,7 +216,7 @@ public final class Api {
 
     /** Walks to the saved bed and sleeps; when {@code allowPreDusk} is true, walks early and waits for nightfall. */
     public static String sleepNow(boolean allowPreDusk) {
-        if (cfg.bed == null) return "No bed saved. Set it in the script: option(\"survival.bed\", pos(x, y, z)) - or look at the bed and /survival bed set.";
+        if (allBeds().isEmpty()) return "No bed saved. Set it in the script: option(\"survival.bed\", pos(x, y, z)) - or look at the bed and /survival bed set.";
         SurvivalKitMod.sleep.startNow(allowPreDusk);
         return SurvivalKitMod.sleep.busy() ? null : "";   // not night, or the bed is not loaded: the chat says which
     }
@@ -117,7 +230,7 @@ public final class Api {
     }
 
     public static String restockNow() {
-        if (cfg.supply == null) return "No supply chest saved. Set it in the script: option(\"survival.supply\", pos(x, y, z)).";
+        if (!hasAnySupply() && !hasAnyReturnChest()) return "No supply chest saved. Set it in the script: option(\"survival.supply\", pos(x, y, z)).";
         if (cfg.want.isEmpty()) return "The want-list is empty. Add rules in the script: want(\"bread\", 16).";
         SurvivalKitMod.restock.startNow();
         return SurvivalKitMod.restock.busy() ? null : "";
@@ -182,7 +295,7 @@ public final class Api {
 
     public static boolean restockNeeded() {
         var p = Minecraft.getInstance().player;
-        return p != null && cfg.supply != null && RestockProcess.needed(p);
+        return p != null && hasAnySupply() && RestockProcess.needed(p);
     }
 
     /** True when the supply chest was recently short on {@code item} and is still in backoff. */

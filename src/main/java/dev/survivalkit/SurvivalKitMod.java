@@ -145,12 +145,18 @@ public class SurvivalKitMod implements ClientModInitializer {
                                     return 1;
                                 })))
 
-                        .then(placeCmd("bed", "bed", b -> b instanceof BedBlock, v -> cfg.bed = v))
+                        .then(placeCmd("bed", "bed", b -> b instanceof BedBlock, v -> cfg.bed = v)
+                                .then(ClientCommands.literal("add").executes(ctx -> { bedAdd(); return 1; }))
+                                .then(ClientCommands.literal("remove").executes(ctx -> { bedRemove(); return 1; }))
+                                .then(ClientCommands.literal("list").executes(ctx -> { bedList(); return 1; })))
                         .then(placeCmd("supply", "supply chest", b -> b instanceof ChestBlock || b instanceof BarrelBlock, v -> cfg.supply = v)
                                 .then(ClientCommands.literal("add").executes(ctx -> { supplyAdd(); return 1; }))
                                 .then(ClientCommands.literal("remove").executes(ctx -> { supplyRemove(); return 1; }))
                                 .then(ClientCommands.literal("list").executes(ctx -> { supplyList(); return 1; })))
-                        .then(placeCmd("return", "return chest", b -> b instanceof ChestBlock || b instanceof BarrelBlock, v -> cfg.returnChest = v))
+                        .then(placeCmd("return", "return chest", b -> b instanceof ChestBlock || b instanceof BarrelBlock, v -> cfg.returnChest = v)
+                                .then(ClientCommands.literal("add").executes(ctx -> { returnAdd(); return 1; }))
+                                .then(ClientCommands.literal("remove").executes(ctx -> { returnRemove(); return 1; }))
+                                .then(ClientCommands.literal("list").executes(ctx -> { returnList(); return 1; })))
 
                         .then(ClientCommands.literal("want")
                                 .then(ClientCommands.literal("list").executes(ctx -> {
@@ -320,6 +326,91 @@ public class SurvivalKitMod implements ClientModInitializer {
 
     private static boolean same(int[] a, BlockPos p) {
         return a != null && a[0] == p.getX() && a[1] == p.getY() && a[2] == p.getZ();
+    }
+
+    private static BlockPos lookedAtBed() {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.level != null && mc.hitResult instanceof BlockHitResult hit
+                && mc.level.getBlockState(hit.getBlockPos()).getBlock() instanceof BedBlock) return hit.getBlockPos();
+        Util.msg("Look at a bed first.");
+        return null;
+    }
+
+    private static void bedAdd() {
+        BlockPos p = lookedAtBed();
+        if (p == null) return;
+        if (cfg.bed == null) { save(v -> cfg.bed = v, "bed", p); return; }
+        if (same(cfg.bed, p) || cfg.extraBeds.stream().anyMatch(a -> same(a, p))) { Util.msg("That bed is already saved."); return; }
+        cfg.extraBeds.add(new int[]{p.getX(), p.getY(), p.getZ()});
+        Config.save();
+        Util.msg("Backup bed saved: " + p.toShortString() + " (" + (1 + cfg.extraBeds.size()) + " beds total).");
+    }
+
+    private static void bedRemove() {
+        BlockPos p = lookedAtBed();
+        if (p == null) return;
+        if (cfg.extraBeds.removeIf(a -> same(a, p))) {
+            Config.save();
+            Util.msg("Backup bed removed.");
+        } else if (same(cfg.bed, p)) {
+            cfg.bed = cfg.extraBeds.isEmpty() ? null : cfg.extraBeds.remove(0);
+            Config.save();
+            Util.msg("Bed removed" + (cfg.bed == null ? ": none left." : "; the next backup is now the main bed."));
+        } else {
+            Util.msg("That is not a saved bed.");
+        }
+    }
+
+    private static void bedList() {
+        if (cfg.bed == null && cfg.extraBeds.isEmpty()) { Util.msg("No bed set (/survival bed set)."); return; }
+        StringBuilder sb = new StringBuilder("Beds: ");
+        boolean first = true;
+        for (int[] b : Api.allBeds()) {
+            if (!first) sb.append(", ");
+            sb.append(Util.pos(b).toShortString());
+            first = false;
+        }
+        Util.msg(sb.toString());
+    }
+
+    private static void returnAdd() {
+        BlockPos p = lookedAtStorage();
+        if (p == null) return;
+        if (cfg.returnChest == null) { save(v -> cfg.returnChest = v, "return chest", p); return; }
+        if (same(cfg.returnChest, p) || cfg.extraReturnChests.stream().anyMatch(a -> same(a, p))) { Util.msg("That chest is already a return chest."); return; }
+        cfg.extraReturnChests.add(new int[]{p.getX(), p.getY(), p.getZ()});
+        Config.save();
+        Util.msg("Extra return chest saved: " + p.toShortString() + " (" + (1 + cfg.extraReturnChests.size()) + " in all).");
+    }
+
+    private static void returnRemove() {
+        BlockPos p = lookedAtStorage();
+        if (p == null) return;
+        if (cfg.extraReturnChests.removeIf(a -> same(a, p))) {
+            Config.save();
+            Util.msg("Return chest removed.");
+        } else if (same(cfg.returnChest, p)) {
+            cfg.returnChest = cfg.extraReturnChests.isEmpty() ? null : cfg.extraReturnChests.remove(0);
+            Config.save();
+            Util.msg("Return chest removed" + (cfg.returnChest == null ? ": none left." : "; the next one is now the main return chest."));
+        } else {
+            Util.msg("That is not a return chest.");
+        }
+    }
+
+    private static void returnList() {
+        if (!Api.hasAnyReturnChest()) { Util.msg("No return chest set (/survival return set)."); return; }
+        StringBuilder sb = new StringBuilder("Return chests: ");
+        boolean first = true;
+        for (int[] r : Api.allReturnChests()) {
+            if (!first) sb.append(", ");
+            sb.append(Util.pos(r).toShortString());
+            first = false;
+        }
+        if (cfg.returnAreas != null && !cfg.returnAreas.isEmpty()) {
+            sb.append(" + ").append(cfg.returnAreas.size()).append(" return area(s)");
+        }
+        Util.msg(sb.toString());
     }
 
     private static void supplyAdd() {
