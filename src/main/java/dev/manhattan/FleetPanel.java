@@ -43,7 +43,13 @@ final class FleetPanel {
             UiTheme.textColored(DIM, "Not connected to a Fleet Server (solo/local server or mod not installed).");
         }
 
-        if (!fc.lastNotice().isBlank()) {
+        if (fc.isSafetyHalted()) {
+            UiTheme.textColored(ERR, "SAFETY HALT: " + fc.safetyHaltReason());
+            if (Widgets.button("Clear Safety Halt & Resume##fleetClearHalt", 0)) {
+                fc.clearSafetyHalt();
+                dev.manhattan.project.GameProjectRuntime.instance().clearSafetyHalt();
+            }
+        } else if (!fc.lastNotice().isBlank()) {
             UiTheme.textColored(fc.lastNoticeError() ? ERR : ACCENT, fc.lastNotice());
         }
 

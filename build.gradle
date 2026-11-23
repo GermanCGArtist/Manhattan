@@ -145,7 +145,13 @@ tasks.register('worldOverlayTest', JavaExec) {
     classpath = sourceSets.test.runtimeClasspath
     mainClass = 'dev.manhattan.WorldOverlayTest'
 }
-tasks.named('check') { dependsOn 'langTest', 'parseScripts', 'midtownTest', 'midtownBodyTest', 'projectQueueTest', 'telemetryIncidentTest', 'chunkGridTest', 'chunkRunnerTest', 'fleetClientTest', 'worldOverlayTest', 'nativesTest' }
+tasks.register('safetyGuardTest', JavaExec) {
+    group = 'verification'
+    description = 'Runs missing-bed respawn safety guard and fleet safety halt unit tests.'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.survivalkit.SafetyGuardTest'
+}
+tasks.named('check') { dependsOn 'langTest', 'parseScripts', 'midtownTest', 'midtownBodyTest', 'projectQueueTest', 'telemetryIncidentTest', 'chunkGridTest', 'chunkRunnerTest', 'fleetClientTest', 'worldOverlayTest', 'safetyGuardTest', 'nativesTest' }
 tasks.named('test') { failOnNoDiscoveredTests = false }   // the tests above are plain programs, not JUnit
 
 java {

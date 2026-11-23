@@ -221,7 +221,7 @@ public class SurvivalKitMod implements ClientModInitializer {
             return;
         }
         if (deadTicks++ == 0) {
-            recovery.onDeath();
+            recovery.onDeath(lastAlivePos);
             if (lastAlivePos != null && mc.level != null) {
                 String dim = mc.level.dimension().identifier().toString();
                 var summary = dev.midtown.exec.MidtownEngine.recordDeath(dim, lastAlivePos);

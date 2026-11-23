@@ -59,6 +59,26 @@ final class RestockProcess extends Feature {
     private final Set<String> tripGot = new HashSet<>();            // rules that some chest gave something for   // trips in a row that found none of a wanted item
     private final Map<String, Integer> lastWorn = new HashMap<>();
     private final List<String> summary = new ArrayList<>();
+    private Boolean breakBefore;   // saved allowBreak while traveling to chests (restored on exit)
+
+    private void disableBreakForTravel() {
+        if (breakBefore == null) {
+            breakBefore = dev.buildtools.Api.setOwnBreak(false);
+        }
+    }
+
+    private void restoreBreakAfterTravel() {
+        if (breakBefore != null) {
+            boolean prev = breakBefore;
+            breakBefore = null;
+            dev.buildtools.Api.setOwnBreak(prev);
+        }
+    }
+
+    private void enterIdle() {
+        state = State.IDLE;
+        restoreBreakAfterTravel();
+    }
 
     RestockProcess() {
         super("SurvivalKit restock", 12);
@@ -270,6 +290,7 @@ final class RestockProcess extends Feature {
         timer = 0;
         pathFails = 0;
         queue = null;
+        disableBreakForTravel();
         state = State.PATHING;
         EngineSelector.current().goTo(GoalSpec.near(chest, 2));
     }
@@ -325,7 +346,7 @@ final class RestockProcess extends Feature {
         }
         settleShort();
         Session.count("restocks");
-        state = State.IDLE;
+        enterIdle();
         queue = null;
         cooldown = 40;
         EngineSelector.current().cancel();
@@ -360,12 +381,12 @@ final class RestockProcess extends Feature {
 
     @Override
     boolean active() {
-        if (state != State.IDLE && Minecraft.getInstance().player == null) state = State.IDLE;
+        if (state != State.IDLE && Minecraft.getInstance().player == null) enterIdle();
         return state != State.IDLE;
     }
 
     private void stepInternal(Minecraft mc, LocalPlayer p) {
-        if (p == null || mc.gameMode == null) { state = State.IDLE; return; }
+        if (p == null || mc.gameMode == null) { enterIdle(); return; }
 
         switch (state) {
             case PATHING -> {
@@ -412,7 +433,7 @@ final class RestockProcess extends Feature {
             }
             case TAKING -> {
                 AbstractContainerMenu h = p.containerMenu;
-                if (h == p.inventoryMenu) { state = State.IDLE; cooldown = 100; return; }
+                if (h == p.inventoryMenu) { enterIdle(); cooldown = 100; return; }
                 if (queue == null) {
                     if (++timer < 8) return;   // on a server the chest contents can arrive a moment after it opens
                     summary.clear();
@@ -457,7 +478,7 @@ final class RestockProcess extends Feature {
         }
         if (returnLeg) returnExhaustedUntil = Math.max(returnExhaustedUntil, now + wait);
         Util.msg(why + " Trying again in " + Math.max(1, wait / (20 * 60)) + " min" + (failStreak > 2 ? " (it keeps failing: check the way to the chest, and that nothing is on top of it)." : "."));
-        state = State.IDLE;
+        enterIdle();
         cooldown = (int) wait;
         EngineSelector.current().cancel();
     }
@@ -517,7 +538,7 @@ final class RestockProcess extends Feature {
 
     private void done(String text) {
         Util.msg(text);
-        state = State.IDLE;
+        enterIdle();
         queue = null;
         cooldown = 40;
         EngineSelector.current().cancel();
@@ -644,7 +665,7 @@ final class RestockProcess extends Feature {
             LocalPlayer p = Minecraft.getInstance().player;
             if (p != null && p.containerMenu != p.inventoryMenu) p.closeContainer();
         }
-        state = State.IDLE;
+        enterIdle();
         queue = null;
         EngineSelector.current().cancel();
     }

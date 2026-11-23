@@ -32,6 +32,26 @@ final class SleepProcess extends Feature {
     private double startDist;
     private boolean wasThunder;
     private boolean toppedUp;   // supplies were refilled on this trip to the bed
+    private Boolean breakBefore;   // saved allowBreak while traveling to the bed (restored on exit)
+
+    private void disableBreakForTravel() {
+        if (breakBefore == null) {
+            breakBefore = dev.buildtools.Api.setOwnBreak(false);
+        }
+    }
+
+    private void restoreBreakAfterTravel() {
+        if (breakBefore != null) {
+            boolean prev = breakBefore;
+            breakBefore = null;
+            dev.buildtools.Api.setOwnBreak(prev);
+        }
+    }
+
+    private void enterIdle() {
+        state = State.IDLE;
+        restoreBreakAfterTravel();
+    }
 
     SleepProcess() {
         super("SurvivalKit sleep", 15);
@@ -139,9 +159,16 @@ final class SleepProcess extends Feature {
     private void start(Minecraft mc) {
         bed = Util.pos(cfg.bed);
         if (bedGone(mc, mc.player)) {
+            String msg = "Bed missing at " + bed.toShortString() + " — halting for safety.";
             if (cfg.logoffOnMissingBed) {
-                Util.warn("nobed", "Bed missing at " + bed.toShortString() + "; disconnecting.");
+                Util.warn("nobed", msg);
+                dev.midtown.api.RuntimeBus.requestHalt(msg);
                 Api.disconnect("Bed missing at " + bed.toShortString());
+                return;
+            }
+            if (dev.midtown.api.RuntimeBus.isScriptActive()) {
+                Util.warn("nobed", msg);
+                dev.midtown.api.RuntimeBus.requestHalt(msg);
                 return;
             }
             Util.msg("No bed at " + bed.toShortString() + " (it was removed?). Checking again in 2 minutes.");
@@ -151,6 +178,7 @@ final class SleepProcess extends Feature {
         timer = 0;
         tries = 0;
         toppedUp = false;
+        disableBreakForTravel();
         state = State.PATHING;
         startDist = Math.sqrt(bed.distSqr(mc.player.blockPosition()));
         double travel = travelTicks(mc.player);
@@ -168,29 +196,38 @@ final class SleepProcess extends Feature {
 
     @Override
     boolean active() {
-        if (state != State.IDLE && Minecraft.getInstance().player == null) state = State.IDLE;
+        if (state != State.IDLE && Minecraft.getInstance().player == null) enterIdle();
         return state != State.IDLE;
     }
 
     private void stepInternal(Minecraft mc, LocalPlayer p) {
-        if (p == null || mc.gameMode == null) { state = State.IDLE; return; }
+        if (p == null || mc.gameMode == null) { enterIdle(); return; }
         timer++;
 
         switch (state) {
             case PATHING -> {
                 if (isMorningOrMidday(mc)) {
                     EngineSelector.current().cancel();
-                    state = State.IDLE;
+                    enterIdle();
                     cooldown = 20 * 10;
                     Util.msg("Night was skipped (morning arrived) - carrying on.");
                     return;
                 }
                 if (timer > pathTimeout) { fail("Could not reach the bed in time."); return; }
                 if (bedGone(mc, p)) {
+                    String msg = "Bed missing at " + bed.toShortString() + " — halting for safety.";
                     if (cfg.logoffOnMissingBed) {
-                        state = State.IDLE;
+                        enterIdle();
                         EngineSelector.current().cancel();
+                        dev.midtown.api.RuntimeBus.requestHalt(msg);
                         Api.disconnect("Bed missing at " + bed.toShortString());
+                        return;
+                    }
+                    if (dev.midtown.api.RuntimeBus.isScriptActive()) {
+                        enterIdle();
+                        EngineSelector.current().cancel();
+                        Util.warn("nobed", msg);
+                        dev.midtown.api.RuntimeBus.requestHalt(msg);
                         return;
                     }
                     fail("There is no bed at " + bed.toShortString() + ".");
@@ -231,7 +268,7 @@ final class SleepProcess extends Feature {
             }
             case WAITING -> {
                 if (isMorningOrMidday(mc)) {
-                    state = State.IDLE;
+                    enterIdle();
                     cooldown = 20 * 10;
                     Util.msg("Night was skipped (morning arrived) - carrying on.");
                     return;
@@ -245,7 +282,7 @@ final class SleepProcess extends Feature {
             }
             case ENTERING -> {
                 if (!isNight(mc)) {
-                    state = State.IDLE;
+                    enterIdle();
                     cooldown = 20 * 10;
                     Util.msg("It is not night any more - no need to sleep.");
                     return;
@@ -265,7 +302,7 @@ final class SleepProcess extends Feature {
             }
             case SLEEPING -> {
                 if (!p.isSleeping() || timer > SLEEP_TIMEOUT) {
-                    state = State.IDLE;
+                    enterIdle();
                     cooldown = 20 * 10;
                     Util.msg("Awake - carrying on.");
                 }
@@ -286,14 +323,14 @@ final class SleepProcess extends Feature {
 
     private void fail(String why) {
         Util.msg(why + " Trying again in 1 minute.");
-        state = State.IDLE;
+        enterIdle();
         cooldown = 20 * 60;
         EngineSelector.current().cancel();
     }
 
     @Override
     public void onLostControl() {
-        state = State.IDLE;
+        enterIdle();
         EngineSelector.current().cancel();
     }
 }

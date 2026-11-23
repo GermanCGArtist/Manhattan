@@ -60,6 +60,9 @@ public final class FleetClient {
     private int[] sleepBedPos;
     private long sleepExpiresAtMs;
 
+    // Safety halt latch: blocks claiming/restarting fleet work until explicitly cleared
+    private volatile String safetyHaltReason;
+
     private record ChestLockState(boolean granted, String lockedBy, long expiresAtMs, long requestedAtMs) {}
 
     private FleetClient() {}
@@ -103,6 +106,7 @@ public final class FleetClient {
         designatedSleeper = false;
         sleepBedPos = null;
         sleepExpiresAtMs = 0L;
+        safetyHaltReason = null;
         latestSnapshot = new FleetSnapshot();
         syncedChests.clear();
         chestLocks.clear();
@@ -117,6 +121,7 @@ public final class FleetClient {
 
     public void setMode(FleetMode newMode) {
         this.mode = newMode != null ? newMode : FleetMode.LOCAL;
+        this.safetyHaltReason = null;
         if (!this.mode.canWork()) {
             activeGrant = null;
             claimInFlight = false;
@@ -147,7 +152,39 @@ public final class FleetClient {
     }
 
     public boolean isWorkerActive() {
-        return serverConnected && mode.canWork();
+        return serverConnected && mode.canWork() && safetyHaltReason == null;
+    }
+
+    public boolean isSafetyHalted() {
+        return safetyHaltReason != null;
+    }
+
+    public String safetyHaltReason() {
+        return safetyHaltReason;
+    }
+
+    /**
+     * Latches a safety halt on this fleet worker: releases any active chunk lease as DEFERRED,
+     * prevents claiming or restarting work, and surfaces the reason in fleet heartbeats.
+     */
+    public void engageSafetyHalt(String reason) {
+        String clean = (reason == null || reason.isBlank()) ? "Halted for safety." : reason;
+        this.safetyHaltReason = clean;
+        WorkGrant g = this.activeGrant;
+        if (g != null && !g.idle && g.jobId != null && g.chunkKey != null) {
+            reportChunk(g.jobId, g.chunkKey, "DEFERRED", clean);
+        }
+        this.activeGrant = null;
+        this.claimInFlight = false;
+        this.serverSaidIdle = false;
+        setNotice("SAFETY HALT: " + clean, true);
+    }
+
+    public void clearSafetyHalt() {
+        if (this.safetyHaltReason != null) {
+            this.safetyHaltReason = null;
+            setNotice("Safety halt cleared.", false);
+        }
     }
 
     public String worldId() {
@@ -450,15 +487,20 @@ public final class FleetClient {
             if (player.getInventory().getItem(i).isEmpty()) freeSlots++;
         }
         body.addProperty("freeSlots", freeSlots);
-        body.addProperty("inDanger", player.getHealth() < 10.0f || dev.survivalkit.Api.recovering());
-        if (activeGrant != null && !activeGrant.idle) {
+        String halt = safetyHaltReason;
+        body.addProperty("inDanger", halt != null || player.getHealth() < 10.0f || dev.survivalkit.Api.recovering());
+        if (halt != null) {
+            body.addProperty("phase", "HALTED");
+            body.addProperty("alertSummary", halt);
+        } else if (activeGrant != null && !activeGrant.idle) {
             body.addProperty("activeJobId", activeGrant.jobId);
             body.addProperty("activeChunkKey", activeGrant.chunkKey);
             body.addProperty("phase", "WORKING");
+            body.addProperty("alertSummary", "");
         } else {
             body.addProperty("phase", mode == FleetMode.EDITOR ? "EDITOR" : "IDLE");
+            body.addProperty("alertSummary", "");
         }
-        body.addProperty("alertSummary", "");
         int[] localBed = dev.survivalkit.Api.bedPos();
         if (localBed != null && localBed.length == 3) {
             body.add("localBed", FleetProtocol.GSON.toJsonTree(localBed));

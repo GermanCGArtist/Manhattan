@@ -87,12 +87,33 @@ final class ChestProcess {
         }
         dev.survivalkit.Api.chestHint(chest);   // the index records this chest, not one next to it
         dev.survivalkit.Api.chestBusy(true);
+        disableBreakForTravel();
         state = State.PATHING;
         Util.msg("Chest: " + op.describe() + ".");
         return true;
     }
 
     private boolean pathingStarted;
+    private Boolean breakBefore;   // saved allowBreak while traveling to a chest (restored on exit)
+
+    private void disableBreakForTravel() {
+        if (breakBefore == null) {
+            breakBefore = dev.buildtools.Api.setOwnBreak(false);
+        }
+    }
+
+    private void restoreBreakAfterTravel() {
+        if (breakBefore != null) {
+            boolean prev = breakBefore;
+            breakBefore = null;
+            dev.buildtools.Api.setOwnBreak(prev);
+        }
+    }
+
+    private void enterIdle() {
+        state = State.IDLE;
+        restoreBreakAfterTravel();
+    }
 
     void cancel() {
         if (state == State.IDLE) return;
@@ -102,7 +123,7 @@ final class ChestProcess {
         }
         Minecraft mc = Minecraft.getInstance();
         closeAndNote(mc);
-        state = State.IDLE;
+        enterIdle();
         todo = null;
     }
 
@@ -133,7 +154,7 @@ final class ChestProcess {
                 EngineSelector.current().cancel();
                 pathingStarted = false;
             }
-            state = State.IDLE;
+            enterIdle();
             dev.survivalkit.Api.chestBusy(false);
             return;
         }
@@ -153,7 +174,7 @@ final class ChestProcess {
         }
         Minecraft mc = Minecraft.getInstance();
         closeAndNote(mc);
-        state = State.IDLE;
+        enterIdle();
         todo = null;
     }
 
@@ -165,7 +186,7 @@ final class ChestProcess {
         }
         Minecraft mc = Minecraft.getInstance();
         closeAndNote(mc);
-        state = State.IDLE;
+        enterIdle();
         todo = null;
     }
 
@@ -176,7 +197,7 @@ final class ChestProcess {
     private void step() {
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer p = mc.player;
-        if (p == null || mc.gameMode == null || mc.level == null) { state = State.IDLE; dev.survivalkit.Api.chestBusy(false); return; }
+        if (p == null || mc.gameMode == null || mc.level == null) { enterIdle(); dev.survivalkit.Api.chestBusy(false); return; }
 
         switch (state) {
             case PATHING -> {

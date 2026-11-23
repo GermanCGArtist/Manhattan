@@ -58,6 +58,11 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
     private int baseTripFailStreak;
     private int emergencyCooldownTicks;
     private int fleetRestartCooldownTicks;
+    private int bedCheckTicks;
+    private volatile String safetyHaltReason;
+
+    private static final int BED_CHECK_INTERVAL_TICKS = 20;
+    private static final int BED_TRUST_RADIUS = 48;
 
     private GameProjectRuntime() {
         this.scheduler = new PriorityScheduler(this);
@@ -76,16 +81,33 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
         if (mc == null || mc.player == null || mc.level == null) {
             return;
         }
+
+        // Always consume recovery give-up and halt signals (even if between ticks or paused)
+        String gaveUp = RuntimeBus.consumeRecoveryGaveUpReason();
+        if (gaveUp != null) {
+            haltForSafety(gaveUp);
+            return;
+        }
+        String halt = RuntimeBus.consumeHaltReason();
+        if (halt != null) {
+            haltForSafety(halt);
+            return;
+        }
+
         if (!running()) {
             tickFleetWorkerIdle();
             return;
         }
 
         RuntimeBus.setScriptActive(true);
-        String halt = RuntimeBus.consumeHaltReason();
-        if (halt != null) {
-            stopQueue(halt);
-            return;
+
+        // Live missing-bed guard: if our configured/assigned bed is loaded and nearby but gone,
+        // halt immediately (day or night, sleeper or non-sleeper) before a death can send us to world spawn.
+        if (++bedCheckTicks >= BED_CHECK_INTERVAL_TICKS) {
+            bedCheckTicks = 0;
+            if (checkAssignedBedMissing(mc)) {
+                return;
+            }
         }
 
         if (layerScheduler.isRunning()) {
@@ -117,6 +139,7 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
      * for a chunk lease and automatically starts the assigned Project without requiring an Editor online.
      */
     private void tickFleetWorkerIdle() {
+        if (safetyHaltReason != null) return;
         if (fleetRestartCooldownTicks > 0) return;
         dev.manhattan.fleet.FleetClient fc = dev.manhattan.fleet.FleetClient.instance();
         if (!fc.isWorkerActive()) return;
@@ -137,7 +160,6 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
             // Fleet workers stay connected and return to IDLE to claim the next job/chunk instead of disconnecting.
             fleetProject.survival.logoffOnDone = false;
             fleetProject.survival.logoffOnError = false;
-            fleetProject.survival.logoffOnMissingBed = false;
             if (fleetProject.places != null && fleetProject.places.areas != null && !fleetProject.places.areas.isEmpty()) {
                 QueueMod.importFleetAreas(fleetProject.places.areas);
             }
@@ -171,10 +193,69 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
 
     /** Starts a Fleet Server-assigned project using a fresh in-memory TaskLedger (the Fleet Server owns progress). */
     private void startFleetQueue(Project project) {
-        if (project == null || running() || QueueMod.projectRunnerRunning()) return;
+        if (project == null || running() || QueueMod.projectRunnerRunning() || safetyHaltReason != null) return;
         String cleanId = ProjectStore.sanitizeId(project.id == null || project.id.isBlank() ? "fleet" : project.id);
         ledgerCache.put(cleanId, new TaskQueue.InMemoryTaskLedger());
         startQueue(project);
+    }
+
+    public String safetyHaltReason() {
+        return safetyHaltReason;
+    }
+
+    public void clearSafetyHalt() {
+        safetyHaltReason = null;
+    }
+
+    /**
+     * Hard safety stop: cancels all movement/work, stops any running project queue, and latches the
+     * fleet worker halted so it cannot auto-restart until the issue is fixed and explicitly cleared.
+     */
+    public void haltForSafety(String reason) {
+        String clean = (reason == null || reason.isBlank()) ? "Halted for safety." : reason;
+        safetyHaltReason = clean;
+        try {
+            EngineSelector.current().cancel();
+        } catch (Throwable ignored) {}
+        if (running()) {
+            stopQueue(clean);
+        } else {
+            QueueMod.projectLog("SAFETY HALT: " + clean);
+        }
+        dev.manhattan.fleet.FleetClient.instance().engageSafetyHalt(clean);
+    }
+
+    private int[] resolveActiveBedPos() {
+        dev.manhattan.fleet.FleetClient fc = dev.manhattan.fleet.FleetClient.instance();
+        if (fc.isConnected() && fc.mode().canWork()) {
+            int[] assigned = fc.assignedBedPos();
+            if (assigned != null && assigned.length >= 3) return assigned;
+        }
+        Project exec = currentExecutionProject();
+        if (exec != null && exec.places != null && exec.places.bed != null && exec.places.bed.length >= 3) {
+            return exec.places.bed;
+        }
+        int[] surv = dev.survivalkit.Api.bedPos();
+        if (surv != null && surv.length >= 3) return surv;
+        return null;
+    }
+
+    private boolean checkAssignedBedMissing(Minecraft mc) {
+        if (mc.level.dimension() != Level.OVERWORLD) return false;
+        int[] bed = resolveActiveBedPos();
+        if (bed == null || bed.length < 3) return false;
+        BlockPos bedPos = new BlockPos(bed[0], bed[1], bed[2]);
+        if (!mc.level.hasChunkAt(bedPos)) return false;
+        if (bedPos.distSqr(mc.player.blockPosition()) > (long) BED_TRUST_RADIUS * BED_TRUST_RADIUS) return false;
+        if (mc.level.getBlockState(bedPos).getBlock() instanceof net.minecraft.world.level.block.BedBlock) return false;
+
+        String msg = "Bed missing at " + bedPos.toShortString() + " — halting immediately before death can send bot to world spawn!";
+        boolean shouldDisconnect = dev.survivalkit.Api.isLogoffOnMissingBed();
+        haltForSafety(msg);
+        if (shouldDisconnect) {
+            dev.survivalkit.Api.disconnect(msg);
+        }
+        return true;
     }
 
     public Project activeProject() {
@@ -436,6 +517,8 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
             return "Not in a world.";
         }
 
+        safetyHaltReason = null;
+        dev.manhattan.fleet.FleetClient.instance().clearSafetyHalt();
         resetRuntimeCooldowns();
         RuntimeBus.setPaused(false);
         RuntimeBus.setScriptActive(true);
@@ -497,6 +580,8 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
         this.runningProject = project;
         this.activeLedger = loadLedgerCached(project.id);
 
+        safetyHaltReason = null;
+        dev.manhattan.fleet.FleetClient.instance().clearSafetyHalt();
         resetRuntimeCooldowns();
 
         activateProject(project);

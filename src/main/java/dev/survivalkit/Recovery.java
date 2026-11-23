@@ -2,7 +2,9 @@ package dev.survivalkit;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.core.BlockPos;
 import net.minecraft.world.entity.monster.Monster;
+import net.minecraft.world.level.Level;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -26,6 +28,8 @@ final class Recovery {
     private static final double SAFE_RADIUS = 16;
     private static final float SAFE_HEALTH = 0.8f;
     private static final long IGNORE_THREATS_AFTER = 60_000;  // healthy but mobs stay near that nobody can reach: go on
+    static final double MAX_BED_RESPAWN_DIST = 24.0;
+    static final double MAX_UNBOUND_RESPAWN_DIST = 128.0;
 
     /** True from the death until the task is resumed or given up: eating and fighting may act without a task. */
     static volatile boolean waiting;
@@ -38,6 +42,8 @@ final class Recovery {
     private long busyAt, waitStart;
     private int check;
     private boolean queueMode;
+    private boolean pendingRespawnCheck;
+    private BlockPos deathPos;
     private final List<Long> deaths = new ArrayList<>();
 
     /** A task command typed by the player (without the prefix). */
@@ -47,6 +53,8 @@ final class Recovery {
 
     void forget() {
         lastTask = null;
+        pendingRespawnCheck = false;
+        deathPos = null;
         cancel();
     }
 
@@ -95,10 +103,18 @@ final class Recovery {
     }
 
     void onDeath() {
-        if (!cfg.resume) return;
+        onDeath(null);
+    }
+
+    void onDeath(BlockPos diedAt) {
         long now = System.currentTimeMillis();
         boolean wasBusy = now - busyAt < BUSY_WINDOW;
         queueMode = dev.midtown.api.RuntimeBus.isScriptActive();
+        if (wasBusy || queueMode) {
+            deathPos = diedAt;
+            pendingRespawnCheck = true;
+        }
+        if (!cfg.resume) return;
         if (!wasBusy && !queueMode) return;
         if (!queueMode && lastTask == null) {
             Util.warn("noresume", "I do not know which task was running, so I cannot resume it. Type the Baritone command again.");
@@ -138,8 +154,66 @@ final class Recovery {
         Util.msg("Once you are healthy and no monster is near, I resume: " + (queueMode ? "the queue" : lastTask));
     }
 
+    /**
+     * Pure-Java safety check run immediately after a respawn. If the bot respawned far away from its
+     * configured bed (meaning the bed was destroyed or obstructed and Minecraft sent it to world spawn),
+     * or far from any known base/death anchor when no bed is configured, returns a human-readable halt
+     * reason so the bot stops immediately instead of marching across the world. Returns {@code null} when safe.
+     */
+    public static String evaluateRespawnSafety(BlockPos respawnPos, boolean inOverworld,
+                                               int[] bed, int[] supply, int[] returnChest, BlockPos deathPos) {
+        if (respawnPos == null) return null;
+        if (bed != null && bed.length >= 3) {
+            BlockPos bedPos = new BlockPos(bed[0], bed[1], bed[2]);
+            if (!inOverworld) {
+                return "Respawned outside the Overworld while a bed is configured at " + bedPos.toShortString()
+                        + " — halting for safety.";
+            }
+            double dist = Math.sqrt(respawnPos.distSqr(bedPos));
+            if (dist > MAX_BED_RESPAWN_DIST) {
+                return "Respawned at " + respawnPos.toShortString() + " (" + Math.round(dist)
+                        + " blocks from bed " + bedPos.toShortString()
+                        + ") — bed is missing or obstructed! Halting for safety.";
+            }
+            return null;
+        }
+        double minDist = Double.POSITIVE_INFINITY;
+        if (supply != null && supply.length >= 3) {
+            minDist = Math.min(minDist, Math.sqrt(respawnPos.distSqr(new BlockPos(supply[0], supply[1], supply[2]))));
+        }
+        if (returnChest != null && returnChest.length >= 3) {
+            minDist = Math.min(minDist, Math.sqrt(respawnPos.distSqr(new BlockPos(returnChest[0], returnChest[1], returnChest[2]))));
+        }
+        if (deathPos != null) {
+            minDist = Math.min(minDist, Math.sqrt(respawnPos.distSqr(deathPos)));
+        }
+        if (Double.isFinite(minDist) && minDist > MAX_UNBOUND_RESPAWN_DIST) {
+            return "Respawned at " + respawnPos.toShortString() + " (" + Math.round(minDist)
+                    + " blocks away with no bed set) — likely sent to world spawn! Halting for safety.";
+        }
+        return null;
+    }
+
     /** Every client tick while alive. */
     void tick(Minecraft mc, LocalPlayer p) {
+        if (pendingRespawnCheck) {
+            pendingRespawnCheck = false;
+            boolean inOverworld = mc.level != null && mc.level.dimension() == Level.OVERWORLD;
+            String unsafe = evaluateRespawnSafety(p.blockPosition(), inOverworld, cfg.bed, cfg.supply, cfg.returnChest, deathPos);
+            if (unsafe != null) {
+                cancel();
+                try {
+                    dev.midtown.api.EngineSelector.current().cancel();
+                } catch (Throwable ignored) {}
+                dev.midtown.api.RuntimeBus.setRecoveryGaveUpReason(unsafe);
+                dev.midtown.api.RuntimeBus.requestHalt(unsafe);
+                Util.warn("respawn-unsafe", unsafe);
+                if (cfg.logoffOnMissingBed) {
+                    Api.disconnect(unsafe);
+                }
+                return;
+            }
+        }
         long now = System.currentTimeMillis();
         if (Util.baritoneBusy()) {
             busyAt = now;
