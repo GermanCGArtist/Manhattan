@@ -1112,7 +1112,8 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
                         stepFactories.add(() -> {
                             int needNow = Math.max(0, qty - countExactItem(item));
                             if (needNow <= 0) return null;
-                            return QueueMod.projectCreateChestGetHandle(chestPos, item, needNow, false, true);
+                            if (!isLoadedStorageOrUnloaded(chestPos)) return null;
+                            return bestEffort(QueueMod.projectCreateChestGetHandle(chestPos, item, needNow, false, true));
                         });
                     }
                 } else {
@@ -1127,7 +1128,8 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
                             inner.add(() -> {
                                 int rem = Math.max(0, qty - countExactItem(item));
                                 if (rem <= 0) return null;
-                                return QueueMod.projectCreateChestGetHandle(cp, item, rem, false, true);
+                                if (!isLoadedStorageOrUnloaded(cp)) return null;
+                                return bestEffort(QueueMod.projectCreateChestGetHandle(cp, item, rem, false, true));
                             });
                         }
                         return new SequentialHandle(inner, null, null);
@@ -1802,6 +1804,31 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
         List<BlockPos> out = new ArrayList<>(cands.size());
         for (Cand c : cands) out.add(c.pos);
         return out;
+    }
+
+    /** Returns true if {@code pos} is unloaded or currently holds a chest/barrel/shulker box. */
+    private static boolean isLoadedStorageOrUnloaded(BlockPos pos) {
+        if (pos == null) return false;
+        Minecraft mc = Minecraft.getInstance();
+        if (mc == null || mc.level == null || !mc.level.hasChunkAt(pos)) return true;
+        var b = mc.level.getBlockState(pos).getBlock();
+        return b instanceof net.minecraft.world.level.block.ChestBlock
+                || b instanceof net.minecraft.world.level.block.BarrelBlock
+                || b instanceof net.minecraft.world.level.block.ShulkerBoxBlock;
+    }
+
+    /** Wraps a single container fetch step so a removed/missing shulker or chest skips cleanly to the next container. */
+    private static PriorityScheduler.ActionHandle bestEffort(PriorityScheduler.ActionHandle delegate) {
+        if (delegate == null) return null;
+        return new PriorityScheduler.ActionHandle() {
+            @Override public boolean isDone() { return delegate.isDone(); }
+            @Override public String error() { return null; }
+            @Override public int remainingWork() { return delegate.remainingWork(); }
+            @Override public void cancel() { delegate.cancel(); }
+            @Override public void suspend() { delegate.suspend(); }
+            @Override public void resume() { delegate.resume(); }
+            @Override public void tick() { delegate.tick(); }
+        };
     }
 
     private static final class WalkNearHandle implements PriorityScheduler.ActionHandle {

@@ -331,7 +331,15 @@ final class Util {
         if (seenDoubleHalves.contains(bp) || out.contains(bp)) return;
         if (level != null && level.hasChunkAt(bp)) {
             var st = level.getBlockState(bp);
-            if (st.getBlock() instanceof net.minecraft.world.level.block.ChestBlock
+            var b = st.getBlock();
+            if (!(b instanceof net.minecraft.world.level.block.ChestBlock
+                    || b instanceof net.minecraft.world.level.block.BarrelBlock
+                    || b instanceof net.minecraft.world.level.block.ShulkerBoxBlock)) {
+                // Loaded spot is no longer a chest/barrel/shulker (e.g. shulker was picked up or empty spot in area): skip it!
+                ChestIndex.forgetAt(Minecraft.getInstance(), bp);
+                return;
+            }
+            if (b instanceof net.minecraft.world.level.block.ChestBlock
                     && st.hasProperty(net.minecraft.world.level.block.ChestBlock.TYPE)) {
                 var type = st.getValue(net.minecraft.world.level.block.ChestBlock.TYPE);
                 if (type != net.minecraft.world.level.block.state.properties.ChestType.SINGLE) {
