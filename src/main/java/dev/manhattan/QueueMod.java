@@ -1335,6 +1335,47 @@ public class QueueMod implements ClientModInitializer {
         }
     }
 
+    /** Imports embedded Litematica schematics from a Fleet Server Project so workers need no local Litematica files. */
+    public static void importFleetSchematics(
+            List<Project.EmbeddedSchematic> embedded,
+            Map<String, String> sharedFiles
+    ) {
+        SchemSource.setFleetEmbedded(embedded, sharedFiles);
+    }
+
+    /**
+     * Clones a Project for Fleet submission and auto-embeds any Litematica schematics, arrays, and assemblies
+     * referenced by enabled {@link ProjectTask.Kind#SCHEM_BUILD} tasks so workers need no local Litematica files.
+     * Shared {@code .litematic} files (e.g. repeated in Vitruvius arrays) are deduplicated by content hash.
+     */
+    public static Project prepareProjectForFleetSubmit(Project source) {
+        if (source == null) return null;
+        String json = dev.manhattan.fleet.FleetProtocol.GSON.toJson(source);
+        Project copy = dev.manhattan.fleet.FleetProtocol.GSON.fromJson(json, Project.class);
+        if (copy == null) return source;
+        copy.ensureInitialized();
+        copy.embeddedSchematics.clear();
+        copy.embeddedSchematicFiles.clear();
+
+        java.util.Set<String> embeddedFingerprints = new java.util.HashSet<>();
+        for (ProjectTask task : copy.tasks) {
+            if (task == null || !task.enabled || task.kind != ProjectTask.Kind.SCHEM_BUILD) continue;
+            String[] err = new String[1];
+            List<SchemSource.Placement> pls = SchemCmd.select(
+                    task.placement == null || task.placement.isBlank() ? null : task.placement, err);
+            if (pls == null || pls.isEmpty()) continue;
+            for (SchemSource.Placement pl : pls) {
+                String fp = SchemSource.placementFingerprint(pl);
+                if (!embeddedFingerprints.add(fp)) continue;
+                Project.EmbeddedSchematic es = SchemSource.exportEmbedded(pl, copy.embeddedSchematicFiles);
+                if (es != null) {
+                    copy.embeddedSchematics.add(es);
+                }
+            }
+        }
+        return copy;
+    }
+
     public static PriorityScheduler.ActionHandle projectCreateClearAreaHandle(
             int layers, List<int[]> boxes, String taskId) {
         Shaft.current = Shaft.find(boxes);

@@ -21,6 +21,16 @@ public final class Project {
     public BasePlaces places = new BasePlaces();
     public SurvivalPolicy survival = new SurvivalPolicy();
     public List<ProjectTask> tasks = new ArrayList<>();
+    /**
+     * Optional embedded Litematica schematics (attached automatically on Fleet submit so workers
+     * can build schematics, arrays, and assemblies without having Litematica or local .litematic files installed).
+     */
+    public List<EmbeddedSchematic> embeddedSchematics = new ArrayList<>();
+    /**
+     * Deduplicated Base64-encoded {@code .litematic} file payloads keyed by content hash ({@code fileHash}),
+     * so large arrays repeating the same schematic file only transmit the file bytes once.
+     */
+    public Map<String, String> embeddedSchematicFiles = new LinkedHashMap<>();
 
     public Project() {
     }
@@ -40,6 +50,59 @@ public final class Project {
         if (tasks == null) tasks = new ArrayList<>();
         for (ProjectTask task : tasks) {
             if (task != null) task.ensureInitialized();
+        }
+        if (embeddedSchematics == null) embeddedSchematics = new ArrayList<>();
+        for (EmbeddedSchematic es : embeddedSchematics) {
+            if (es != null) es.ensureInitialized();
+        }
+        if (embeddedSchematicFiles == null) embeddedSchematicFiles = new LinkedHashMap<>();
+    }
+
+    /** Serializable sub-region transform for an {@link EmbeddedSchematic}. */
+    public static final class EmbeddedSubRegion {
+        public String name;
+        public int[] pos;
+        public String rotation = "NONE";
+        public String mirror = "NONE";
+        public boolean enabled = true;
+
+        public EmbeddedSubRegion() {
+        }
+
+        public EmbeddedSubRegion(String name, int[] pos, String rotation, String mirror, boolean enabled) {
+            this.name = name;
+            this.pos = pos != null ? pos.clone() : new int[]{0, 0, 0};
+            this.rotation = rotation != null ? rotation : "NONE";
+            this.mirror = mirror != null ? mirror : "NONE";
+            this.enabled = enabled;
+        }
+    }
+
+    /**
+     * Self-contained Litematica placement embedded into a Fleet Project JSON on submit:
+     * carries placement origin/rotation/mirror/sub-regions plus the Base64-encoded {@code .litematic} file bytes.
+     */
+    public static final class EmbeddedSchematic {
+        public String name;
+        public String fileName;
+        /** Content hash referencing {@link Project#embeddedSchematicFiles} (deduplicates shared files in arrays). */
+        public String fileHash;
+        public int[] origin;
+        public String rotation = "NONE";
+        public String mirror = "NONE";
+        public boolean enabled = true;
+        public List<EmbeddedSubRegion> subs = new ArrayList<>();
+        /** Optional inline Base64 payload when {@link #fileHash} is not used. */
+        public String dataBase64;
+
+        public EmbeddedSchematic() {
+        }
+
+        public void ensureInitialized() {
+            if (origin == null || origin.length < 3) origin = new int[]{0, 0, 0};
+            if (rotation == null || rotation.isBlank()) rotation = "NONE";
+            if (mirror == null || mirror.isBlank()) mirror = "NONE";
+            if (subs == null) subs = new ArrayList<>();
         }
     }
 

@@ -33,22 +33,184 @@ final class SchemSource {
     record Placement(String name, Path file, BlockPos origin, Rotation rotation, Mirror mirror, boolean enabled, List<Sub> subs, String via) {}
 
     static String lastSource = "";
+    private static volatile List<Placement> fleetEmbedded = List.of();
+
+    static void setFleetEmbedded(
+            List<dev.manhattan.project.Project.EmbeddedSchematic> embedded,
+            Map<String, String> sharedFiles
+    ) {
+        if (embedded == null || embedded.isEmpty()) {
+            fleetEmbedded = List.of();
+            return;
+        }
+        Path cacheDir = fleetCacheDir();
+        Map<String, Path> writtenByHash = new java.util.HashMap<>();
+        List<Placement> loaded = new ArrayList<>();
+        for (dev.manhattan.project.Project.EmbeddedSchematic es : embedded) {
+            if (es == null || es.name == null || es.name.isBlank()) continue;
+            es.ensureInitialized();
+            String b64 = es.dataBase64;
+            if ((b64 == null || b64.isBlank()) && es.fileHash != null && sharedFiles != null) {
+                b64 = sharedFiles.get(es.fileHash);
+            }
+            if (b64 == null || b64.isBlank()) continue;
+            try {
+                Path outFile = (es.fileHash != null && writtenByHash.containsKey(es.fileHash))
+                        ? writtenByHash.get(es.fileHash)
+                        : null;
+                if (outFile == null) {
+                    byte[] bytes = java.util.Base64.getDecoder().decode(b64);
+                    if (bytes.length == 0) continue;
+                    Files.createDirectories(cacheDir);
+                    String hash = (es.fileHash != null && !es.fileHash.isBlank()) ? es.fileHash : shortHash(bytes);
+                    String safeName = (es.fileName != null && !es.fileName.isBlank() ? es.fileName : es.name)
+                            .replaceAll("\\.litematic$", "")
+                            .replaceAll("[^A-Za-z0-9._-]+", "_");
+                    outFile = cacheDir.resolve(safeName + "_" + hash + ".litematic");
+                    if (!Files.exists(outFile) || Files.size(outFile) != bytes.length) {
+                        Files.write(outFile, bytes);
+                    }
+                    if (es.fileHash != null) writtenByHash.put(es.fileHash, outFile);
+                }
+                List<Sub> subs = new ArrayList<>();
+                for (dev.manhattan.project.Project.EmbeddedSubRegion sr : es.subs) {
+                    if (sr == null || sr.name == null) continue;
+                    int[] sp = (sr.pos != null && sr.pos.length >= 3) ? sr.pos : new int[]{0, 0, 0};
+                    subs.add(new Sub(sr.name, new BlockPos(sp[0], sp[1], sp[2]),
+                            parseRotation(sr.rotation), parseMirror(sr.mirror), sr.enabled));
+                }
+                BlockPos origin = new BlockPos(es.origin[0], es.origin[1], es.origin[2]);
+                loaded.add(new Placement(es.name, outFile, origin,
+                        parseRotation(es.rotation), parseMirror(es.mirror), es.enabled, subs, "fleet-embedded"));
+            } catch (Throwable t) {
+                System.out.println("[Queue] schem: failed to decode embedded fleet schematic '" + es.name + "': " + t);
+            }
+        }
+        fleetEmbedded = loaded;
+        if (!loaded.isEmpty()) {
+            System.out.println("[Queue] schem: loaded " + loaded.size() + " embedded Fleet placement(s) ("
+                    + Math.max(1, writtenByHash.size()) + " unique file(s)).");
+        }
+    }
+
+    static dev.manhattan.project.Project.EmbeddedSchematic exportEmbedded(
+            Placement pl,
+            Map<String, String> sharedFiles
+    ) {
+        if (pl == null || pl.file() == null || !Files.isRegularFile(pl.file())) return null;
+        try {
+            byte[] bytes = Files.readAllBytes(pl.file());
+            if (bytes.length == 0) return null;
+            String hash = shortHash(bytes);
+            dev.manhattan.project.Project.EmbeddedSchematic es = new dev.manhattan.project.Project.EmbeddedSchematic();
+            es.name = pl.name();
+            es.fileName = pl.file().getFileName() != null ? pl.file().getFileName().toString() : (pl.name() + ".litematic");
+            es.origin = new int[]{pl.origin().getX(), pl.origin().getY(), pl.origin().getZ()};
+            es.rotation = pl.rotation() != null ? pl.rotation().name() : "NONE";
+            es.mirror = pl.mirror() != null ? pl.mirror().name() : "NONE";
+            es.enabled = pl.enabled();
+            if (pl.subs() != null) {
+                for (Sub s : pl.subs()) {
+                    es.subs.add(new dev.manhattan.project.Project.EmbeddedSubRegion(
+                            s.name(),
+                            new int[]{s.pos().getX(), s.pos().getY(), s.pos().getZ()},
+                            s.rotation() != null ? s.rotation().name() : "NONE",
+                            s.mirror() != null ? s.mirror().name() : "NONE",
+                            s.enabled()
+                    ));
+                }
+            }
+            if (sharedFiles != null) {
+                es.fileHash = hash;
+                sharedFiles.computeIfAbsent(hash, k -> java.util.Base64.getEncoder().encodeToString(bytes));
+            } else {
+                es.dataBase64 = java.util.Base64.getEncoder().encodeToString(bytes);
+            }
+            return es;
+        } catch (Throwable t) {
+            System.out.println("[Queue] schem: failed to embed schematic '" + pl.name() + "': " + t);
+            return null;
+        }
+    }
+
+    private static Path fleetCacheDir() {
+        try {
+            return FabricLoader.getInstance().getConfigDir().resolve("manhattan-fleet-schems");
+        } catch (Throwable ignored) {
+            return Path.of("tmp", "manhattan-fleet-schems");
+        }
+    }
+
+    static String placementFingerprint(Placement p) {
+        if (p == null) return "";
+        String n = p.name() == null ? "" : p.name().toLowerCase(java.util.Locale.ROOT);
+        BlockPos o = p.origin() != null ? p.origin() : BlockPos.ZERO;
+        String r = p.rotation() != null ? p.rotation().name() : "NONE";
+        String m = p.mirror() != null ? p.mirror().name() : "NONE";
+        return n + "@" + o.getX() + "," + o.getY() + "," + o.getZ() + "|" + r + "|" + m;
+    }
+
+    private static Rotation parseRotation(String raw) {
+        if (raw == null || raw.isBlank()) return Rotation.NONE;
+        try { return Rotation.valueOf(raw.trim().toUpperCase(java.util.Locale.ROOT)); }
+        catch (IllegalArgumentException ignored) { return Rotation.NONE; }
+    }
+
+    private static Mirror parseMirror(String raw) {
+        if (raw == null || raw.isBlank()) return Mirror.NONE;
+        try { return Mirror.valueOf(raw.trim().toUpperCase(java.util.Locale.ROOT)); }
+        catch (IllegalArgumentException ignored) { return Mirror.NONE; }
+    }
+
+    private static String shortHash(byte[] data) {
+        try {
+            byte[] d = java.security.MessageDigest.getInstance("SHA-256").digest(data);
+            StringBuilder sb = new StringBuilder(12);
+            for (int i = 0; i < 6; i++) sb.append(String.format("%02x", d[i]));
+            return sb.toString();
+        } catch (Exception e) {
+            return Integer.toHexString(java.util.Arrays.hashCode(data));
+        }
+    }
 
     static List<Placement> list() {
+        List<Placement> embedded = fleetEmbedded;
+        List<Placement> local = List.of();
+        String localSrc = "Litematica config file";
         try {
             if (FabricLoader.getInstance().isModLoaded("litematica")) {
                 List<Placement> live = fromLitematica();
                 if (live != null && !live.isEmpty()) {
-                    lastSource = "Litematica (live)";
-                    return live;
+                    local = live;
+                    localSrc = "Litematica (live)";
                 }
             }
         } catch (Throwable t) {
             System.out.println("[Queue] schem: reading Litematica directly failed (" + t + "), using its config file instead");
         }
-        List<Placement> file = fromConfig();
-        lastSource = "Litematica config file";
-        return file;
+        if (local.isEmpty()) {
+            try {
+                local = fromConfig();
+            } catch (Throwable ignored) {
+                local = List.of();
+            }
+        }
+        if (embedded == null || embedded.isEmpty()) {
+            lastSource = localSrc;
+            return local;
+        }
+        List<Placement> merged = new ArrayList<>(embedded);
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        for (Placement p : embedded) {
+            seen.add(placementFingerprint(p));
+        }
+        for (Placement p : local) {
+            if (seen.add(placementFingerprint(p))) {
+                merged.add(p);
+            }
+        }
+        lastSource = local.isEmpty() ? "Fleet embedded" : "Fleet embedded + " + localSrc;
+        return merged;
     }
 
     // ------------------------------------------------------------------ live, by reflection
@@ -74,6 +236,10 @@ final class SchemSource {
         for (Object p : c) {
             Object fileObj = call(p, "getSchematicFile");
             Path file = fileObj instanceof Path pp ? pp : fileObj instanceof File ff ? ff.toPath() : null;
+            if (file == null || !Files.isRegularFile(file)) {
+                // Support in-memory Litematica placements (e.g. Vitruvius assemblies/arrays not yet saved to disk)
+                file = materializeInMemorySchematic(p);
+            }
             if (file == null) continue;
             List<Sub> subs = new ArrayList<>();
             // newer Litematica (0.27.x): getAllSubRegionsPlacements() -> Collection; older: getSubRegionPlacements() -> Map
@@ -88,6 +254,30 @@ final class SchemSource {
                     (Mirror) call(p, "getMirror"), (Boolean) call(p, "isEnabled"), subs, "live"));
         }
         return out;
+    }
+
+    private static Path materializeInMemorySchematic(Object placementObj) {
+        try {
+            if (!has(placementObj, "getSchematic")) return null;
+            Object schem = call(placementObj, "getSchematic");
+            if (schem == null || !has(schem, "writeToTag")) return null;
+            Object tag = call(schem, "writeToTag");
+            if (!(tag instanceof net.minecraft.nbt.CompoundTag compound)) return null;
+            java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+            net.minecraft.nbt.NbtIo.writeCompressed(compound, baos);
+            byte[] bytes = baos.toByteArray();
+            if (bytes.length == 0) return null;
+            Path cacheDir = fleetCacheDir();
+            Files.createDirectories(cacheDir);
+            String name = String.valueOf(call(placementObj, "getName")).replaceAll("[^A-Za-z0-9._-]+", "_");
+            Path outFile = cacheDir.resolve("live_" + name + "_" + shortHash(bytes) + ".litematic");
+            if (!Files.exists(outFile) || Files.size(outFile) != bytes.length) {
+                Files.write(outFile, bytes);
+            }
+            return outFile;
+        } catch (Throwable ignored) {
+            return null;
+        }
     }
 
     /**

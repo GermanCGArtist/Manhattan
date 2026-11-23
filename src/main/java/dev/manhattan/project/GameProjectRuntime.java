@@ -163,6 +163,9 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
             if (fleetProject.places != null && fleetProject.places.areas != null && !fleetProject.places.areas.isEmpty()) {
                 QueueMod.importFleetAreas(fleetProject.places.areas);
             }
+            if (fleetProject.embeddedSchematics != null && !fleetProject.embeddedSchematics.isEmpty()) {
+                QueueMod.importFleetSchematics(fleetProject.embeddedSchematics, fleetProject.embeddedSchematicFiles);
+            }
             if (grant.assignedBed != null && grant.assignedBed.length == 3) {
                 fleetProject.places.bed = grant.assignedBed.clone();
                 dev.survivalkit.Api.setBedPos(grant.assignedBed);
@@ -1241,6 +1244,14 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
         runningProject = null;
         if (!success) {
             IncidentBundle.captureAndWrite("queue_failed", summary);
+            dev.manhattan.fleet.FleetClient fc = dev.manhattan.fleet.FleetClient.instance();
+            if (fc.isWorkerActive()) {
+                dev.manhattan.fleet.FleetProtocol.WorkGrant grant = fc.activeGrant();
+                if (grant != null && !grant.idle && grant.jobId != null && grant.chunkKey != null) {
+                    fc.reportChunk(grant.jobId, grant.chunkKey, "FAILED", summary);
+                }
+                fleetRestartCooldownTicks = 200; // 10s backoff after failure so broken grants never tight-loop
+            }
         }
         RuntimeBus.emit(RuntimeEvent.Type.RUN_END, RuntimeEvent.Category.SYSTEM,
                 "GameProjectRuntime", (success ? "SUCCESS: " : "FAILED: ") + summary);

@@ -736,6 +736,10 @@ final class ProjectPanel {
             ImGui.setNextItemWidth(160f * s);
             String schemPreview = addPlacement.get().isBlank() ? "Pick schematic..." : addPlacement.get();
             if (ImGui.beginCombo("##AddTaskSchemPick", schemPreview)) {
+                if (ImGui.selectable("all (all enabled placements / assemblies)##addschem_all",
+                        "all".equalsIgnoreCase(addPlacement.get()))) {
+                    addPlacement.set("all");
+                }
                 if (schems.isEmpty()) {
                     ImGui.textDisabled("No Litematica placements.");
                 }
@@ -748,8 +752,8 @@ final class ProjectPanel {
                 ImGui.endCombo();
             }
             ImGui.sameLine(0f, 6f * s);
-            ImGui.setNextItemWidth(140f * s);
-            ImGui.inputTextWithHint("Placement##AddTaskSchemText", "placement", addPlacement);
+            ImGui.setNextItemWidth(160f * s);
+            ImGui.inputTextWithHint("Placement##AddTaskSchemText", "name, prefix*, a,b, or all", addPlacement);
         }
 
         // Script tab picker for SCRIPT
@@ -1446,8 +1450,11 @@ final class ProjectPanel {
             String dim = (mc != null && mc.level != null)
                     ? mc.level.dimension().identifier().toString()
                     : "minecraft:overworld";
-            if (fc.submitProject(active, dim, pol, chunks)) {
-                setNotice("Submitted '" + active.name + "' to Fleet Server (" + chunks.size() + " chunks).", false);
+            Project prepared = QueueMod.prepareProjectForFleetSubmit(active);
+            if (fc.submitProject(prepared, dim, pol, chunks)) {
+                int schemCount = prepared != null && prepared.embeddedSchematics != null ? prepared.embeddedSchematics.size() : 0;
+                String schemNote = schemCount > 0 ? ", " + schemCount + " embedded schematic(s)" : "";
+                setNotice("Submitted '" + active.name + "' to Fleet Server (" + chunks.size() + " chunks" + schemNote + ").", false);
             } else {
                 setNotice(fc.lastNotice(), true);
             }

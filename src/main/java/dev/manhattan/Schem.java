@@ -267,9 +267,15 @@ final class Schem {
     /** The plan of these placements; later placements win where they overlap (air never overwrites a block). Null + error text on failure. */
     static Plan plan(List<SchemSource.Placement> pls, String[] error) {
         List<Litematic.Schematic> loaded = new ArrayList<>();
+        Map<java.nio.file.Path, Litematic.Schematic> fileCache = new java.util.HashMap<>();
         for (SchemSource.Placement pl : pls) {
             try {
-                loaded.add(Litematic.read(pl.file()));
+                Litematic.Schematic cached = fileCache.get(pl.file());
+                if (cached == null) {
+                    cached = Litematic.read(pl.file());
+                    fileCache.put(pl.file(), cached);
+                }
+                loaded.add(cached);
             } catch (IOException | RuntimeException e) {
                 error[0] = "Cannot read " + pl.file() + " (" + e + ").";
                 return null;

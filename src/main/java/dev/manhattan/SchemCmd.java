@@ -44,21 +44,45 @@ final class SchemCmd {
                 return null;
             }
         } else {
-            int n;
-            try {
-                n = Integer.parseInt(sel);
-            } catch (NumberFormatException e) {
-                for (SchemSource.Placement p : all) if (p.name().equalsIgnoreCase(sel)) out.add(p);   // by name
-                if (out.size() == 1) return out;
-                err[0] = out.isEmpty() ? "There is no placement '" + sel + "' (a number, a name or \"all\"). /schem list shows them."
-                        : out.size() + " placements are called '" + sel + "'; use the number (/schem list) or rename one in Litematica.";
+            // Support comma-separated assembly lists ("Wall, Corner, Roof"), wildcard prefixes ("Array*"),
+            // numeric 1-based indices, and duplicate-name arrays (e.g. Vitruvius arrays with identical names).
+            String[] tokens = sel.contains(",") ? sel.split(",") : new String[]{sel};
+            java.util.Set<String> seen = new java.util.HashSet<>();
+            for (String rawTok : tokens) {
+                String tok = rawTok.trim();
+                if (tok.isEmpty()) continue;
+                try {
+                    int n = Integer.parseInt(tok);
+                    if (n < 1 || n > all.size()) {
+                        err[0] = "There is no placement " + n + " (there are " + all.size() + "). /schem list shows them.";
+                        return null;
+                    }
+                    SchemSource.Placement p = all.get(n - 1);
+                    if (seen.add(SchemSource.placementFingerprint(p))) out.add(p);
+                    continue;
+                } catch (NumberFormatException ignored) {
+                }
+                boolean prefix = tok.endsWith("*");
+                String pat = (prefix ? tok.substring(0, tok.length() - 1) : tok).toLowerCase(java.util.Locale.ROOT);
+                List<SchemSource.Placement> enabledMatches = new ArrayList<>();
+                List<SchemSource.Placement> anyMatches = new ArrayList<>();
+                for (SchemSource.Placement p : all) {
+                    if (p.name() == null) continue;
+                    String pn = p.name().toLowerCase(java.util.Locale.ROOT);
+                    boolean hit = prefix ? pn.startsWith(pat) : pn.equals(pat);
+                    if (!hit) continue;
+                    anyMatches.add(p);
+                    if (p.enabled()) enabledMatches.add(p);
+                }
+                List<SchemSource.Placement> chosen = !enabledMatches.isEmpty() ? enabledMatches : anyMatches;
+                for (SchemSource.Placement p : chosen) {
+                    if (seen.add(SchemSource.placementFingerprint(p))) out.add(p);
+                }
+            }
+            if (out.isEmpty()) {
+                err[0] = "There is no placement '" + sel + "' (a number, a name, a prefix*, comma list, or \"all\"). /schem list shows them.";
                 return null;
             }
-            if (n < 1 || n > all.size()) {
-                err[0] = "There is no placement " + n + " (there are " + all.size() + "). /schem list shows them.";
-                return null;
-            }
-            out.add(all.get(n - 1));
         }
         return out;
     }

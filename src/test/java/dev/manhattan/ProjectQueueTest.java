@@ -1403,5 +1403,33 @@ public class ProjectQueueTest {
         check("plan includes RETURN_WORN from returnAreas", plan.steps().contains(LogisticsPlanner.StepKind.RETURN_WORN));
         check("plan includes RESTOCK_TOOLS_FOOD from supplyAreas", plan.steps().contains(LogisticsPlanner.StepKind.RESTOCK_TOOLS_FOOD));
         check("plan includes FETCH_MATERIALS from materialAreas", plan.steps().contains(LogisticsPlanner.StepKind.FETCH_MATERIALS));
+
+        // Embedded schematics array deduplication round-trip (Vitruvius arrays & assemblies)
+        Project schemProj = new Project("vitruvius_array", "Vitruvius Array", "testworld");
+        schemProj.embeddedSchematicFiles.put("abc123", "H4sIAAAAAAAAA+3BMQEAAADCoPVPbQ0PoAAAAADgZ6N0d9AA");
+        for (int i = 0; i < 3; i++) {
+            Project.EmbeddedSchematic es = new Project.EmbeddedSchematic();
+            es.name = "TunnelSegment";
+            es.fileName = "tunnel_segment.litematic";
+            es.fileHash = "abc123";
+            es.origin = new int[]{i * 16, 64, 0};
+            es.rotation = "CLOCKWISE_90";
+            es.subs.add(new Project.EmbeddedSubRegion("Main", new int[]{0, 0, 0}, "NONE", "NONE", true));
+            schemProj.embeddedSchematics.add(es);
+        }
+        Path tmp2 = Files.createTempDirectory("manhattan-schem-embed-test");
+        try {
+            ProjectStore.save(tmp2, schemProj);
+            Project loaded2 = ProjectStore.load(tmp2, "testworld", "vitruvius_array");
+            check("loaded embedded schematic project", loaded2 != null);
+            eq("embedded placement count preserved", loaded2.embeddedSchematics.size(), 3);
+            eq("shared schematic file deduplicated", loaded2.embeddedSchematicFiles.size(), 1);
+            eq("embedded rotation preserved", loaded2.embeddedSchematics.get(2).rotation, "CLOCKWISE_90");
+            eqArr("embedded origin #2", loaded2.embeddedSchematics.get(2).origin, new int[]{32, 64, 0});
+        } finally {
+            Files.walk(tmp2).sorted(Comparator.reverseOrder()).forEach(path -> {
+                try { Files.deleteIfExists(path); } catch (IOException ignored) {}
+            });
+        }
     }
 }
