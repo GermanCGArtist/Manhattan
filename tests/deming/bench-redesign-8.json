@@ -8,8 +8,8 @@
       "loader_version": "0.20.1",
       "mods": [
         { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
-        { "local_path": "build/libs/manhattan-2.15.0.jar" },
-        { "local_path": "build/libs/manhattan-testbridge-2.15.0.jar" }
+        { "local_path": "build/libs/manhattan-2.15.1.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.15.1.jar" }
       ],
       "account": { "offline": { "username": "BenchR01" } },
       "ram_mb": 2560,
@@ -35,8 +35,8 @@
       "loader_version": "0.20.1",
       "mods": [
         { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
-        { "local_path": "build/libs/manhattan-2.15.0.jar" },
-        { "local_path": "build/libs/manhattan-testbridge-2.15.0.jar" }
+        { "local_path": "build/libs/manhattan-2.15.1.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.15.1.jar" }
       ],
       "account": { "offline": { "username": "BenchR02" } },
       "ram_mb": 2560,
@@ -62,8 +62,8 @@
       "loader_version": "0.20.1",
       "mods": [
         { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
-        { "local_path": "build/libs/manhattan-2.15.0.jar" },
-        { "local_path": "build/libs/manhattan-testbridge-2.15.0.jar" }
+        { "local_path": "build/libs/manhattan-2.15.1.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.15.1.jar" }
       ],
       "account": { "offline": { "username": "BenchR03" } },
       "ram_mb": 2560,
@@ -89,8 +89,8 @@
       "loader_version": "0.20.1",
       "mods": [
         { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
-        { "local_path": "build/libs/manhattan-2.15.0.jar" },
-        { "local_path": "build/libs/manhattan-testbridge-2.15.0.jar" }
+        { "local_path": "build/libs/manhattan-2.15.1.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.15.1.jar" }
       ],
       "account": { "offline": { "username": "BenchR04" } },
       "ram_mb": 2560,
@@ -116,8 +116,8 @@
       "loader_version": "0.20.1",
       "mods": [
         { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
-        { "local_path": "build/libs/manhattan-2.15.0.jar" },
-        { "local_path": "build/libs/manhattan-testbridge-2.15.0.jar" }
+        { "local_path": "build/libs/manhattan-2.15.1.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.15.1.jar" }
       ],
       "account": { "offline": { "username": "BenchR05" } },
       "ram_mb": 2560,
@@ -143,8 +143,8 @@
       "loader_version": "0.20.1",
       "mods": [
         { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
-        { "local_path": "build/libs/manhattan-2.15.0.jar" },
-        { "local_path": "build/libs/manhattan-testbridge-2.15.0.jar" }
+        { "local_path": "build/libs/manhattan-2.15.1.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.15.1.jar" }
       ],
       "account": { "offline": { "username": "BenchR06" } },
       "ram_mb": 2560,
@@ -170,8 +170,8 @@
       "loader_version": "0.20.1",
       "mods": [
         { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
-        { "local_path": "build/libs/manhattan-2.15.0.jar" },
-        { "local_path": "build/libs/manhattan-testbridge-2.15.0.jar" }
+        { "local_path": "build/libs/manhattan-2.15.1.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.15.1.jar" }
       ],
       "account": { "offline": { "username": "BenchR07" } },
       "ram_mb": 2560,
@@ -197,8 +197,8 @@
       "loader_version": "0.20.1",
       "mods": [
         { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
-        { "local_path": "build/libs/manhattan-2.15.0.jar" },
-        { "local_path": "build/libs/manhattan-testbridge-2.15.0.jar" }
+        { "local_path": "build/libs/manhattan-2.15.1.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.15.1.jar" }
       ],
       "account": { "offline": { "username": "BenchR08" } },
       "ram_mb": 2560,

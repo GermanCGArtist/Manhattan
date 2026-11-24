@@ -84,6 +84,12 @@ public interface PathEngine {
 
     default void removeProtectedArea(String name) {}
 
+    /**
+     * Boxes nothing may be placed into (breaking stays allowed), under a name; null or empty removes them.
+     * Used to keep a just-cleared area clear while the bot climbs out of it.
+     */
+    default void setNoPlaceArea(String name, List<Area> boxes) {}
+
     default void clearProtectedAreas() {}
 
     default boolean isProtectedAt(BlockPos pos) {

@@ -49,7 +49,10 @@ public final class ClearProcess {
     private static final int TRAVEL_TIMEOUT = 20 * 45, WALK_STUCK = 30, BREAK_TIMEOUT = 20 * 8, PICK_TIMEOUT = 20 * 3;
     private static final int REPORT_EVERY = 20 * 60 * 5;
 
-    private enum State { NEXT, TRAVEL, WALK, WORK, PICK }
+    private enum State { NEXT, TRAVEL, WALK, WORK, PICK, EXIT }
+    /** Name of the no-place area that keeps the cleared boxes clear while the bot climbs out of its pit. */
+    private static final String KEEP_CLEAR = "clear_area_keep_clear";
+    private BlockPos exitStand;
 
     private static volatile boolean activeClear;
 
@@ -245,6 +248,69 @@ public final class ClearProcess {
         }
         if (breakBefore != null) dev.buildtools.Api.setOwnBreak(breakBefore);
         breakBefore = null;
+        EngineSelector.current().setNoPlaceArea(KEEP_CLEAR, null);
+    }
+
+    /** Inside the cleared boxes' x/z footprint (any height). */
+    private boolean inFootprint(BlockPos p) {
+        for (int[] b : boxes) {
+            if (p.getX() >= b[0] && p.getX() <= b[3] && p.getZ() >= b[2] && p.getZ() <= b[5]) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Done digging, but standing in a pit lower than the ground around it: climb out now, while breaking is still
+     * allowed, with placing inside the cleared boxes forbidden, so Midtown cuts a step into the rim instead of
+     * pillaring out (a pillar block left in the cleared area, as chest trips that follow may not break). Returns
+     * false when no climb is needed (the ground around is not higher) or no way out is known.
+     */
+    private boolean startExit(Level level, LocalPlayer p) {
+        BlockPos feet = p.blockPosition();
+        if (!inFootprint(feet)) return false;
+        BlockPos best = null;
+        double bestD = Double.MAX_VALUE;
+        for (int[] b : boxes) {
+            if (feet.getX() < b[0] || feet.getX() > b[3] || feet.getZ() < b[2] || feet.getZ() > b[5]) continue;
+            int[][] edges = {
+                    {b[0] - 1, feet.getZ()}, {b[3] + 1, feet.getZ()}, {feet.getX(), b[2] - 1}, {feet.getX(), b[5] + 1}};
+            for (int[] c : edges) {
+                if (inFootprint(new BlockPos(c[0], feet.getY(), c[1]))) continue;   // another box continues there
+                BlockPos stand = surfaceStand(level, c[0], c[1], b[4] + 4, b[1] - 2);
+                if (stand == null) continue;
+                double d = feet.distSqr(stand);
+                if (d < bestD) {
+                    bestD = d;
+                    best = stand;
+                }
+            }
+        }
+        if (best == null || best.getY() <= feet.getY()) return false;   // walking out needs no climb
+        exitStand = best;
+        List<Area> keep = new ArrayList<>();
+        for (int[] b : boxes) keep.add(new Area(b[0], b[1], b[2], b[3], b[4], b[5]));
+        EngineSelector.current().setNoPlaceArea(KEEP_CLEAR, keep);
+        System.out.println("[Queue] clear_area climbing out of the pit to " + best.toShortString()
+                + " (no blocks placed in the cleared area)");
+        state = State.EXIT;
+        stateTicks = 0;
+        midtownTraveling = false;
+        return true;
+    }
+
+    /** The highest spot to stand in column (x, z) between yHigh and yLow: solid below, two free above. */
+    private static BlockPos surfaceStand(Level level, int x, int z, int yHigh, int yLow) {
+        for (int y = yHigh; y >= yLow; y--) {
+            BlockPos at = new BlockPos(x, y, z);
+            if (!level.hasChunkAt(at)) return null;
+            if (dev.buildtools.Api.solid(level, at.below())
+                    && level.getBlockState(at).getCollisionShape(level, at).isEmpty()
+                    && level.getBlockState(at.above()).getCollisionShape(level, at.above()).isEmpty()
+                    && level.getFluidState(at).isEmpty()) {
+                return at;
+            }
+        }
+        return null;
     }
 
     // ------------------------------------------------------------------ the plan
@@ -755,6 +821,25 @@ public final class ClearProcess {
                 hold(aligned);
                 return;
             }
+            case EXIT -> {
+                tTravel++;
+                releaseKeys();
+                if (!midtownTraveling) {
+                    EngineSelector.current().goTo(GoalSpec.near(exitStand, 1));
+                    midtownTraveling = true;
+                }
+                EngineStatus es = EngineSelector.current().status();
+                boolean out = !inFootprint(p.blockPosition()) || p.getBlockY() >= exitStand.getY();
+                if (out || es == EngineStatus.DONE || es == EngineStatus.FAILED || es == EngineStatus.IDLE
+                        || stateTicks > TRAVEL_TIMEOUT) {
+                    EngineSelector.current().cancel();
+                    midtownTraveling = false;
+                    EngineSelector.current().setNoPlaceArea(KEEP_CLEAR, null);
+                    if (!out) System.out.println("[Queue] clear_area could not climb out by digging a step (" + es + ")");
+                    finish(level);
+                }
+                return;
+            }
             case TRAVEL -> {
                 tTravel++;
                 releaseKeys();
@@ -828,7 +913,10 @@ public final class ClearProcess {
                     gapSkipped += deferred.size();
                     deferred.clear();
                 }
-                if (!nextPass(level)) { finish(level); return; }
+                if (!nextPass(level)) {
+                    if (!startExit(level, p)) finish(level);
+                    return;
+                }
                 continue;
             }
             BlockPos s = stops.get(stop);

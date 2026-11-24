@@ -30,6 +30,7 @@ public final class MidtownPeerTest {
         testYieldHighRankWaitsThenDetours();
         testYieldLowRankGivesWayQuickly();
         testYieldEndsCleanlyWhenPeerMoves();
+        testNoPlaceAreaDigsStepOutOfPit();
         System.out.println("MidtownPeerTest summary: " + passes + " passed, " + fails + " failed.");
         if (fails > 0) System.exit(1);
     }
@@ -162,6 +163,34 @@ public final class MidtownPeerTest {
             b = c.tick(x, 64.0, 0.5);
         }
         check("no timeout right after the wait: " + b, b instanceof TickAction.MoveTo || b instanceof TickAction.Done);
+    }
+
+    /** clear_area's climb-out: with placing forbidden in the cleared pit, Midtown digs a step into the rim. */
+    private static void testNoPlaceAreaDigsStepOutOfPit() {
+        MidtownPlanner planner = new MidtownPlanner();
+        try {
+            // ground: solid up to y = 2 (stand at y = 3); a pit x 3..5, z -1..1, y 1..2 dug out (stand at y = 1)
+            GridWorldSnapshot world = GridWorldSnapshot.builder(-2, 0, -4, 10, 6, 4)
+                    .fillBox(-2, 0, -4, 10, 2, 4, BlockKind.SOLID)
+                    .fillBox(3, 1, -1, 5, 2, 1, BlockKind.AIR)
+                    .build();
+            dev.midtown.api.Area pit = new dev.midtown.api.Area(3, 1, -1, 5, 2, 1);
+            CalculationContext keepClear = CalculationContext.builder().allowBreak(true).allowPlace(true)
+                    .addProtectedRegion(new CalculationContext.ProtectedRegion("keep", pit, true, false, false, 0))
+                    .build();
+            PlanResult out = planner.planSync(world, keepClear, new BlockPos(4, 1, 0), GoalSpec.near(new BlockPos(8, 3, 0), 1));
+            check("climbs out of the pit without placing in it: " + out.status(), out.isComplete());
+            check("no pillar or bridge edges",
+                    out.edges().stream().noneMatch(e -> e instanceof dev.midtown.plan.MoveEdge.PillarEdge
+                            || e instanceof dev.midtown.plan.MoveEdge.BridgeEdge));
+            CalculationContext noBreak = CalculationContext.builder().allowBreak(false).allowPlace(true).build();
+            PlanResult pillar = planner.planSync(world, noBreak, new BlockPos(4, 1, 0), GoalSpec.near(new BlockPos(8, 3, 0), 1));
+            check("without breaking it would have to place (the old bug)",
+                    pillar.isComplete() && pillar.edges().stream().anyMatch(e -> e instanceof dev.midtown.plan.MoveEdge.PillarEdge
+                            || e instanceof dev.midtown.plan.MoveEdge.BridgeEdge));
+        } finally {
+            planner.shutdown();
+        }
     }
 
     /** A private store per test (the global one is shared by the game). */

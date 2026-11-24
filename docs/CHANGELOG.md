@@ -2,6 +2,14 @@
 
 Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
 
+## 2.15.1 – clear_area leaves its pit cleanly (2026-11-24)
+- Fixed: after `clear_area` dug a pit (deeper than the ground around it), the next chest trip pillared out of the pit
+  and left the pillar block in the area just cleared (chest trips may not break blocks, so placing was the only way
+  out). `clear_area` now climbs out itself before it ends, while it still may dig, with placing inside the cleared
+  boxes forbidden: Midtown cuts a step into the rim instead. Nothing changes when the bot can simply walk out.
+  The Deming scenario `project_queue_pipeline`, which failed this way also on 2.14.16, passes again.
+- Midtown: `setNoPlaceArea(name, boxes)` keeps boxes free of placed blocks while breaking stays allowed.
+
 ## 2.15.0 – fleets: reliable reports, bots that see each other (2026-11-24)
 Needs manhattan-fleet-server 0.2.0 (fleet protocol v2); see [FLEET.md](FLEET.md).
 - Chunk reports go through an outbox that is saved to disk and resent until the server acknowledges them, so a
