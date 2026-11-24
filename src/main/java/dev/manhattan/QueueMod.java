@@ -1950,6 +1950,18 @@ public class QueueMod implements ClientModInitializer {
                 ? new BlockPos(dumpChestCoords[0], dumpChestCoords[1], dumpChestCoords[2])
                 : null;
         String chestText = chest == null ? null : "at " + chest.toShortString();
+        dev.manhattan.fleet.ChunkLeaseProvider leaseProvider = null;
+        int fleetChunkSize = 0;
+        dev.manhattan.fleet.FleetClient fc = dev.manhattan.fleet.FleetClient.instance();
+        if (fc.isWorkerActive()) {
+            dev.manhattan.fleet.FleetProtocol.WorkGrant grant = fc.activeGrant();
+            if (grant != null && !grant.idle && grant.jobId != null) {
+                leaseProvider = fc.createLeaseProvider(grant.jobId);
+                fleetChunkSize = effectiveChunkSize();
+            }
+        }
+        final dev.manhattan.fleet.ChunkLeaseProvider activeLeaseProvider = leaseProvider;
+        final int activeFleetChunkSize = fleetChunkSize;
         return new PriorityScheduler.ActionHandle() {
             private Fiber fiber;
             private boolean started;
@@ -1975,7 +1987,8 @@ public class QueueMod implements ClientModInitializer {
                 Interp[] holder = new Interp[1];
                 fiber = new Fiber("project-clear-trees", () -> {
                     try {
-                        TreeClear.run(holder[0], 1, chest, chestText, explicitBoxes, taskId, allowMidRunDump);
+                        TreeClear.run(holder[0], 1, chest, chestText, explicitBoxes, taskId, allowMidRunDump,
+                                activeLeaseProvider, activeFleetChunkSize);
                     } finally {
                         restoreDiameter();
                     }

@@ -229,6 +229,7 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
                 if (exec != null && exec.places != null) {
                     exec.places.bed = cand.clone();
                 }
+                dev.manhattan.fleet.FleetClient.instance().overrideAssignedBedPos(cand);
                 dev.survivalkit.Api.setBedPos(cand);
                 dev.survivalkit.Api.resetSleepCooldown();
                 QueueMod.projectLog("Primary bed missing at " + bedPos.toShortString()

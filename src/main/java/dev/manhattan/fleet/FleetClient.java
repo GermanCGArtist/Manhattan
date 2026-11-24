@@ -559,6 +559,17 @@ public final class FleetClient {
         return null;
     }
 
+    /** Updates the local assigned bed position after a safety failover to a backup bed. */
+    public void overrideAssignedBedPos(int[] bedPos) {
+        int[] copy = (bedPos != null && bedPos.length >= 3) ? new int[]{bedPos[0], bedPos[1], bedPos[2]} : null;
+        if (sleepBedPos != null) {
+            sleepBedPos = copy;
+        }
+        if (activeGrant != null && activeGrant.assignedBed != null) {
+            activeGrant.assignedBed = copy;
+        }
+    }
+
     public void reportSleepStatus(String status) {
         if (!serverConnected) return;
         JsonObject body = new JsonObject();

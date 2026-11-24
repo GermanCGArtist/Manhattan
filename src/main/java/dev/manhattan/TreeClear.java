@@ -20,6 +20,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -488,7 +489,7 @@ final class TreeClear {
     }
 
     static Object run(Interp in, int line, BlockPos chest, String chestText) {
-        return run(in, line, chest, chestText, null, null, true);
+        return run(in, line, chest, chestText, null, null, true, null, 0);
     }
 
     static Object run(
@@ -499,6 +500,19 @@ final class TreeClear {
             List<int[]> explicitBoxes,
             String taskIdPrefix,
             boolean allowMidRunDump) {
+        return run(in, line, chest, chestText, explicitBoxes, taskIdPrefix, allowMidRunDump, null, 0);
+    }
+
+    static Object run(
+            Interp in,
+            int line,
+            BlockPos chest,
+            String chestText,
+            List<int[]> explicitBoxes,
+            String taskIdPrefix,
+            boolean allowMidRunDump,
+            dev.manhattan.fleet.ChunkLeaseProvider leaseProvider,
+            int explicitChunkSize) {
         Minecraft mc = Minecraft.getInstance();
         Level level = mc.level;
         LocalPlayer p = player(line);
@@ -532,14 +546,26 @@ final class TreeClear {
             for (Item it : THROWAWAY_ITEMS) if (start.containsKey(it)) throwaway = true;
             if (!throwaway) Util.msg("clear_trees: you carry no scaffolding blocks (e.g. dirt): tall trees may be out of reach.");
 
-            boolean chunked = Config.cfg.chunkEnabled;
-            int size = chunked ? Config.cfg.chunkSize : 1 << 20;
+            boolean fleetMode = leaseProvider != null;
+            boolean chunked = fleetMode || Config.cfg.chunkEnabled;
+            int size = fleetMode
+                    ? (explicitChunkSize > 0 ? explicitChunkSize : Config.cfg.chunkSize)
+                    : (chunked ? Config.cfg.chunkSize : 1 << 20);
+            int gap = fleetMode ? -1 : (chunked ? Config.cfg.chunkGap : -1);
             // Full-height columns, no bands in Y: trees stand on the ground, and with bands the bot walked the whole footprint
             // once per band (a 250 high selection = dozens of passes over mostly empty sky). Air-only sections are skipped by the scan.
-            List<ChunkGrid.ColumnBox> chunks = ChunkGrid.orderSerpentine(
-                    ChunkGrid.split(boxes, size, 0, chunked ? Config.cfg.chunkGap : -1), p.blockPosition());
+            List<ChunkGrid.ColumnBox> rawChunks = ChunkGrid.split(boxes, size, 0, gap);
+            List<ChunkGrid.ColumnBox> chunks = fleetMode
+                    ? rawChunks
+                    : ChunkGrid.orderSerpentine(rawChunks, p.blockPosition());
+            Map<String, ChunkGrid.ColumnBox> chunkByKey = new LinkedHashMap<>();
+            if (fleetMode) {
+                for (ChunkGrid.ColumnBox c : chunks) {
+                    chunkByKey.put(ChunkRunner.chunkKey(taskIdPrefix, c), c);
+                }
+            }
             // finished chunks of an earlier run (same selection, same sizes) are skipped; one chunk is not worth a ledger entry
-            String signature = "clear_trees:" + size + "y0g" + (chunked ? Config.cfg.chunkGap : -1);
+            String signature = "clear_trees:" + size + "y0g" + gap;
             for (int[] b : boxes) signature += ":" + b[0] + "," + b[1] + "," + b[2] + "-" + b[3] + "," + b[4] + "," + b[5];
             Jobs.Node actionNode = null;
             if (chunks.size() > 1) {
@@ -555,16 +581,49 @@ final class TreeClear {
             int total = 0, cleared = 0, gaveUp = 0, chunkNo = 0, skipped = 0, quickFails = 0;
             List<BlockPos> spots = new ArrayList<>();
             Map<BlockPos, Long> spotTimes = new HashMap<>();
-            Util.msg("clear_trees: " + (chunks.size() == 1 ? "scanning the selection." : chunks.size() + " chunks, scanned and cut one after the other."));
-            for (ChunkGrid.ColumnBox chunk : chunks) {
+            if (fleetMode) {
+                Util.msg("clear_trees: " + chunks.size() + " fleet chunk" + (chunks.size() == 1 ? "" : "s") + ", claiming from Fleet Server.");
+            } else {
+                Util.msg("clear_trees: " + (chunks.size() == 1 ? "scanning the selection." : chunks.size() + " chunks, scanned and cut one after the other."));
+            }
+            int localIdx = 0;
+            while (true) {
+                ChunkGrid.ColumnBox chunk;
+                String leaseKey = null;
+                if (fleetMode) {
+                    dev.manhattan.fleet.ChunkLeaseProvider.ClaimResult claim = leaseProvider.pollNextChunk();
+                    if (claim == null || claim.status() == dev.manhattan.fleet.ChunkLeaseProvider.ClaimStatus.WAITING) {
+                        in.await(() -> new Actions.Wait(0.1), "wait for fleet chunk lease", line);
+                        continue;
+                    }
+                    if (claim.status() == dev.manhattan.fleet.ChunkLeaseProvider.ClaimStatus.NO_WORK) {
+                        break;
+                    }
+                    leaseKey = claim.chunkKey();
+                    chunk = chunkByKey.get(leaseKey);
+                    if (chunk == null) {
+                        // If the leased chunk belongs to a different task in the same Fleet Project,
+                        // finish this task cleanly without marking the other task's chunk as FAILED.
+                        if (taskIdPrefix != null && leaseKey != null && !leaseKey.startsWith(taskIdPrefix + "/")) {
+                            break;
+                        }
+                        leaseProvider.reportChunk(leaseKey, dev.manhattan.fleet.wire.FleetWire.OUTCOME_FAILED, "Unknown chunk key");
+                        continue;
+                    }
+                } else {
+                    if (localIdx >= chunks.size()) break;
+                    chunk = chunks.get(localIdx++);
+                }
                 chunkNo++;
                 Jobs.Node node = actionNode == null ? null : Jobs.chunk(actionNode, chunk);
                 if (node != null) {
-                    Ledger.Entry e = ledger.get(node.id, signature);
-                    if (e != null && e.state == Ledger.State.DONE) {
-                        node.state = Ledger.State.DONE;
-                        skipped++;
-                        continue;
+                    if (!fleetMode) {
+                        Ledger.Entry e = ledger.get(node.id, signature);
+                        if (e != null && e.state == Ledger.State.DONE) {
+                            node.state = Ledger.State.DONE;
+                            skipped++;
+                            continue;
+                        }
                     }
                     Jobs.set(node, Ledger.State.RUNNING, 0, 0, null, signature);
                 }
@@ -722,6 +781,12 @@ final class TreeClear {
                     t.blocks.removeIf(bb -> level.hasChunkAt(bb) && !tree(level, bb));
                     if (!t.blocks.isEmpty()) open++;
                 }
+                if (fleetMode && leaseKey != null) {
+                    leaseProvider.reportChunk(
+                            leaseKey,
+                            open == 0 ? dev.manhattan.fleet.wire.FleetWire.OUTCOME_DONE : dev.manhattan.fleet.wire.FleetWire.OUTCOME_DEFERRED,
+                            open == 0 ? "" : open + " out of reach");
+                }
                 if (node != null) Jobs.set(node, open == 0 ? Ledger.State.DONE : Ledger.State.DEFERRED, 1, open, open == 0 ? null : open + " out of reach", signature);
                 if (actionNode != null) Jobs.settle(actionNode);
             }
@@ -773,7 +838,7 @@ final class TreeClear {
             r.forgetOutsideZones();
             r.scaffold(null);   // whatever stands in the zones still
             r.refreshZones(level);
-            if (chest != null) r.dump();
+            if (chest != null && (!fleetMode || cleared > 0)) r.dump();
 
             // the report: what is in the inventory now and not before, plus what went into the chest
             Map<Item, Integer> now = inventory(player(line));
