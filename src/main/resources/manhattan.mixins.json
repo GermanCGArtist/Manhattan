@@ -3,9 +3,6 @@
   "package": "dev.manhattan.mixin",
   "compatibilityLevel": "JAVA_25",
   "client": [
-    "MinecraftMixin",
-    "KeyboardHandlerMixin",
-    "MouseHandlerMixin"
   ],
   "injectors": {
     "defaultRequire": 1

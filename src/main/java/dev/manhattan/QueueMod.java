@@ -65,7 +65,12 @@ public class QueueMod implements ClientModInitializer {
         Config.load();
         dev.manhattan.fleet.FleetClient.instance().initialize(
                 dev.manhattan.fleet.FleetMode.parse(cfg.fleetMode), cfg.fleetTags);
-        dev.midtown.exec.MidtownEngine.configureDeathStorage(projectConfigDir().resolve("manhattan-deaths"), QueueMod::projectWorld);
+        Path deathDir = dev.liskov.core.LiskovFs.isInitialized()
+                ? dev.liskov.core.LiskovFs.get().manhattanDir().resolve("deaths")
+                : projectConfigDir().resolve("manhattan-deaths");
+        dev.midtown.exec.MidtownEngine.configureDeathStorage(deathDir, QueueMod::projectWorld);
+        ImGuiManager.registerLayers();
+        registerLiskovIntegrations();
         LevelRenderEvents.BEFORE_GIZMOS.register(ctx -> {
             Areas.renderWireframe();
             WorldOverlay.render();
@@ -927,6 +932,169 @@ public class QueueMod implements ClientModInitializer {
 
     // ------------------------------------------------------------------ package-private bridge for GameProjectRuntime
 
+    static void reloadAllFromDisk() {
+        DockedPanels.reloadDiskScripts();
+        GameProjectRuntime.instance().reloadAllFromDisk();
+        Capture.invalidateFromDisk();
+        WorldOverlay.invalidateCache();
+        dev.liskov.ui.theme.MubWidgets.ToastHost.push("Reloaded Manhattan scripts, projects & captures",
+                dev.liskov.core.SemanticColor.MR);
+    }
+
+    private static void registerLiskovIntegrations() {
+        // 1. Shared Ctrl+P Command Palette entries
+        dev.liskov.ui.theme.MubWidgets.CommandPalette.register(new dev.liskov.ui.theme.MubWidgets.CommandPalette.Entry(
+                "manhattan.shell.toggle", "Manhattan: Toggle Workspace (J)", "Mp",
+                dev.liskov.core.SemanticColor.MR, ImGuiManager::toggleShell));
+        dev.liskov.ui.theme.MubWidgets.CommandPalette.register(new dev.liskov.ui.theme.MubWidgets.CommandPalette.Entry(
+                "manhattan.script.run", "Manhattan: Run Active Script", "Mp",
+                dev.liskov.core.SemanticColor.CTA, DockedPanels::runCurrent));
+        dev.liskov.ui.theme.MubWidgets.CommandPalette.register(new dev.liskov.ui.theme.MubWidgets.CommandPalette.Entry(
+                "manhattan.script.stop", "Manhattan: Stop Running Script / Project", "Mp",
+                dev.liskov.core.SemanticColor.DANGER, ImGuiManager::triggerStop));
+        dev.liskov.ui.theme.MubWidgets.CommandPalette.register(new dev.liskov.ui.theme.MubWidgets.CommandPalette.Entry(
+                "manhattan.reload", "Manhattan: Reload Scripts, Projects & Captures", "Mp",
+                dev.liskov.core.SemanticColor.PLAYER, () -> {
+                    dev.liskov.ui.LiskovClientMod.watcher().reloadNow();
+                    reloadAllFromDisk();
+                }));
+        dev.liskov.ui.theme.MubWidgets.CommandPalette.register(new dev.liskov.ui.theme.MubWidgets.CommandPalette.Entry(
+                "manhattan.outlines.toggle", "Manhattan: Toggle 3D World Outlines", "Mp",
+                dev.liskov.core.SemanticColor.FOCUS, () -> {
+                    cfg.showWorldOverlay = !cfg.showWorldOverlay;
+                    Config.save();
+                    dev.liskov.ui.theme.MubWidgets.ToastHost.push(
+                            "3D Outlines " + (cfg.showWorldOverlay ? "ON" : "OFF"),
+                            dev.liskov.core.SemanticColor.FOCUS);
+                }));
+
+        // 2. Liskov Explorer actions & live CompletionTag status provider
+        dev.liskov.ui.explorer.FileActionRegistry.registerAction(new dev.liskov.ui.explorer.FileActionRegistry.Action(
+                "manhattan.open_in_workspace",
+                "OPEN IN MANHATTAN",
+                dev.liskov.core.SemanticColor.MR,
+                ft -> ft != null && (dev.liskov.core.FileTypeRegistry.MPROJ.id().equals(ft.id())
+                        || dev.liskov.core.FileTypeRegistry.MSCRIPT.id().equals(ft.id())),
+                path -> {
+                    if (path == null) return;
+                    String fn = path.getFileName().toString();
+                    if (fn.endsWith(".mproj") || fn.endsWith(".json")) {
+                        String id = fn.endsWith(".mproj") ? fn.substring(0, fn.length() - 6) : fn.substring(0, fn.length() - 5);
+                        GameProjectRuntime.instance().selectProject(id);
+                        ImGuiManager.openShell(Shell.Mode.EDIT);
+                        Shell.drawer = Shell.Drawer.PROJECTS;
+                    } else {
+                        DockedPanels.openScriptFile(path);
+                        ImGuiManager.openShell(Shell.Mode.EDIT);
+                        Shell.drawer = Shell.Drawer.NONE;
+                    }
+                    dev.liskov.ui.explorer.LiskovExplorer.get().setOpen(false);
+                }));
+
+        dev.liskov.ui.explorer.FileActionRegistry.registerStatusProvider((file, type) -> {
+            if (file == null || type == null) return null;
+            if (dev.liskov.core.FileTypeRegistry.MPROJ.id().equals(type.id())) {
+                String fn = file.getFileName().toString();
+                String id = fn.endsWith(".mproj") ? fn.substring(0, fn.length() - 6)
+                        : fn.endsWith(".json") ? fn.substring(0, fn.length() - 5) : fn;
+                var fc = dev.manhattan.fleet.FleetClient.instance();
+                if (fc != null && fc.isConnected() && fc.snapshot() != null && fc.snapshot().jobs != null) {
+                    for (var j : fc.snapshot().jobs) {
+                        if (id.equalsIgnoreCase(j.projectId)) {
+                            boolean active = "ACTIVE".equalsIgnoreCase(j.status);
+                            boolean paused = "PAUSED".equalsIgnoreCase(j.status);
+                            return dev.liskov.core.CompletionTag.deriveProjectTag(
+                                    false, j.failedChunks > 0, active, paused, j.doneChunks, j.totalChunks);
+                        }
+                    }
+                }
+                GameProjectRuntime rt = GameProjectRuntime.instance();
+                Project run = rt != null ? rt.runningProject() : null;
+                boolean active = run != null && id.equalsIgnoreCase(run.id);
+                return dev.liskov.core.CompletionTag.deriveProjectTag(
+                        false, active && Widgets.failing(), active, false, 0, active ? 1 : 0);
+            }
+            if (dev.liskov.core.FileTypeRegistry.MSCRIPT.id().equals(type.id())) {
+                String fn = file.getFileName().toString();
+                if (runner.running() && fn.equalsIgnoreCase(DockedPanels.activeTabName())) {
+                    return Widgets.failing() ? dev.liskov.core.CompletionTag.ERROR : dev.liskov.core.CompletionTag.IN_PROGRESS;
+                }
+                return dev.liskov.core.CompletionTag.NOT_STARTED;
+            }
+            return null;
+        });
+
+        // 3. Title Screen & ESC Pause Menu toggleable Overview Card
+        dev.liskov.ui.menu.MenuOverviewRegistry.get().register(new dev.liskov.ui.menu.MenuOverviewRegistry.CardProvider() {
+            @Override public String id() { return "manhattan.overview"; }
+            @Override public String title() { return "MANHATTAN"; }
+            @Override public dev.liskov.core.SemanticColor accentRole() { return dev.liskov.core.SemanticColor.MR; }
+            @Override public int order() { return 20; }
+            @Override public boolean supports(dev.liskov.ui.menu.MenuOverviewRegistry.Surface s) {
+                return s == dev.liskov.ui.menu.MenuOverviewRegistry.Surface.TITLE_SCREEN
+                        || s == dev.liskov.ui.menu.MenuOverviewRegistry.Surface.PAUSE_MENU;
+            }
+            @Override public void drawCardBody(dev.liskov.ui.menu.MenuOverviewRegistry.Surface s) {
+                UiTheme.syncFromMubTheme();
+                if (s == dev.liskov.ui.menu.MenuOverviewRegistry.Surface.TITLE_SCREEN) {
+                    int count = 0;
+                    if (dev.liskov.core.LiskovFs.isInitialized()) {
+                        Path projRoot = dev.liskov.core.LiskovFs.get().manhattanDir().resolve("projects");
+                        if (Files.isDirectory(projRoot)) {
+                            try (var st = Files.list(projRoot)) {
+                                count = (int) st.filter(Files::isDirectory).count();
+                            } catch (Exception ignored) {}
+                        }
+                    }
+                    dev.liskov.ui.theme.MubTheme.textColored(UiTheme.DIM, "Saved worlds: " + count);
+                    if (dev.liskov.ui.theme.MubWidgets.termButton("OPEN LISKOV (F8)##mn_ov_lk", dev.liskov.core.SemanticColor.FOCUS)) {
+                        dev.liskov.ui.explorer.LiskovExplorer.get().setOpen(true);
+                    }
+                    imgui.ImGui.sameLine();
+                    if (dev.liskov.ui.theme.MubWidgets.termButton("COPY PATH##mn_ov_cp", dev.liskov.core.SemanticColor.PLAYER)) {
+                        if (dev.liskov.core.LiskovFs.isInitialized()) {
+                            dev.liskov.core.LiskovFs.get().copyPathToClipboard(dev.liskov.core.LiskovFs.get().manhattanDir());
+                            dev.liskov.ui.theme.MubWidgets.ToastHost.push("Copied Manhattan folder path", dev.liskov.core.SemanticColor.PLAYER);
+                        }
+                    }
+                } else {
+                    ProgressModel.Snapshot snap = ProgressModel.snapshot();
+                    String stateTxt = snap.running()
+                            ? ("Running " + snap.overallPercent() + "% · step " + snap.currentStep() + "/" + snap.totalSteps())
+                            : "Idle · " + DockedPanels.activeTabName();
+                    dev.liskov.ui.theme.MubTheme.textColored(snap.running() ? UiTheme.OK : UiTheme.DIM, stateTxt);
+                    dev.liskov.ui.theme.MubWidgets.pixelSegments(
+                            snap.running() ? (snap.overallPercent() / 100f) : 0f,
+                            12,
+                            Widgets.failing() ? dev.liskov.core.SemanticColor.DANGER : dev.liskov.core.SemanticColor.MR,
+                            220f * ImGuiManager.getUiScale(),
+                            8f * ImGuiManager.getUiScale());
+                    if (dev.liskov.ui.theme.MubWidgets.termButton("WORKSPACE (J)##mn_ov_ws", dev.liskov.core.SemanticColor.MR)) {
+                        ImGuiManager.openShell(Shell.lastMode());
+                    }
+                    imgui.ImGui.sameLine();
+                    if (dev.liskov.ui.theme.MubWidgets.termButton("LISKOV (F8)##mn_ov_lk2", dev.liskov.core.SemanticColor.FOCUS)) {
+                        dev.liskov.ui.explorer.LiskovExplorer.get().setOpen(true);
+                    }
+                }
+            }
+        });
+
+        // 4. ReloadWatcher & LiskovReloadBus hooks for live LLM / external / server updates
+        dev.liskov.ui.LiskovClientMod.watcher().addListener(ev -> {
+            if (ev != null && "manhattan".equals(ev.namespaceId())) {
+                Minecraft mc = Minecraft.getInstance();
+                if (mc != null) mc.execute(QueueMod::reloadAllFromDisk);
+            }
+        });
+        dev.liskov.net.LiskovReloadBus.subscribe(notice -> {
+            if (notice != null && notice.relativePath() != null && notice.relativePath().contains("manhattan")) {
+                Minecraft mc = Minecraft.getInstance();
+                if (mc != null) mc.execute(QueueMod::reloadAllFromDisk);
+            }
+        });
+    }
+
     public static String projectWorld() {
         try {
             return Capture.world();
@@ -937,6 +1105,9 @@ public class QueueMod implements ClientModInitializer {
 
     public static Path projectConfigDir() {
         try {
+            if (dev.liskov.core.LiskovFs.isInitialized()) {
+                return dev.liskov.core.LiskovFs.get().manhattanDir();
+            }
             return FabricLoader.getInstance().getConfigDir();
         } catch (Throwable ignored) {
             return Path.of("config");

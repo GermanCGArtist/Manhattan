@@ -1629,6 +1629,20 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
         }
     }
 
+    /** Reloads projects and queue metadata from disk without restarting Minecraft. */
+    public void reloadAllFromDisk() {
+        String activeId = activeProject != null ? activeProject.id : null;
+        projectCache.clear();
+        loadedWorld = null;
+        activeProject = null;
+        projectQueue = null;
+        ensureLoaded();
+        if (activeId != null && !activeId.isBlank()) {
+            selectProject(activeId);
+        }
+        dev.manhattan.WorldOverlay.invalidateCache();
+    }
+
     private void ensureLoaded() {
         ensureWorldCacheValid();
         if (projectQueue == null) {
@@ -1707,6 +1721,11 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
     }
 
     private static Path projectsDir() {
+        try {
+            if (dev.liskov.core.LiskovFs.isInitialized()) {
+                return dev.liskov.core.LiskovFs.get().manhattanDir().resolve("projects");
+            }
+        } catch (Throwable ignored) {}
         return QueueMod.projectConfigDir().resolve("manhattan-projects");
     }
 

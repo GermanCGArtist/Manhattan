@@ -88,6 +88,19 @@ final class CommandPalette {
                     Config.save();
                     Util.msg("World overlay " + (cfg.showWorldOverlay ? "ON" : "OFF") + ".");
                 }));
+        out.add(new Cmd("Overlay", "Toggle World Overlay When Idle",
+                cfg.overlayShowWhenIdle ? "currently ON" : "currently OFF", () -> {
+                    cfg.overlayShowWhenIdle = !cfg.overlayShowWhenIdle;
+                    Config.save();
+                    Util.msg("World overlay when idle: " + (cfg.overlayShowWhenIdle ? "ON" : "OFF") + ".");
+                }));
+        out.add(new Cmd("Liskov", "Open Liskov File Explorer (F8)", "", () -> dev.liskov.ui.explorer.LiskovExplorer.get().toggle()));
+        out.add(new Cmd("Liskov", "Reload Projects, Scripts & Captures from Disk", "", () -> {
+            dev.liskov.ui.LiskovClientMod.watcher().reloadNow();
+            QueueMod.reloadAllFromDisk();
+        }));
+        out.add(new Cmd("Liskov", "Switch Theme Preset", dev.liskov.ui.theme.MubTheme.preset().displayName,
+                dev.liskov.ui.theme.MubTheme::cyclePreset));
         out.add(new Cmd("Overlay", "Check Base Places (Beds & Chests)", "live block check", () ->
                 WorldOverlay.checkReport().forEach(Util::msg)));
         out.add(new Cmd("Workspace", "UI scale 100%", "", () -> ImGuiManager.setUiScale(1.0f)));
@@ -150,7 +163,7 @@ final class CommandPalette {
         ImGui.setNextWindowFocus();
         ImGui.pushStyleVar(ImGuiStyleVar.WindowPadding, 0f, 0f);
         ImGui.pushStyleVar(ImGuiStyleVar.WindowBorderSize, 1f);
-        ImGui.pushStyleVar(ImGuiStyleVar.WindowRounding, 8f * s);
+        ImGui.pushStyleVar(ImGuiStyleVar.WindowRounding, 0f);
         ImGui.pushStyleColor(ImGuiCol.WindowBg, r(PANEL2), g(PANEL2), b(PANEL2), 1f);
         int flags = ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoMove
                 | ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoSavedSettings | ImGuiWindowFlags.NoScrollbar;

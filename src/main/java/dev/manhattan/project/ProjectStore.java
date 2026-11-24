@@ -31,6 +31,7 @@ public final class ProjectStore {
     private static final String ACTIVE_FILE = "_active.txt";
     private static final String QUEUE_FILE = "_queue.json";
     private static final String JSON_EXT = ".json";
+    private static final String MPROJ_EXT = ".mproj";
 
     private static final Pattern POS_PATTERN = Pattern.compile(
             "pos\\(\\s*(-?\\d+)\\s*,\\s*(-?\\d+)\\s*,\\s*(-?\\d+)\\s*\\)");
@@ -77,9 +78,19 @@ public final class ProjectStore {
         return rootDir.resolve(sanitizeWorld(world));
     }
 
-    /** Resolves {@code <rootDir>/<sanitizedWorld>/<sanitizedId>.json}. */
+    /** Resolves {@code <rootDir>/<sanitizedWorld>/<sanitizedId>.mproj} (or {@code .json} fallback). */
     public static Path projectFile(Path rootDir, String world, String id) {
-        return worldDir(rootDir, world).resolve(sanitizeId(id) + JSON_EXT);
+        Path wDir = worldDir(rootDir, world);
+        String cleanId = sanitizeId(id);
+        Path mproj = wDir.resolve(cleanId + MPROJ_EXT);
+        Path json = wDir.resolve(cleanId + JSON_EXT);
+        if (Files.isRegularFile(mproj)) return mproj;
+        if (Files.isRegularFile(json)) return json;
+        boolean useLiskov = false;
+        try {
+            useLiskov = dev.liskov.core.LiskovFs.isInitialized();
+        } catch (Throwable ignored) {}
+        return useLiskov ? mproj : json;
     }
 
     /** Creates a new default project with initialized collections and sanitized id. */
@@ -92,7 +103,7 @@ public final class ProjectStore {
         return p;
     }
 
-    /** Lists sorted project IDs saved under {@code <rootDir>/<world>/}. */
+    /** Lists sorted project IDs saved under {@code <rootDir>/<world>/} (supporting both {@code .mproj} and {@code .json}). */
     public static List<String> list(Path rootDir, String world) {
         Path dir = worldDir(rootDir, world);
         if (!Files.isDirectory(dir)) return List.of();
@@ -100,8 +111,11 @@ public final class ProjectStore {
         try (var stream = Files.list(dir)) {
             stream.filter(Files::isRegularFile)
                     .map(p -> p.getFileName().toString())
-                    .filter(n -> n.endsWith(JSON_EXT) && !n.startsWith("_"))
-                    .map(n -> n.substring(0, n.length() - JSON_EXT.length()))
+                    .filter(n -> !n.startsWith("_") && (n.endsWith(MPROJ_EXT) || n.endsWith(JSON_EXT)))
+                    .map(n -> n.endsWith(MPROJ_EXT)
+                            ? n.substring(0, n.length() - MPROJ_EXT.length())
+                            : n.substring(0, n.length() - JSON_EXT.length()))
+                    .distinct()
                     .sorted()
                     .forEach(out::add);
         } catch (IOException e) {
@@ -150,9 +164,10 @@ public final class ProjectStore {
     public static boolean delete(Path rootDir, String world, String id) {
         if (id == null || id.isBlank()) return false;
         String cleanId = sanitizeId(id);
-        Path file = projectFile(rootDir, world, cleanId);
+        Path wDir = worldDir(rootDir, world);
         try {
-            boolean deleted = Files.deleteIfExists(file);
+            boolean deleted = Files.deleteIfExists(wDir.resolve(cleanId + MPROJ_EXT));
+            deleted |= Files.deleteIfExists(wDir.resolve(cleanId + JSON_EXT));
             if (deleted) {
                 if (cleanId.equals(activeId(rootDir, world))) {
                     setActiveId(rootDir, world, null);
@@ -164,7 +179,7 @@ public final class ProjectStore {
             }
             return deleted;
         } catch (IOException e) {
-            throw new UncheckedIOException("Failed to delete project " + file, e);
+            throw new UncheckedIOException("Failed to delete project " + cleanId, e);
         }
     }
 

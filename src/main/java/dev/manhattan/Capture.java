@@ -103,7 +103,11 @@ final class Capture {
 
     static Path dir() {
         String d = cfg.captureDir == null ? "" : cfg.captureDir.trim();
-        return d.isEmpty() ? Minecraft.getInstance().gameDirectory.toPath().resolve("manhattan-context") : Path.of(d);
+        if (!d.isEmpty()) return Path.of(d);
+        if (dev.liskov.core.LiskovFs.isInitialized()) {
+            return dev.liskov.core.LiskovFs.get().manhattanDir().resolve("captures");
+        }
+        return Minecraft.getInstance().gameDirectory.toPath().resolve("manhattan-context");
     }
 
     /** The world (singleplayer save name or server address) as a file name. */
@@ -117,7 +121,11 @@ final class Capture {
     }
 
     static Path file() {
-        return dir().resolve(world() + "_" + cfg.captureSet + ".txt");
+        Path mcap = dir().resolve(world() + "_" + cfg.captureSet + ".mcap");
+        Path txt = dir().resolve(world() + "_" + cfg.captureSet + ".txt");
+        if (Files.exists(mcap)) return mcap;
+        if (Files.exists(txt)) return txt;
+        return dev.liskov.core.LiskovFs.isInitialized() ? mcap : txt;
     }
 
     static Path contextFile() {
@@ -130,14 +138,21 @@ final class Capture {
         String prefix = world() + "_";
         try (var s = Files.list(dir())) {
             s.map(p -> p.getFileName().toString())
-                    .filter(n -> n.startsWith(prefix) && n.endsWith(".txt") && !n.endsWith(".context.txt"))
-                    .map(n -> n.substring(prefix.length(), n.length() - 4))
+                    .filter(n -> n.startsWith(prefix) && (n.endsWith(".mcap") || n.endsWith(".txt")) && !n.endsWith(".context.txt"))
+                    .map(n -> n.substring(prefix.length(), n.endsWith(".mcap") ? n.length() - 5 : n.length() - 4))
+                    .distinct()
                     .sorted().forEach(out::add);
         } catch (IOException ignored) {
             // no folder yet
         }
         if (!out.contains(cfg.captureSet)) out.add(0, cfg.captureSet);
         return out;
+    }
+
+    /** Reloads the capture sheet from disk on the next read (used by Liskov ReloadWatcher). */
+    static void invalidateFromDisk() {
+        text = null;
+        lastLook = 0;
     }
 
     /** The sheet, read again when the file changed (an LLM or an editor may have written it). */

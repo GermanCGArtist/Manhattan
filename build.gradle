@@ -6,12 +6,8 @@ version = project.mod_version
 group = project.maven_group
 
 repositories {
+    mavenLocal()
     mavenCentral()
-}
-
-configurations {
-    shade
-    implementation.extendsFrom(shade)
 }
 
 dependencies {
@@ -19,22 +15,7 @@ dependencies {
     minecraft "com.mojang:minecraft:${project.minecraft_version}"
     implementation "net.fabricmc:fabric-loader:${project.loader_version}"
     implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
-
-
-    // Dear ImGui (imgui-java) + natives for Windows, Linux (x86_64) and macOS (universal) bundled into the mod jar
-    shade("io.github.spair:imgui-java-binding:1.90.0")
-    shade("io.github.spair:imgui-java-natives-windows:1.90.0")
-    shade("io.github.spair:imgui-java-natives-linux:1.90.0")
-    shade("io.github.spair:imgui-java-natives-macos:1.90.0")
-}
-
-jar {
-    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-    from {
-        configurations.shade.collect { it.isDirectory() ? it : zipTree(it) }
-    } {
-        exclude 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA', 'META-INF/MANIFEST.MF', 'META-INF/versions/**'
-    }
+    implementation "dev.liskov:liskov:${project.liskov_version}"
 }
 
 // The test bridge for tests/ingame: its own jar (build/libs/manhattan-testbridge-<version>.jar), only ever
@@ -109,12 +90,6 @@ tasks.register('chunkRunnerTest', JavaExec) {
     classpath = sourceSets.test.runtimeClasspath
     mainClass = 'dev.manhattan.ChunkRunnerTest'
 }
-tasks.register('nativesTest', JavaExec) {
-    group = 'verification'
-    description = 'Checks the ImGui native library mapping, bundling and loading.'
-    classpath = sourceSets.test.runtimeClasspath
-    mainClass = 'dev.manhattan.ImGuiNativesTest'
-}
 tasks.register('midtownBodyTest', JavaExec) {
     group = 'verification'
     description = 'Runs RuntimeBus, MotorLease, and HotbarController offline unit tests.'
@@ -157,7 +132,7 @@ tasks.register('safetyGuardTest', JavaExec) {
     classpath = sourceSets.test.runtimeClasspath
     mainClass = 'dev.survivalkit.SafetyGuardTest'
 }
-tasks.named('check') { dependsOn 'langTest', 'parseScripts', 'midtownTest', 'midtownBodyTest', 'midtownPeerTest', 'projectQueueTest', 'telemetryIncidentTest', 'chunkGridTest', 'chunkRunnerTest', 'fleetClientTest', 'worldOverlayTest', 'safetyGuardTest', 'nativesTest' }
+tasks.named('check') { dependsOn 'langTest', 'parseScripts', 'midtownTest', 'midtownBodyTest', 'midtownPeerTest', 'projectQueueTest', 'telemetryIncidentTest', 'chunkGridTest', 'chunkRunnerTest', 'fleetClientTest', 'worldOverlayTest', 'safetyGuardTest' }
 tasks.named('test') { failOnNoDiscoveredTests = false }   // the tests above are plain programs, not JUnit
 
 java {

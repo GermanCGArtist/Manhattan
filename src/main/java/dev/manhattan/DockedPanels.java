@@ -289,9 +289,12 @@ public final class DockedPanels {
             Path dir = scriptDir();
             if (dir != null && Files.isDirectory(dir)) {
                 try (var stream = Files.list(dir)) {
-                    stream.filter(p -> p.getFileName().toString().endsWith(".txt"))
+                    stream.filter(p -> {
+                                String n = p.getFileName().toString();
+                                return n.endsWith(".mscript") || n.endsWith(".txt");
+                            })
                             .sorted()
-                            .limit(8)
+                            .limit(12)
                             .forEach(p -> {
                                 String fn = p.getFileName().toString();
                                 try {
@@ -306,8 +309,24 @@ public final class DockedPanels {
         }
     }
 
+    /** Reloads disk script tabs cleanly when Liskov ReloadWatcher detects external LLM/editor edits. */
+    public static void reloadDiskScripts() {
+        String activeName = tabs.isEmpty() ? "main" : activeTabName();
+        tabs.clear();
+        ensureTabsLoaded();
+        for (int i = 0; i < tabs.size(); i++) {
+            if (tabs.get(i).name.equalsIgnoreCase(activeName)) {
+                selectTab(i);
+                break;
+            }
+        }
+    }
+
     private static Path scriptDir() {
         try {
+            if (dev.liskov.core.LiskovFs.isInitialized()) {
+                return dev.liskov.core.LiskovFs.get().manhattanDir().resolve("scripts");
+            }
             Minecraft mc = Minecraft.getInstance();
             if (mc != null && mc.gameDirectory != null) {
                 return mc.gameDirectory.toPath().resolve("scripts");
@@ -339,8 +358,9 @@ public final class DockedPanels {
 
     public static ScriptTab addScriptTab(String rawName, String initialContent) {
         ensureTabsLoaded();
-        String clean = (rawName == null || rawName.isBlank()) ? "script-" + (tabs.size() + 1) + ".txt" : rawName.trim();
-        if (!clean.endsWith(".txt")) clean += ".txt";
+        String defaultExt = dev.liskov.core.LiskovFs.isInitialized() ? ".mscript" : ".txt";
+        String clean = (rawName == null || rawName.isBlank()) ? "script-" + (tabs.size() + 1) + defaultExt : rawName.trim();
+        if (!clean.endsWith(".mscript") && !clean.endsWith(".txt")) clean += defaultExt;
         for (int i = 0; i < tabs.size(); i++) {
             if (tabs.get(i).name.equalsIgnoreCase(clean)) {
                 selectTab(i);
@@ -381,6 +401,44 @@ public final class DockedPanels {
     }
 
     /** Sets the text from outside the editor (tests, commands): the cursor is forgotten, inserts go to the end. */
+    /** Opens or reloads a script file from Liskov Explorer into the editor tabs. */
+    public static void openScriptFile(Path file) {
+        if (file == null || !Files.isRegularFile(file)) return;
+        ensureTabsLoaded();
+        String name = file.getFileName().toString();
+        for (int i = 0; i < tabs.size(); i++) {
+            ScriptTab t = tabs.get(i);
+            if ((t.file != null && t.file.equals(file)) || t.name.equalsIgnoreCase(name)) {
+                try {
+                    t.text = Files.readString(file, StandardCharsets.UTF_8).replace("\r\n", "\n");
+                } catch (Exception ignored) {}
+                selectTab(i);
+                return;
+            }
+        }
+        try {
+            String content = Files.readString(file, StandardCharsets.UTF_8).replace("\r\n", "\n");
+            tabs.add(new ScriptTab(name, file, content));
+            selectTab(tabs.size() - 1);
+        } catch (Exception ignored) {}
+    }
+
+    private static void snapshotScriptToVcs(Path file, String text) {
+        try {
+            if (!dev.liskov.core.LiskovFs.isInitialized()) return;
+            Path manhattanDir = dev.liskov.core.LiskovFs.get().manhattanDir();
+            if (!file.toAbsolutePath().normalize().startsWith(manhattanDir.toAbsolutePath().normalize())) return;
+            String rel = manhattanDir.relativize(file.toAbsolutePath().normalize()).toString().replace('\\', '/');
+            var vcs = new dev.liskov.core.vcs.VcsStore(dev.liskov.core.LiskovFs.get().vcsRootDir());
+            vcs.snapshot(
+                    dev.liskov.core.LiskovDrives.LOCAL_DRIVE_ID,
+                    dev.liskov.core.vcs.VcsStore.repoIdFor(rel),
+                    "local", "Local", "Auto-save " + file.getFileName(),
+                    false, true,
+                    java.util.Map.of(file.getFileName().toString(), text.getBytes(StandardCharsets.UTF_8)));
+        } catch (Throwable ignored) {}
+    }
+
     public static void setScriptText(String text) {
         lastCursor = -1;
         setCurrentScriptText(text);
@@ -396,7 +454,10 @@ public final class DockedPanels {
         }
         syncToConfig(text);
         if (t.file != null) {
-            try { Files.writeString(t.file, text, StandardCharsets.UTF_8); } catch (Throwable ignored) {}
+            try {
+                Files.writeString(t.file, text, StandardCharsets.UTF_8);
+                snapshotScriptToVcs(t.file, text);
+            } catch (Throwable ignored) {}
         }
         checkResults = null;
         recomputeSyntaxAndSuggestions(text);

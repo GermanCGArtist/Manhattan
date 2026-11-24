@@ -1,5 +1,9 @@
 package dev.manhattan;
 
+import dev.liskov.ui.LiskovClientMod;
+import dev.liskov.ui.explorer.LiskovExplorer;
+import dev.liskov.ui.theme.MubTheme;
+import dev.liskov.ui.theme.MubWidgets;
 import imgui.ImDrawList;
 import imgui.ImGui;
 import imgui.flag.ImGuiCol;
@@ -130,6 +134,7 @@ final class Shell {
     static void render(ProgressModel.Snapshot snap, float W, float H) {
         float s = ImGuiManager.getUiScale();
         layout(W, H, s);
+        paintBackdropAroundGame(ImGui.getBackgroundDrawList(), W, H, s);
         DockedPanels.flushConfig(false);   // the last typed text reaches the config file in every layout
         drawGameFrame();
         activityBar(H, s);
@@ -141,17 +146,34 @@ final class Shell {
         Overlay.drawToasts(gameX, gameY, gameW, gameH, true);
     }
 
-    /** A thin frame around the game: accent while it has the keyboard, grey otherwise. */
+    /** Paints the ModsUndBots dot-grid backdrop only outside the docked game viewport so the live game stays visible. */
+    private static void paintBackdropAroundGame(ImDrawList dl, float W, float H, float s) {
+        float[] fit = ImGuiManager.fittedViewportRect();
+        float gx = fit[0], gy = fit[1], gw = fit[2], gh = fit[3];
+        if (gw <= 1f || gh <= 1f) {
+            MubWidgets.paintDotGridBackdrop(dl, 0f, 0f, W, H, s);
+            return;
+        }
+        if (gy > 0.5f) MubWidgets.paintDotGridBackdrop(dl, 0f, 0f, W, gy, s);
+        float botY = gy + gh;
+        if (H - botY > 0.5f) MubWidgets.paintDotGridBackdrop(dl, 0f, botY, W, H - botY, s);
+        if (gx > 0.5f) MubWidgets.paintDotGridBackdrop(dl, 0f, gy, gx, gh, s);
+        float rightX = gx + gw;
+        if (W - rightX > 0.5f) MubWidgets.paintDotGridBackdrop(dl, rightX, gy, W - rightX, gh, s);
+    }
+
+    /** A thin sharp frame around the game: accent while it has the keyboard, grey otherwise. */
     private static void drawGameFrame() {
         float[] fit = ImGuiManager.fittedViewportRect();
         ImDrawList dl = ImGui.getBackgroundDrawList();
-        int c = ImGuiManager.isGameFocused() ? u32(ACCENT) : u32(LINE);
+        int c = ImGuiManager.isGameFocused() ? u32(ACCENT) : u32(BORDER_HI);
         dl.addRect(fit[0] - 1f, fit[1] - 1f, fit[0] + fit[2] + 1f, fit[1] + fit[3] + 1f, c, 0f, 0, 2f);
         if (!ImGuiManager.isGameFocused()) {
             UiTheme.push(UiTheme.small);
             String hint = "Click the game to play · Esc returns to the panels";
-            dl.addRectFilled(fit[0] + 8, fit[1] + 8, fit[0] + 16 + ImGui.calcTextSizeX(hint), fit[1] + 12 + ImGui.getFontSize(), u32(0x000000, 0.55f), 4f);
-            dl.addText(fit[0] + 12, fit[1] + 10, u32(FG, 0.9f), hint);
+            dl.addRectFilled(fit[0] + 8, fit[1] + 8, fit[0] + 16 + ImGui.calcTextSizeX(hint), fit[1] + 12 + ImGui.getFontSize(), u32(PANEL, 0.88f), 0f);
+            dl.addRect(fit[0] + 8, fit[1] + 8, fit[0] + 16 + ImGui.calcTextSizeX(hint), fit[1] + 12 + ImGui.getFontSize(), u32(BORDER_HI), 0f);
+            dl.addText(fit[0] + 12, fit[1] + 10, u32(FG, 0.95f), hint);
             ImGui.popFont();
         }
     }
@@ -175,9 +197,10 @@ final class Shell {
         float w = activityW(s);
         begin("##activity", 0, 0, w, H - statusH(s), PANEL2, 0, 6f * s, ImGuiWindowFlags.NoScrollbar);
         ImDrawList dl = ImGui.getWindowDrawList();
-        // logo
+        // sharp 0px Manhattan emblem
         float lx = w / 2f - 11f * s, ly = 8f * s;
-        dl.addRectFilled(lx, ly, lx + 22f * s, ly + 22f * s, u32(ACCENT), 5f * s);
+        dl.addRectFilled(lx, ly, lx + 22f * s, ly + 22f * s, u32(ACCENT), 0f);
+        dl.addRect(lx, ly, lx + 22f * s, ly + 22f * s, u32(BORDER_HI), 0f);
         dl.addPolyline(new imgui.ImVec2[]{
                 new imgui.ImVec2(lx + 6f * s, ly + 16f * s), new imgui.ImVec2(lx + 6f * s, ly + 6f * s),
                 new imgui.ImVec2(lx + 11f * s, ly + 12f * s), new imgui.ImVec2(lx + 16f * s, ly + 6f * s),
@@ -197,7 +220,7 @@ final class Shell {
                 case LOG -> drawer == Drawer.LOG;
             };
             float x = ImGui.getCursorScreenPosX(), y = ImGui.getCursorScreenPosY();
-            if (ImGui.invisibleButton("##act" + a, w, 44f * s)) {
+            if (ImGui.invisibleButton("##act" + a, w, 40f * s)) {
                 switch (a) {
                     case EDITOR -> { ImGuiManager.openShell(Mode.EDIT); drawer = Drawer.NONE; }
                     case MONITOR -> { ImGuiManager.openShell(Mode.MONITOR); drawer = Drawer.NONE; }
@@ -212,11 +235,35 @@ final class Shell {
             }
             boolean hov = ImGui.isItemHovered();
             if (hov) ImGui.setTooltip(tooltip(a));
-            int c = on ? FG : hov ? FG : DIM;
-            if (on) dl.addRectFilled(x, y + 8f * s, x + 2f * s, y + 36f * s, u32(ACCENT));
-            Icons.draw(dl, a.name(), x + w / 2f, y + 22f * s, 9f * s, u32(c));
-            if (a == Act.LOG && errs > 0) dl.addCircleFilled(x + w - 13f * s, y + 11f * s, 4f * s, u32(ERR));
+            int c = on ? ACCENT : hov ? FG : DIM;
+            if (on) {
+                dl.addRectFilled(x, y, x + w, y + 40f * s, u32(ACCENT, 0.12f));
+                dl.addRectFilled(x, y, x + 2f * s, y + 40f * s, u32(ACCENT));
+            }
+            Icons.draw(dl, a.name(), x + w / 2f, y + 20f * s, 9f * s, u32(c));
+            if (a == Act.LOG && errs > 0) dl.addRectFilled(x + w - 13f * s, y + 9f * s, x + w - 7f * s, y + 15f * s, u32(ERR));
         }
+
+        // Bottom quick-utilities: Liskov Explorer (F8), Reload Watcher, Theme Preset cycler
+        float utilY = Math.max(ImGui.getCursorPosY() + 8f * s, H - statusH(s) - 108f * s);
+        ImGui.setCursorPosY(utilY);
+        ImGui.separator();
+        ImGui.setCursorPosX(6f * s);
+        if (Widgets.button("LK##actLiskov", 0, w - 12f * s)) {
+            LiskovExplorer.get().toggle();
+        }
+        if (ImGui.isItemHovered()) ImGui.setTooltip("Liskov File Explorer (F8)");
+        ImGui.setCursorPosX(6f * s);
+        if (Widgets.button("RL##actReload", 0, w - 12f * s)) {
+            LiskovClientMod.watcher().reloadNow();
+            QueueMod.reloadAllFromDisk();
+        }
+        if (ImGui.isItemHovered()) ImGui.setTooltip("Reload projects, scripts & captures from Liskov disk");
+        ImGui.setCursorPosX(6f * s);
+        if (Widgets.button("TH##actTheme", 3, w - 12f * s)) {
+            MubTheme.cyclePreset();
+        }
+        if (ImGui.isItemHovered()) ImGui.setTooltip("Theme: " + MubTheme.preset().displayName + " (click to switch)");
         ImGui.end();
     }
 

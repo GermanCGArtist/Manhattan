@@ -1,5 +1,8 @@
 package dev.manhattan;
 
+import dev.liskov.core.SemanticColor;
+import dev.liskov.ui.theme.MubTheme;
+import dev.liskov.ui.theme.MubWidgets;
 import dev.manhattan.project.GameProjectRuntime;
 import dev.manhattan.project.Project;
 import imgui.ImDrawList;
@@ -12,7 +15,7 @@ import java.util.List;
 
 import static dev.manhattan.UiTheme.*;
 
-/** The workspace tiles (Hybrid design): run status, steps, vitals, tools, inventory, alerts, handlers, log. */
+/** The workspace tiles (ModsUndBots sharp terminal design): run status, steps, vitals, tools, inventory, alerts, handlers, log. */
 final class Widgets {
     private Widgets() {}
 
@@ -23,37 +26,31 @@ final class Widgets {
     // ------------------------------------------------------------------ primitives
 
     static void label(String text) {
-        UiTheme.push(UiTheme.small);
-        UiTheme.pushText(DIM);
-        ImGui.textUnformatted(text.toUpperCase());
-        ImGui.popStyleColor();
-        ImGui.popFont();
+        MubWidgets.sectionHeader(text);
     }
 
-    /** kind: 0 normal, 1 primary (accent), 2 danger (red text), 3 ghost. */
+    /** kind: 0 normal (secondary), 1 primary (CTA), 2 danger, 3 ghost/subtle. */
     static boolean button(String text, int kind) {
         return button(text, kind, 0f);
     }
 
     static boolean button(String text, int kind, float w) {
-        int pushed = 0;
-        if (kind == 1) {
-            ImGui.pushStyleColor(ImGuiCol.Button, r(ACCENT), g(ACCENT), b(ACCENT), 1f);
-            ImGui.pushStyleColor(ImGuiCol.ButtonHovered, r(ACCENT), g(ACCENT), b(ACCENT), 0.85f);
-            ImGui.pushStyleColor(ImGuiCol.ButtonActive, r(ACCENT), g(ACCENT), b(ACCENT), 0.7f);
-            ImGui.pushStyleColor(ImGuiCol.Text, r(ON_ACCENT), g(ON_ACCENT), b(ON_ACCENT), 1f);
-            pushed = 4;
-        } else if (kind == 2) {
-            ImGui.pushStyleColor(ImGuiCol.Text, r(ERR), g(ERR), b(ERR), 1f);
-            pushed = 1;
-        } else if (kind == 3) {
-            ImGui.pushStyleColor(ImGuiCol.Button, 0f, 0f, 0f, 0f);
-            ImGui.pushStyleColor(ImGuiCol.Border, 0f, 0f, 0f, 0f);
-            ImGui.pushStyleColor(ImGuiCol.Text, r(DIM), g(DIM), b(DIM), 1f);
-            pushed = 3;
+        SemanticColor tone = switch (kind) {
+            case 1 -> SemanticColor.CTA;
+            case 2 -> SemanticColor.DANGER;
+            case 3 -> SemanticColor.INK_MUTED;
+            default -> null;
+        };
+        if (tone != null) {
+            return MubWidgets.termButton(text, tone, w, 0f);
         }
+        ImGui.pushStyleColor(ImGuiCol.Button, u32(BTN));
+        ImGui.pushStyleColor(ImGuiCol.ButtonHovered, u32(MubTheme.HOVER));
+        ImGui.pushStyleColor(ImGuiCol.ButtonActive, u32(SEL));
+        ImGui.pushStyleColor(ImGuiCol.Border, u32(BORDER_HI));
+        ImGui.pushStyleColor(ImGuiCol.Text, u32(FG));
         boolean clicked = w > 0 ? ImGui.button(text, w, 0f) : ImGui.button(text);
-        ImGui.popStyleColor(pushed);
+        ImGui.popStyleColor(5);
         return clicked;
     }
 
@@ -82,9 +79,9 @@ final class Widgets {
     static void bar(float w, float h, double frac, int rgb) {
         ImDrawList dl = ImGui.getWindowDrawList();
         float x = ImGui.getCursorScreenPosX(), y = ImGui.getCursorScreenPosY();
-        dl.addRectFilled(x, y, x + w, y + h, u32(TRACK), h / 2f);
+        dl.addRectFilled(x, y, x + w, y + h, u32(TRACK), 0f);
         float f = (float) Math.max(0.0, Math.min(1.0, frac));
-        if (f > 0) dl.addRectFilled(x, y, x + Math.max(h, w * f), y + h, u32(rgb), h / 2f);
+        if (f > 0) dl.addRectFilled(x, y, x + Math.max(2f, w * f), y + h, u32(rgb), 0f);
         ImGui.dummy(w, h);
     }
 
@@ -100,19 +97,19 @@ final class Widgets {
         int run = failing ? ERR : ACCENT;
         float hereX = -1;
         if (n == 0) {
-            dl.addRectFilled(x, y, x + w, y + h, u32(TRACK), 2f);
+            dl.addRectFilled(x, y, x + w, y + h, u32(TRACK), 0f);
         } else {
-            float gap = n <= 40 ? 3f * s() : n <= 90 ? 1f : 0f;
+            float gap = n <= 40 ? 2f * s() : n <= 90 ? 1f : 0f;
             float cw = (w - gap * (n - 1)) / n;
             for (int i = 0; i < n; i++) {
                 ProgressModel.Segment seg = segs.get(i);
                 float x0 = x + i * (cw + gap), x1 = i == n - 1 ? x + w : x0 + cw;
-                dl.addRectFilled(x0, y, x1, y + h, u32(TRACK), gap > 0 ? 2f : 0f);
+                dl.addRectFilled(x0, y, x1, y + h, u32(TRACK), 0f);
                 if (seg.state() == ProgressModel.State.DONE) {
-                    dl.addRectFilled(x0, y, x1, y + h, u32(OK, 0.85f), gap > 0 ? 2f : 0f);
+                    dl.addRectFilled(x0, y, x1, y + h, u32(OK, 0.90f), 0f);
                 } else if (seg.state() == ProgressModel.State.RUNNING) {
                     float fx = x0 + Math.max(2f, (float) ((x1 - x0) * Math.max(0.0, seg.fraction())));
-                    dl.addRectFilled(x0, y, Math.min(x1, fx), y + h, u32(run, 0.85f), gap > 0 ? 2f : 0f);
+                    dl.addRectFilled(x0, y, Math.min(x1, fx), y + h, u32(run, 0.95f), 0f);
                     hereX = Math.min(x1, fx);
                 }
             }
@@ -157,16 +154,10 @@ final class Widgets {
     }
 
     static void statusPill(ProgressModel.Snapshot snap, boolean failing) {
-        int c = !snap.running() ? DIM : failing ? ERR : OK;
-        String t = !snap.running() ? "Idle" : failing ? "Error" : "Running";
-        ImDrawList dl = ImGui.getWindowDrawList();
-        float x = ImGui.getCursorScreenPosX(), y = ImGui.getCursorScreenPosY();
-        float h = ImGui.getTextLineHeight() + 6f * s();
-        float w = ImGui.calcTextSizeX(t) + 26f * s();
-        dl.addRectFilled(x, y, x + w, y + h, u32(CHIP), h / 2f);
-        dl.addCircleFilled(x + 10f * s(), y + h / 2f, 4f * s(), u32(c));
-        dl.addText(x + 18f * s(), y + 3f * s(), u32(c == DIM ? DIM : FG), t);
-        ImGui.dummy(w, h);
+        SemanticColor tone = !snap.running() ? SemanticColor.INK_MUTED
+                : failing ? SemanticColor.DANGER : SemanticColor.MR;
+        String t = !snap.running() ? "IDLE" : failing ? "ERROR" : "RUNNING";
+        MubWidgets.termBadge(t, tone);
     }
 
     // ------------------------------------------------------------------ tiles
@@ -233,10 +224,12 @@ final class Widgets {
         ImGui.beginGroup();
         UiTheme.push(UiTheme.numM);
         if (snap.running()) {
-            ImGui.textUnformatted("STEP " + snap.currentStep() + "/" + snap.totalSteps());
+            String stepLabel = "STEP " + snap.currentStep() + "/" + snap.totalSteps();
+            ImGui.textUnformatted(stepLabel);
+            float remW = Math.max(20f, midW - ImGui.calcTextSizeX(stepLabel) - 14f * s);
             ImGui.sameLine(0f, 12f * s);
             UiTheme.pushText(DIM);
-            ImGui.textUnformatted(Alerts.shorten(runningStepText(snap).toUpperCase(), Math.max(8, (int) (midW / (14f * s)))));
+            ImGui.textUnformatted(fit(runningStepText(snap).toUpperCase(), remW));
             ImGui.popStyleColor();
         } else {
             UiTheme.pushText(DIM);
@@ -415,9 +408,9 @@ final class Widgets {
             for (int col = 0; col < 9; col++) {
                 int idx = row == 3 ? col : 9 + (row * 9) + col;   // main inventory on top, hotbar last (like the game)
                 float x = x0 + col * (cell + gap), y = y0 + row * (cell + gap) + (row == 3 ? gap : 0);
-                dl.addRectFilled(x, y, x + cell, y + cell, u32(SLOT), 3f);
+                dl.addRectFilled(x, y, x + cell, y + cell, u32(SLOT), 0f);
                 boolean sel = row == 3 && col == inv.selected();
-                dl.addRect(x, y, x + cell, y + cell, u32(sel ? ACCENT : LINE), 3f, 0, sel ? 2f : 1f);
+                dl.addRect(x, y, x + cell, y + cell, u32(sel ? ACCENT : LINE), 0f, 0, sel ? 2f : 1f);
                 if (idx >= slots.size()) continue;
                 PlayerView.Slot sl = slots.get(idx);
                 if (sl.empty()) continue;
@@ -470,7 +463,7 @@ final class Widgets {
 
     static void alertsHeader() {
         float s = s();
-        label("Alerts & Telemetry");
+        label("Alerts");
         boolean hasIncident = IncidentBundle.lastIncidentJson() != null;
         boolean justCopied = System.currentTimeMillis() - incidentCopiedAtMs < 2500L;
         String btnText = justCopied ? "Copied!" : (hasIncident ? "Copy Incident" : "Snapshot");
@@ -517,7 +510,7 @@ final class Widgets {
             double stuck = snap.share(dev.midtown.api.RuntimeEvent.Category.STUCK)
                     + snap.share(dev.midtown.api.RuntimeEvent.Category.REPLAN);
 
-            dl.addRectFilled(x, y, x + w, y + barH, u32(SLOT), 3f);
+            dl.addRectFilled(x, y, x + w, y + barH, u32(SLOT), 0f);
             float cx = x;
             cx = drawSeg(dl, cx, y, barH, (float) (w * work), OK);
             cx = drawSeg(dl, cx, y, barH, (float) (w * logi), ACCENT);
@@ -544,7 +537,7 @@ final class Widgets {
 
     private static float drawSeg(ImDrawList dl, float x, float y, float h, float segW, int col) {
         if (segW < 1f) return x;
-        dl.addRectFilled(x, y, x + segW, y + h, u32(col), 2f);
+        dl.addRectFilled(x, y, x + segW, y + h, u32(col), 0f);
         return x + segW;
     }
 
@@ -563,9 +556,9 @@ final class Widgets {
             float x = ImGui.getCursorScreenPosX(), y = ImGui.getCursorScreenPosY();
             boolean two = !a.detail().isEmpty();
             float h = ImGui.getTextLineHeight() * (two ? 2 : 1) + 12f * s + (two ? 2f * s : 0);
-            dl.addRectFilled(x, y, x + w, y + h, u32(c, a.level() == Alerts.Level.INFO ? 0.06f : 0.10f), 5f);
-            dl.addRect(x, y, x + w, y + h, u32(c, 0.45f), 5f);
-            dl.addRectFilled(x + 6f * s, y + 6f * s, x + 9f * s, y + h - 6f * s, u32(c), 2f);
+            dl.addRectFilled(x, y, x + w, y + h, u32(c, a.level() == Alerts.Level.INFO ? 0.06f : 0.12f), 0f);
+            dl.addRect(x, y, x + w, y + h, u32(c, 0.65f), 0f);
+            dl.addRectFilled(x, y, x + 3f * s, y + h, u32(c), 0f);
             ImGui.setCursorScreenPos(x + 18f * s, y + 6f * s);
             ImGui.beginGroup();
             float titleW = w - 28f * s - (a.level() == Alerts.Level.ERROR ? 80f * s : 0f);

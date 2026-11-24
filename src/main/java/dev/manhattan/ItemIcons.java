@@ -1,6 +1,7 @@
 package dev.manhattan;
 
 import com.mojang.renderpearl.api.textures.GpuTextureView;
+import dev.liskov.ui.host.LiskovUiHost;
 import imgui.ImDrawList;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.MissingTextureAtlasSprite;
@@ -9,31 +10,36 @@ import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.resources.Identifier;
 
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 /**
- * Item pictures for the workspace, straight from the game's texture atlases: the item's own sprite
- * ({@code item/<id>}) for tools, food and other flat items, and the block texture ({@code block/<id>}, its side or
- * top) for block items. Draws nothing when neither exists, so the caller can fall back to letters.
+ * Item pictures for the workspace, straight from the game's texture atlases via {@link LiskovUiHost#registerTexture}.
  */
 final class ItemIcons {
     private ItemIcons() {}
 
-    private record Icon(int texId, float u0, float v0, float u1, float v1) {}
+    private record Icon(long texId, float u0, float v0, float u1, float v1) {}
 
-    private static final Icon NONE = new Icon(0, 0, 0, 0, 0);
+    private static final Icon NONE = new Icon(0L, 0, 0, 0, 0);
     private static final Map<String, Icon> cache = new HashMap<>();
+    private static final Set<Long> registeredTextures = new HashSet<>();
 
     /** Draws the icon for {@code id} (e.g. "diamond_pickaxe") into the square; false if there is none. */
     static boolean draw(ImDrawList dl, String id, float x0, float y0, float x1, float y1) {
         Icon ic = cache.computeIfAbsent(id, ItemIcons::find);
-        if (ic.texId() == 0) return false;
+        if (ic.texId() == 0L) return false;
         dl.addImage(ic.texId(), x0, y0, x1, y1, ic.u0(), ic.v0(), ic.u1(), ic.v1());
         return true;
     }
 
     /** After a resource reload the atlases are new textures. */
     static void clear() {
+        for (long id : registeredTextures) {
+            if (id != 0L) LiskovUiHost.unregisterTexture(id);
+        }
+        registeredTextures.clear();
         cache.clear();
     }
 
@@ -63,7 +69,8 @@ final class ItemIcons {
         if (sp == null || sp.contents().name().equals(MissingTextureAtlasSprite.getLocation())) return null;
         GpuTextureView view = atlas.getTextureView();
         if (view == null) return null;
-        int texId = ImGuiRenderPearlRenderer.registerExternalTexture(view);
+        long texId = LiskovUiHost.registerTexture(view);
+        if (texId != 0L) registeredTextures.add(texId);
         return new Icon(texId, sp.getU0(), sp.getV0(), sp.getU1(), sp.getV1());
     }
 }

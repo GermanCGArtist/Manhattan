@@ -49,6 +49,7 @@ final class Config {
     boolean showPath = true;
     /** Client-side 3D world visualization of chests, beds, safe areas and task areas (with live block verification). */
     boolean showWorldOverlay = true;
+    boolean overlayShowWhenIdle = false;
     boolean showOverlayBeds = true;
     boolean showOverlayChests = true;
     boolean showOverlaySafeAreas = true;
@@ -101,6 +102,14 @@ final class Config {
     static Config cfg = new Config();
 
     private static Path path() {
+        try {
+            if (dev.liskov.core.LiskovFs.isInitialized()) {
+                Path p = dev.liskov.core.LiskovFs.get().manhattanDir().resolve("config").resolve("manhattan.json");
+                Files.createDirectories(p.getParent());
+                return p;
+            }
+        } catch (Throwable ignored) {
+        }
         return Migrate.fromOldName("baritonequeue.json", "manhattan.json");
     }
 
@@ -186,6 +195,10 @@ final class Config {
             GSON.toJson(cfg, w);
         } catch (Exception e) {
             e.printStackTrace();
+        }
+        if (dev.liskov.ui.host.LiskovUiHost.isInitialized()
+                && Math.abs(dev.liskov.ui.host.LiskovUiHost.scale() - cfg.uiScale) > 0.01f) {
+            cfg.uiScale = dev.liskov.ui.host.LiskovUiHost.scale();
         }
     }
 }

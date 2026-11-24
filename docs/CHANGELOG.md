@@ -2,6 +2,14 @@
 
 Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
 
+## 2.16.0 – Liskov shared UI & filesystem redesign (2026-11-24)
+Requires `liskov >= 0.2.0` (`dev.liskov:liskov:0.2.0+mc26.3`).
+- Shared ImGui host (`LiskovUiHost`): removed Manhattan's duplicated Dear ImGui natives, RenderPearl quad renderer, and input mixins in favor of Liskov's unified UI host (`manhattan.shell` + `manhattan.overlay` layers and `LiskovUiHost.registerTexture` for `ItemIcons`).
+- ModsUndBots sharp `0px` terminal redesign: synced `UiTheme`, `Widgets`, `Shell`, `Overlay`, and `CommandPalette` to Liskov's `MubTheme` / `MubWidgets` (all 4 live-switchable presets, `16×16` dot-grid backdrop, sharp `0px` controls, and quick `LK` / `RL` / `TH` activity-rail buttons).
+- Liskov filesystem (`LiskovFs`) & live reload: moved Manhattan's `config/`, `projects/` (`.mproj` + `.json` fallback), `scripts/` (`.mscript` + `.txt` fallback), `captures/` (`.mcap` + `.txt` fallback), and `deaths/` under `<gameDir>/liskov/local/manhattan/` with `VcsStore` auto-snapshots on script saves and `ReloadWatcher` / `LiskovReloadBus` disk reloading without restarting the game.
+- Explorer & menu integrations: registered `OPEN IN MANHATTAN` and live `CompletionTag` badges in `FileActionRegistry`, shared `Ctrl+P` commands in `MubWidgets.CommandPalette`, and toggleable Title Screen & ESC Pause Menu overview cards in `MenuOverviewRegistry`.
+- 3D world outlines (`WorldOverlay`): suppressed outlines when idle by default (`overlayShowWhenIdle = false`) and added instant cache invalidation on reload.
+
 ## 2.15.2 – no endless shuffling next to an unreachable goal (2026-11-24)
 
 - Fixed: a bot could step back and forth between two blocks forever (seen in `clear_trees`, walking to a drop that

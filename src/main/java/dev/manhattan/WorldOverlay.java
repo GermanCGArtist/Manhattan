@@ -277,6 +277,28 @@ public final class WorldOverlay {
         return mergeAdjacentAreas(collectAreas(gatherLiveSources(), true, true));
     }
 
+    /** Clears cached status/world state (called on Liskov reload or project switch without restarting). */
+    public static void invalidateCache() {
+        trackedLevel = null;
+        trackedDimension = "";
+        lastStatuses.clear();
+    }
+
+    private static boolean hasActiveWorkOrPreview() {
+        try {
+            if (QueueMod.runner != null && QueueMod.runner.running()) return true;
+        } catch (Throwable ignored) {}
+        try {
+            GameProjectRuntime rt = GameProjectRuntime.instance();
+            if (rt != null && rt.running()) return true;
+        } catch (Throwable ignored) {}
+        try {
+            FleetClient fc = FleetClient.instance();
+            if (fc != null && fc.isConnected() && fc.activeGrant() != null && !fc.activeGrant().idle) return true;
+        } catch (Throwable ignored) {}
+        return Capture.aiming || QueueMod.picking || Shell.drawer == Shell.Drawer.CAPTURE;
+    }
+
     // ------------------------------------------------------------------ Rendering entry point
 
     public static void render() {
@@ -284,6 +306,7 @@ public final class WorldOverlay {
         if (mc == null || mc.level == null || mc.player == null || mc.levelRenderer == null) return;
         syncWorld(mc);
         if (cfg == null || !cfg.showWorldOverlay) return;
+        if (!cfg.overlayShowWhenIdle && !hasActiveWorkOrPreview()) return;
 
         Sources src = gatherLiveSources();
         boolean problemsOnly = cfg.showOverlayProblemsOnly;

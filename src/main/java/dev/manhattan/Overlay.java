@@ -64,25 +64,26 @@ final class Overlay {
 
     private static float pill(ImDrawList dl, ProgressModel.Snapshot snap, float W, float y, float s) {
         boolean failing = Widgets.failing();
-        String step = "Step " + snap.currentStep() + "/" + snap.totalSteps();
+        String step = "STEP " + snap.currentStep() + "/" + snap.totalSteps();
         String what = Alerts.shorten(Widgets.runningStepText(snap), 46);
-        String pct = failing ? "error" : snap.overallPercent() + "%";
+        String pct = failing ? "ERROR" : snap.overallPercent() + "%";
         String eta = snap.stepEtaText();
-        float w = Math.min(W - 20f * s, 640f * s), h = 54f * s;
+        float w = Math.min(W - 20f * s, 640f * s), h = 52f * s;
         float x = (W - w) / 2f;
-        dl.addRectFilled(x, y, x + w, y + h, u32(0x14161a, 0.82f), h / 2f);
-        dl.addRect(x, y, x + w, y + h, u32(0xffffff, 0.10f), h / 2f);
-        dl.addCircleFilled(x + 22f * s, y + h / 2f, 5f * s, u32(failing ? ERR : OK));
-        float tx = x + 38f * s, ty = y + 9f * s;
+        int border = failing ? ERR : BORDER_HI;
+        dl.addRectFilled(x, y, x + w, y + h, u32(PANEL, 0.94f), 0f);
+        dl.addRect(x, y, x + w, y + h, u32(border), 0f);
+        dl.addRectFilled(x, y, x + 3f * s, y + h, u32(failing ? ERR : OK));
+        float tx = x + 16f * s, ty = y + 8f * s;
         dl.addText(tx, ty, u32(FG), step);
         float sw = ImGui.calcTextSizeX(step);
         dl.addText(tx + sw + 10f * s, ty, u32(DIM), what);
         String right = pct + (eta.isEmpty() ? "" : "  ·  " + eta);
-        dl.addText(x + w - 26f * s - ImGui.calcTextSizeX(right), ty, u32(failing ? ERR : FG), right);
-        // step bar
-        float bx = tx, bw = x + w - 26f * s - tx, by = y + h - 16f * s;
-        dl.addRectFilled(bx, by, bx + bw, by + 5f * s, u32(0xffffff, 0.14f), 3f);
-        dl.addRectFilled(bx, by, bx + bw * snap.overallPercent() / 100f, by + 5f * s, u32(failing ? ERR : ACCENT), 3f);
+        dl.addText(x + w - 16f * s - ImGui.calcTextSizeX(right), ty, u32(failing ? ERR : ACCENT), right);
+        // sharp 0px step bar
+        float bx = tx, bw = x + w - 16f * s - tx, by = y + h - 15f * s;
+        dl.addRectFilled(bx, by, bx + bw, by + 5f * s, u32(TRACK), 0f);
+        dl.addRectFilled(bx, by, bx + bw * snap.overallPercent() / 100f, by + 5f * s, u32(failing ? ERR : ACCENT), 0f);
         return y + h + 8f * s;
     }
 
@@ -104,10 +105,11 @@ final class Overlay {
         float w = Math.max(ImGui.calcTextSizeX(a), ImGui.calcTextSizeX(b)) + 36f * s;
         float h = ImGui.getFontSize() * 2 + 22f * s;
         float x = (W - w) / 2f;
-        dl.addRectFilled(x, y, x + w, y + h, u32(0x14161a, 0.86f), 12f * s);
-        dl.addRect(x, y, x + w, y + h, u32(ACCENT, 0.55f), 12f * s);
-        dl.addText(x + 18f * s, y + 8f * s, u32(ACCENT), a);
-        dl.addText(x + 18f * s, y + 12f * s + ImGui.getFontSize(), u32(FG, 0.9f), b);
+        dl.addRectFilled(x, y, x + w, y + h, u32(PANEL, 0.94f), 0f);
+        dl.addRect(x, y, x + w, y + h, u32(PLAYER), 0f);
+        dl.addRectFilled(x, y, x + 3f * s, y + h, u32(PLAYER));
+        dl.addText(x + 18f * s, y + 8f * s, u32(PLAYER), a);
+        dl.addText(x + 18f * s, y + 12f * s + ImGui.getFontSize(), u32(FG, 0.95f), b);
         return y + h + 8f * s;
     }
 
@@ -117,17 +119,17 @@ final class Overlay {
         if (!toastActive()) return;
         float s = ImGuiManager.getUiScale();
         ImDrawList dl = ImGui.getForegroundDrawList();
-        String title = "Error";
+        String title = "ERROR";
         String text = Alerts.shorten(toastText, 110);
         float w = Math.min(w0 - 24f * s, Math.max(ImGui.calcTextSizeX(text), 200f * s) + 40f * s);
         float h = ImGui.getFontSize() * 2 + 20f * s;
         float x = x0 + (w0 - w) / 2f, y = y0 + (inShell ? 14f * s : 0f);
         long age = System.currentTimeMillis() - toastAt;
         float alpha = age > TOAST_MS - 600 ? Math.max(0f, (TOAST_MS - age) / 600f) : 1f;
-        dl.addRectFilled(x, y, x + w, y + h, u32(0x14161a, 0.9f * alpha), 12f * s);
-        dl.addRect(x, y, x + w, y + h, u32(ERR, 0.7f * alpha), 12f * s);
-        dl.addRectFilled(x + 10f * s, y + 9f * s, x + 13f * s, y + h - 9f * s, u32(ERR, alpha), 2f);
-        dl.addText(x + 22f * s, y + 8f * s, u32(ERR, alpha), title);
-        dl.addText(x + 22f * s, y + 12f * s + ImGui.getFontSize(), u32(FG, alpha), text);
+        dl.addRectFilled(x, y, x + w, y + h, u32(PANEL, 0.95f * alpha), 0f);
+        dl.addRect(x, y, x + w, y + h, u32(ERR, alpha), 0f);
+        dl.addRectFilled(x, y, x + 3f * s, y + h, u32(ERR, alpha), 0f);
+        dl.addText(x + 16f * s, y + 8f * s, u32(ERR, alpha), title);
+        dl.addText(x + 16f * s, y + 12f * s + ImGui.getFontSize(), u32(FG, alpha), text);
     }
 }
