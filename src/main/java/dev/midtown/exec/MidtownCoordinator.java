@@ -38,6 +38,8 @@ public final class MidtownCoordinator {
     public static final double DEFAULT_NODE_REACH_VERT = 0.65;
     public static final double DEFAULT_RESUME_MAX_DRIFT = 2.50;
     public static final int DEFAULT_MAX_REPLANS = 25;
+    /** Blocks closer to the goal a reached node must bring the bot before the replan count starts over. */
+    static final double PROGRESS_STEP = 0.75;
     /** A bot that outranks the peer in its way waits this long for it to move on before routing around. */
     public static final int YIELD_WAIT_TICKS_HIGH = 50;
     /** A bot outranked by the peer in its way gives way quickly: it routes around after this long. */
@@ -93,6 +95,8 @@ public final class MidtownCoordinator {
     private boolean asyncReplanMode;
     private long tickCounter;
     private int replanCount;
+    /** Closest the player has come to the active goal; reaching a node only clears {@code replanCount} on real progress. */
+    private double bestGoalDist = Double.MAX_VALUE;
     private int maxReplans = DEFAULT_MAX_REPLANS;
     private double resumeMaxDrift = DEFAULT_RESUME_MAX_DRIFT;
     private String lastFailureReason;
@@ -162,6 +166,7 @@ public final class MidtownCoordinator {
         this.activeGoal = goal;
         this.paused = false;
         this.replanCount = 0;
+        bestGoalDist = Double.MAX_VALUE;
         this.lastFailureReason = null;
         this.yieldTicks = 0;
         this.peerDetours = 0;
@@ -185,6 +190,7 @@ public final class MidtownCoordinator {
         this.activeGoal = goal;
         this.paused = false;
         this.replanCount = 0;
+        bestGoalDist = Double.MAX_VALUE;
         this.lastFailureReason = null;
         this.yieldTicks = 0;
         this.peerDetours = 0;
@@ -294,6 +300,7 @@ public final class MidtownCoordinator {
         edgeFrom = null;
         paused = false;
         replanCount = 0;
+        bestGoalDist = Double.MAX_VALUE;
         lastFailureReason = null;
         status = EngineStatus.IDLE;
         edgeTracker.resetEdge();
@@ -328,7 +335,13 @@ public final class MidtownCoordinator {
         boolean replanned = false;
         PathNode target = path.get(pathIndex);
         if (isNodeReached(playerX, playerY, playerZ, target)) {
-            this.replanCount = 0;
+            // a step only counts as progress when it brings the bot closer to the goal: a partial plan that shuffles
+            // between two cells next to an unreachable goal reaches every node and would never run out of replans
+            double d = goalDistance(activeGoal, playerX, playerY, playerZ);
+            if (d < bestGoalDist - PROGRESS_STEP) {
+                bestGoalDist = d;
+                this.replanCount = 0;
+            }
             edgeFrom = target.pos();
             pathIndex++;
             if (pathIndex >= path.size()) {
@@ -529,6 +542,7 @@ public final class MidtownCoordinator {
         this.activeGoal = Objects.requireNonNull(goal, "goal");
         this.paused = false;
         this.replanCount = 0;
+        bestGoalDist = Double.MAX_VALUE;
         this.lastFailureReason = null;
         this.path = List.of();
         this.pathIndex = 0;
@@ -627,6 +641,17 @@ public final class MidtownCoordinator {
         double dy = Math.abs(py - nodePos.getY());
         return (dx * dx + dz * dz) <= (DEFAULT_NODE_REACH_HORIZ * DEFAULT_NODE_REACH_HORIZ)
                 && dy <= DEFAULT_NODE_REACH_VERT;
+    }
+
+    /** How far the player is from {@code goal}, in blocks (smaller is closer; only compared within one goal). */
+    static double goalDistance(GoalSpec goal, double px, double py, double pz) {
+        return switch (goal) {
+            case GoalSpec.Exact e -> Math.sqrt(distSq(px, py, pz, e.pos()));
+            case GoalSpec.Near n -> Math.max(0, Math.sqrt(distSq(px, py, pz, n.pos())) - n.range());
+            case GoalSpec.XZ xz -> Math.hypot(px - (xz.x() + 0.5), pz - (xz.z() + 0.5));
+            case GoalSpec.LineOfSight los -> Math.max(0, Math.sqrt(distSq(px, py, pz, los.target())) - los.maxRange());
+            case GoalSpec.RunAway ra -> Math.max(0, ra.distance() - Math.sqrt(distSq(px, py, pz, ra.from())));
+        };
     }
 
     public static boolean isGoalSatisfied(GoalSpec goal, double px, double py, double pz) {

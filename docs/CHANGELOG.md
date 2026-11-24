@@ -2,6 +2,14 @@
 
 Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
 
+## 2.15.2 – no endless shuffling next to an unreachable goal (2026-11-24)
+
+- Fixed: a bot could step back and forth between two blocks forever (seen in `clear_trees`, walking to a drop that
+  lay in the tree canopy). Every plan towards a goal it could not stand on was a one-step partial path, and reaching
+  that step cleared Midtown's replan count, so `maxReplans` never ran out. Reaching a step now clears the count only
+  when it brings the bot at least 0.75 blocks closer to the goal than before; a shuffle gives up after 25 replans
+  (about ten seconds) and `clear_trees` moves on to the next drop. Long trips made of partial plans are unaffected.
+
 ## 2.15.1 – clear_area leaves its pit cleanly (2026-11-24)
 - Fixed: after `clear_area` dug a pit (deeper than the ground around it), the next chest trip pillared out of the pit
   and left the pillar block in the area just cleared (chest trips may not break blocks, so placing was the only way

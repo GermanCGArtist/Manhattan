@@ -8,8 +8,8 @@
       "loader_version": "0.20.1",
       "mods": [
         { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
-        { "local_path": "build/libs/manhattan-2.15.1.jar" },
-        { "local_path": "build/libs/manhattan-testbridge-2.15.1.jar" }
+        { "local_path": "build/libs/manhattan-2.15.2.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.15.2.jar" }
       ],
       "account": { "offline": { "username": "BenchSC01" } },
       "ram_mb": 3072,

@@ -4,6 +4,7 @@ import dev.midtown.api.EngineStatus;
 import dev.midtown.api.GoalSpec;
 import dev.midtown.exec.MidtownCoordinator;
 import dev.midtown.exec.MidtownCoordinator.TickAction;
+import dev.midtown.exec.PathNode;
 import dev.midtown.plan.BlockKind;
 import dev.midtown.plan.CalculationContext;
 import dev.midtown.plan.GridWorldSnapshot;
@@ -31,6 +32,8 @@ public final class MidtownPeerTest {
         testYieldLowRankGivesWayQuickly();
         testYieldEndsCleanlyWhenPeerMoves();
         testNoPlaceAreaDigsStepOutOfPit();
+        testShuffleNextToUnreachableGoalGivesUp();
+        testPartialPlansWithProgressKeepGoing();
         System.out.println("MidtownPeerTest summary: " + passes + " passed, " + fails + " failed.");
         if (fails > 0) System.exit(1);
     }
@@ -206,6 +209,51 @@ public final class MidtownPeerTest {
                 throw new IllegalStateException(e);
             }
         }
+    }
+
+    /**
+     * clear_trees' drop pickup (2.15.1, in a real game): an exact goal in the tree canopy that cannot be stood on; every
+     * plan was a partial one-step path between two cells next to it. Reaching that step cleared the replan count, so
+     * the bot shuffled for good. Steps without progress must count.
+     */
+    private static void testShuffleNextToUnreachableGoalGivesUp() {
+        MidtownCoordinator c = new MidtownCoordinator();
+        c.setAsyncReplanMode(true);
+        BlockPos a = new BlockPos(0, 66, 1);
+        BlockPos b = new BlockPos(1, 66, 1);
+        c.startGoalWithPath(GoalSpec.exact(new BlockPos(1, 66, 0)), a, List.of(PathNode.walk(b)));
+        BlockPos at = a;
+        int cycles = 0;
+        TickAction last = null;
+        while (cycles < 500 && c.status() != EngineStatus.FAILED) {
+            BlockPos next = at.equals(a) ? b : a;
+            last = c.tick(next.getX() + 0.5, next.getY(), next.getZ() + 0.5);   // reaches the one step
+            at = next;
+            if (last instanceof TickAction.NeedsReplan) {
+                c.applyReplannedPath(at, List.of(PathNode.walk(at.equals(a) ? b : a)));
+                cycles++;
+            }
+        }
+        check("shuffling next to an unreachable goal fails after maxReplans (" + cycles + " replans, " + last + ")",
+                c.status() == EngineStatus.FAILED && cycles <= MidtownCoordinator.DEFAULT_MAX_REPLANS + 1);
+    }
+
+    /** A long trip made of short partial plans that each get closer must never run out of replans. */
+    private static void testPartialPlansWithProgressKeepGoing() {
+        MidtownCoordinator c = new MidtownCoordinator();
+        c.setAsyncReplanMode(true);
+        c.startGoalWithPath(GoalSpec.xz(200, 0), new BlockPos(0, 64, 0), List.of(PathNode.walk(new BlockPos(2, 64, 0))));
+        int x = 0;
+        TickAction last = null;
+        for (int leg = 0; leg < 90 && c.status() != EngineStatus.FAILED && !(last instanceof TickAction.Done); leg++) {
+            x += 2;
+            last = c.tick(x + 0.5, 64.0, 0.5);
+            if (last instanceof TickAction.NeedsReplan) {
+                c.applyReplannedPath(new BlockPos(x, 64, 0), List.of(PathNode.walk(new BlockPos(x + 2, 64, 0))));
+            }
+        }
+        check("partial plans with progress keep going (" + c.status() + " at x=" + x + ", replans " + c.replanCount() + ")",
+                c.status() != EngineStatus.FAILED && c.replanCount() <= 1);
     }
 
     private static void check(String what, boolean ok) {
