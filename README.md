@@ -39,6 +39,7 @@ Press **J** in game to open the workspace (script editor, live monitor, map), **
 | [The language](docs/SCRIPTING.md) | syntax, `on` blocks, jobs, legacy `#` lines |
 | [Functions](docs/FUNCTIONS.md) | every built-in function and getter |
 | [Guides](docs/GUIDES.md) | AFK scripts, chest index, water, digging, trees, schematics, chunked runs, safe areas |
+| [Fleets](docs/FLEET.md) | several bots sharing one job through manhattan-fleet-server |
 | [Workspace](docs/WORKSPACE.md) | editor, Monitor, presets, Capture |
 | [Chat commands](docs/COMMANDS.md) | `/queue`, `/schem`, `/survival`, `/buildtools`, `/loadchest` |
 | [Options](docs/OPTIONS.md) | `option()`, `set()`, config files |

@@ -26,6 +26,14 @@ for Midtown).
 | `bench-schem-unsupported-reach.json` | 1 | a schematic with cells that need scaffolding |
 | `bench-survival-marathon.json` | 1 | dig, dump, restock, sleep and defend in one loop |
 | `bench-water-fill-tight.json` | 1 | `fill_water` on a tight pond with restock trips |
+| `bench-fleet-clear-4.json` | 4 + server | fleet: 4 bots clear 9 chunks through manhattan-fleet-server |
+| `bench-fleet-clear-8.json` | 8 + server | fleet: 8 bots clear 16 chunks |
+| `bench-fleet-kick-4.json` | 4 + server | fleet: a worker is kicked mid-job and reconnects (grace, outbox resend) |
+| `bench-fleet-death-4.json` | 4 + server | fleet: a worker dies mid-job (lease released, chunk redone) |
+| `bench-fleet-doorway-4.json` | 4 + server | fleet: 4 bots leave a pen through one 1-wide door (yielding) |
+
+The fleet specs bring a dedicated server and need `../manhattan-fleet-server` built too; see
+[docs/DEMING_BENCHMARKS.md](../../docs/DEMING_BENCHMARKS.md#fleet-scenarios-a-dedicated-server-and-several-bots).
 
 ## Running
 

@@ -231,6 +231,7 @@ public class SurvivalKitMod implements ClientModInitializer {
             if (lastAlivePos != null && mc.level != null) {
                 String dim = mc.level.dimension().identifier().toString();
                 var summary = dev.midtown.exec.MidtownEngine.recordDeath(dim, lastAlivePos);
+                dev.manhattan.fleet.FleetClient.instance().reportDeath(dim, lastAlivePos); // the fleet avoids it too
                 if (summary != null) {
                     Util.msg("Remembered death at " + lastAlivePos.toShortString()
                             + " (+" + summary.breadcrumbs() + " path markers, "

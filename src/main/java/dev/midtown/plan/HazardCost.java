@@ -91,6 +91,11 @@ public final class HazardCost {
             cost += deathField.penaltyAt(x, y, z);
         }
 
+        PeerTraffic.PeerField peers = ctx.peerField();
+        if (peers != null && !peers.isEmpty()) {
+            cost += peers.penaltyAt(x, y, z);
+        }
+
         return cost;
     }
 

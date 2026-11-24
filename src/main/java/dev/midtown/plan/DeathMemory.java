@@ -259,6 +259,31 @@ public final class DeathMemory {
         return new RecordSummary(breadcrumbs, nearbyDeaths);
     }
 
+    /**
+     * Records a death another fleet bot reported (no trail of ours leads there, so no breadcrumbs).
+     * Returns false when a death site within 3 blocks and a minute of it is already known (our own, or a
+     * resend), so a death is never counted twice.
+     */
+    public synchronized boolean recordRemoteDeath(String dimension, int x, int y, int z, long timestampMs) {
+        String dim = (dimension == null || dimension.isBlank()) ? "minecraft:overworld" : dimension;
+        long now = System.currentTimeMillis();
+        long at = timestampMs > 0 ? timestampMs : now;
+        records.removeIf(r -> r == null || now - r.timestampMs > MAX_AGE_MS);
+        if (now - at > MAX_AGE_MS) return false;
+        for (Record r : records) {
+            if (!r.deathSite || !Objects.equals(r.dimension, dim)) continue;
+            if (Math.abs(r.x - x) <= 3 && Math.abs(r.y - y) <= 3 && Math.abs(r.z - z) <= 3
+                    && Math.abs(r.timestampMs - at) <= 60_000L) {
+                return false;
+            }
+        }
+        records.add(new Record(dim, x, y, z, DEATH_RADIUS_XZ, DEATH_RADIUS_Y, 1.0, at, true));
+        while (records.size() > MAX_RECORDS) {
+            records.remove(0);
+        }
+        return true;
+    }
+
     /** Builds an immutable {@link DeathField} snapshot for {@code dimension} at {@code nowMs}. */
     public synchronized DeathField snapshot(String dimension, long nowMs) {
         return snapshot(dimension, nowMs, null, List.of());

@@ -17,9 +17,9 @@ import static dev.survivalkit.Config.cfg;
  * command again. Three deaths within ten minutes and it stops trying (maxdeaths 0: never; it then also carries
  * on after ten minutes of waiting instead of giving up).
  *
- * While a script runs, the script itself resumes its current step: the two talk through
- * system properties ("baritonequeue.active" -> this stays out of the way, "survivalkit.recovering" while we wait,
- * "survivalkit.safe" when it is time to go on).
+ * While a script runs, the script itself resumes its current step: the two talk through {@code RuntimeBus}
+ * ({@code isScriptActive} -> this stays out of the way, {@code setRecovering} while we wait,
+ * {@code setSafeAfterRespawn} when it is time to go on).
  */
 final class Recovery {
     private static final long BUSY_WINDOW = 8_000;            // a task counts as "was running" this long after its last tick

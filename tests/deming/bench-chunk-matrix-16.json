@@ -3,13 +3,13 @@
   "instances": [
     {
       "id": "midtown-chunk-clear-2x2-easy",
-      "mc_version": "26.1.1",
+      "mc_version": "26.3",
       "loader": "fabric",
       "loader_version": "0.20.1",
       "mods": [
         { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
-        { "local_path": "build/libs/manhattan-2.12.5.jar" },
-        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+        { "local_path": "build/libs/manhattan-2.15.0.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.15.0.jar" }
       ],
       "account": { "offline": { "username": "BenchChunk01" } },
       "ram_mb": 2560,
@@ -30,13 +30,13 @@
     },
     {
       "id": "midtown-chunk-clear-straggler-strip",
-      "mc_version": "26.1.1",
+      "mc_version": "26.3",
       "loader": "fabric",
       "loader_version": "0.20.1",
       "mods": [
         { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
-        { "local_path": "build/libs/manhattan-2.12.5.jar" },
-        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+        { "local_path": "build/libs/manhattan-2.15.0.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.15.0.jar" }
       ],
       "account": { "offline": { "username": "BenchChunk02" } },
       "ram_mb": 2560,
@@ -57,13 +57,13 @@
     },
     {
       "id": "midtown-chunk-clear-serpentine-3x3",
-      "mc_version": "26.1.1",
+      "mc_version": "26.3",
       "loader": "fabric",
       "loader_version": "0.20.1",
       "mods": [
         { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
-        { "local_path": "build/libs/manhattan-2.12.5.jar" },
-        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+        { "local_path": "build/libs/manhattan-2.15.0.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.15.0.jar" }
       ],
       "account": { "offline": { "username": "BenchChunk03" } },
       "ram_mb": 2560,
@@ -84,13 +84,13 @@
     },
     {
       "id": "midtown-chunk-clear-nearest-3x2",
-      "mc_version": "26.1.1",
+      "mc_version": "26.3",
       "loader": "fabric",
       "loader_version": "0.20.1",
       "mods": [
         { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
-        { "local_path": "build/libs/manhattan-2.12.5.jar" },
-        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+        { "local_path": "build/libs/manhattan-2.15.0.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.15.0.jar" }
       ],
       "account": { "offline": { "username": "BenchChunk04" } },
       "ram_mb": 2560,
@@ -111,13 +111,13 @@
     },
     {
       "id": "midtown-chunk-clear-l-shape",
-      "mc_version": "26.1.1",
+      "mc_version": "26.3",
       "loader": "fabric",
       "loader_version": "0.20.1",
       "mods": [
         { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
-        { "local_path": "build/libs/manhattan-2.12.5.jar" },
-        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+        { "local_path": "build/libs/manhattan-2.15.0.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.15.0.jar" }
       ],
       "account": { "offline": { "username": "BenchChunk05" } },
       "ram_mb": 2560,
@@ -138,13 +138,13 @@
     },
     {
       "id": "midtown-chunk-clear-deep-trench",
-      "mc_version": "26.1.1",
+      "mc_version": "26.3",
       "loader": "fabric",
       "loader_version": "0.20.1",
       "mods": [
         { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
-        { "local_path": "build/libs/manhattan-2.12.5.jar" },
-        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+        { "local_path": "build/libs/manhattan-2.15.0.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.15.0.jar" }
       ],
       "account": { "offline": { "username": "BenchChunk06" } },
       "ram_mb": 2560,
@@ -165,13 +165,13 @@
     },
     {
       "id": "midtown-chunk-water-fill-2x1",
-      "mc_version": "26.1.1",
+      "mc_version": "26.3",
       "loader": "fabric",
       "loader_version": "0.20.1",
       "mods": [
         { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
-        { "local_path": "build/libs/manhattan-2.12.5.jar" },
-        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+        { "local_path": "build/libs/manhattan-2.15.0.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.15.0.jar" }
       ],
       "account": { "offline": { "username": "BenchChunk07" } },
       "ram_mb": 2560,
@@ -192,13 +192,13 @@
     },
     {
       "id": "midtown-chunk-water-fill-canal-3x1",
-      "mc_version": "26.1.1",
+      "mc_version": "26.3",
       "loader": "fabric",
       "loader_version": "0.20.1",
       "mods": [
         { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
-        { "local_path": "build/libs/manhattan-2.12.5.jar" },
-        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+        { "local_path": "build/libs/manhattan-2.15.0.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.15.0.jar" }
       ],
       "account": { "offline": { "username": "BenchChunk08" } },
       "ram_mb": 2560,
@@ -219,13 +219,13 @@
     },
     {
       "id": "midtown-chunk-flood-2x1",
-      "mc_version": "26.1.1",
+      "mc_version": "26.3",
       "loader": "fabric",
       "loader_version": "0.20.1",
       "mods": [
         { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
-        { "local_path": "build/libs/manhattan-2.12.5.jar" },
-        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+        { "local_path": "build/libs/manhattan-2.15.0.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.15.0.jar" }
       ],
       "account": { "offline": { "username": "BenchChunk09" } },
       "ram_mb": 2560,
@@ -246,13 +246,13 @@
     },
     {
       "id": "midtown-chunk-drain-2x1",
-      "mc_version": "26.1.1",
+      "mc_version": "26.3",
       "loader": "fabric",
       "loader_version": "0.20.1",
       "mods": [
         { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
-        { "local_path": "build/libs/manhattan-2.12.5.jar" },
-        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+        { "local_path": "build/libs/manhattan-2.15.0.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.15.0.jar" }
       ],
       "account": { "offline": { "username": "BenchChunk10" } },
       "ram_mb": 2560,
@@ -273,13 +273,13 @@
     },
     {
       "id": "midtown-chunk-needs-hook",
-      "mc_version": "26.1.1",
+      "mc_version": "26.3",
       "loader": "fabric",
       "loader_version": "0.20.1",
       "mods": [
         { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
-        { "local_path": "build/libs/manhattan-2.12.5.jar" },
-        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+        { "local_path": "build/libs/manhattan-2.15.0.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.15.0.jar" }
       ],
       "account": { "offline": { "username": "BenchChunk11" } },
       "ram_mb": 2560,
@@ -300,13 +300,13 @@
     },
     {
       "id": "midtown-chunk-interrupt-survival",
-      "mc_version": "26.1.1",
+      "mc_version": "26.3",
       "loader": "fabric",
       "loader_version": "0.20.1",
       "mods": [
         { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
-        { "local_path": "build/libs/manhattan-2.12.5.jar" },
-        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+        { "local_path": "build/libs/manhattan-2.15.0.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.15.0.jar" }
       ],
       "account": { "offline": { "username": "BenchChunk12" } },
       "ram_mb": 2560,
@@ -327,13 +327,13 @@
     },
     {
       "id": "midtown-chunk-protected-transit",
-      "mc_version": "26.1.1",
+      "mc_version": "26.3",
       "loader": "fabric",
       "loader_version": "0.20.1",
       "mods": [
         { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
-        { "local_path": "build/libs/manhattan-2.12.5.jar" },
-        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+        { "local_path": "build/libs/manhattan-2.15.0.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.15.0.jar" }
       ],
       "account": { "offline": { "username": "BenchChunk13" } },
       "ram_mb": 2560,
@@ -354,13 +354,13 @@
     },
     {
       "id": "midtown-chunk-job-ledger-resume",
-      "mc_version": "26.1.1",
+      "mc_version": "26.3",
       "loader": "fabric",
       "loader_version": "0.20.1",
       "mods": [
         { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
-        { "local_path": "build/libs/manhattan-2.12.5.jar" },
-        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+        { "local_path": "build/libs/manhattan-2.15.0.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.15.0.jar" }
       ],
       "account": { "offline": { "username": "BenchChunk14" } },
       "ram_mb": 2560,
@@ -381,13 +381,13 @@
     },
     {
       "id": "midtown-chunk-disabled-baseline",
-      "mc_version": "26.1.1",
+      "mc_version": "26.3",
       "loader": "fabric",
       "loader_version": "0.20.1",
       "mods": [
         { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
-        { "local_path": "build/libs/manhattan-2.12.5.jar" },
-        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+        { "local_path": "build/libs/manhattan-2.15.0.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.15.0.jar" }
       ],
       "account": { "offline": { "username": "BenchChunk15" } },
       "ram_mb": 2560,
@@ -408,13 +408,13 @@
     },
     {
       "id": "midtown-chunk-colossal-4x4",
-      "mc_version": "26.1.1",
+      "mc_version": "26.3",
       "loader": "fabric",
       "loader_version": "0.20.1",
       "mods": [
         { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
-        { "local_path": "build/libs/manhattan-2.12.5.jar" },
-        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+        { "local_path": "build/libs/manhattan-2.15.0.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.15.0.jar" }
       ],
       "account": { "offline": { "username": "BenchChunk16" } },
       "ram_mb": 2560,

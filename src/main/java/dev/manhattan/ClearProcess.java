@@ -479,6 +479,7 @@ public final class ClearProcess {
     /** A block of the selection this pass (and anything above it that is still there) should break. */
     private boolean wanted(Level level, BlockPos p) {
         if (p.getY() < feetY || skipped.contains(p)) return false;
+        if (dev.midtown.plan.PeerTraffic.protectsBreakHere(Minecraft.getInstance(), p)) return false; // a bot stands on it
         if (shaft != null && Shaft.inFootprint(shaft, p) && !Shaft.isCarve(shaft, p, feetY)) return false;   // the shaft stays
         if (!inSelection(p) && !(inSelection(p, 2) && dev.buildtools.Api.isScaffold(level, p))) return false;
         BlockState s = level.getBlockState(p);
@@ -673,6 +674,11 @@ public final class ClearProcess {
         // a block being broken that takes several ticks
         if (breaking != null) {
             tBreak++;
+            if (dev.midtown.plan.PeerTraffic.protectsBreakHere(mc, breaking)) {
+                BodyController.INSTANCE.stopBreaking(mc); // another bot stepped on it: pick another block
+                breaking = null;
+                return;
+            }
             if (!wanted(level, breaking)) {
                 BodyController.INSTANCE.stopBreaking(mc);
                 dev.buildtools.Api.forgetScaffold(breaking);

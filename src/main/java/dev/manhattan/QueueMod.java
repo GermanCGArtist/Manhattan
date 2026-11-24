@@ -577,6 +577,7 @@ public class QueueMod implements ClientModInitializer {
         }
         try {
             dev.manhattan.fleet.FleetClient.instance().tick(mc);
+            dev.manhattan.fleet.FleetChestWatcher.tick(mc);
         } catch (Throwable t) {
             t.printStackTrace();
         }

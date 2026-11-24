@@ -27,7 +27,7 @@ final class HotbarTools {
     static void tick(Minecraft mc) {
         if (++ticks % 20 != 0) return;
         LocalPlayer p = mc.player;
-        if (p == null || mc.gameMode == null || System.getProperty("baritonequeue.active") == null) return;
+        if (p == null || mc.gameMode == null || !dev.midtown.api.RuntimeBus.isScriptActive()) return;
         if (p.containerMenu != p.inventoryMenu || (mc.gui.screen() != null && !(mc.gui.screen() instanceof ChatScreen))) return;
         if (mc.gameMode.isDestroying()) return;
         var inv = p.getInventory();

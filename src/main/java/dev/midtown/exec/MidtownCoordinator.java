@@ -16,6 +16,7 @@ import java.util.Deque;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Function;
 import java.util.function.Predicate;
 
 /**
@@ -37,6 +38,12 @@ public final class MidtownCoordinator {
     public static final double DEFAULT_NODE_REACH_VERT = 0.65;
     public static final double DEFAULT_RESUME_MAX_DRIFT = 2.50;
     public static final int DEFAULT_MAX_REPLANS = 25;
+    /** A bot that outranks the peer in its way waits this long for it to move on before routing around. */
+    public static final int YIELD_WAIT_TICKS_HIGH = 50;
+    /** A bot outranked by the peer in its way gives way quickly: it routes around after this long. */
+    public static final int YIELD_WAIT_TICKS_LOW = 12;
+    /** Peer detours per goal that do not count against {@code maxReplans}. */
+    public static final int MAX_PEER_DETOURS = 8;
 
     /** Snapshot pushed onto the interrupt stack when {@link #pause()} is called. */
     public record InterruptFrame(
@@ -90,6 +97,13 @@ public final class MidtownCoordinator {
     private double resumeMaxDrift = DEFAULT_RESUME_MAX_DRIFT;
     private String lastFailureReason;
 
+    /** Who stands in a block cell (another bot's uuid), or null; wired by {@code MidtownEngine}. */
+    private Function<BlockPos, String> peerAt;
+    private String selfId = "";
+    private int yieldTicks;
+    private int peerDetours;
+    private long yieldsTotal;
+
     public MidtownCoordinator() {
         this(new EdgeTracker(), new Planner.DirectStepPlanner());
     }
@@ -117,6 +131,26 @@ public final class MidtownCoordinator {
         return planner;
     }
 
+    /**
+     * Wires the peer lookup used for yielding: when another bot stands on the next step, this bot waits
+     * instead of walking into it, and after a while routes around it. The bot whose id sorts first has the
+     * right of way (waits longer); the other gives way quickly, so two bots meeting head-on never deadlock.
+     */
+    public void setPeerLookup(Function<BlockPos, String> peerAt, String selfId) {
+        this.peerAt = peerAt;
+        this.selfId = selfId == null ? "" : selfId;
+    }
+
+    /** Times this coordinator waited for another bot (for telemetry and tests). */
+    public long yieldsTotal() {
+        return yieldsTotal;
+    }
+
+    /** True while waiting for a peer to clear the next step. */
+    public boolean isYielding() {
+        return yieldTicks > 0;
+    }
+
     public EdgeTracker edgeTracker() {
         return edgeTracker;
     }
@@ -129,6 +163,8 @@ public final class MidtownCoordinator {
         this.paused = false;
         this.replanCount = 0;
         this.lastFailureReason = null;
+        this.yieldTicks = 0;
+        this.peerDetours = 0;
 
         if (isGoalSatisfied(goal, startPos.getX() + 0.5, startPos.getY(), startPos.getZ() + 0.5)) {
             this.path = List.of();
@@ -150,6 +186,8 @@ public final class MidtownCoordinator {
         this.paused = false;
         this.replanCount = 0;
         this.lastFailureReason = null;
+        this.yieldTicks = 0;
+        this.peerDetours = 0;
 
         if ((plannedPath == null || plannedPath.isEmpty())
                 && isGoalSatisfied(goal, startPos.getX() + 0.5, startPos.getY(), startPos.getZ() + 0.5)) {
@@ -304,6 +342,41 @@ public final class MidtownCoordinator {
             edgeTracker.beginEdge(edgeFrom, target.pos(), playerX, playerY, playerZ, tickCounter, target.timeoutTicks());
         }
 
+        // Another bot on the next step: wait for it (no stuck detection meanwhile), then route around it.
+        String blocker = peerOn(target.pos());
+        if (blocker != null) {
+            if (yieldTicks == 0) {
+                yieldsTotal++;
+                RuntimeBus.emitAt(RuntimeEvent.Type.PEER_YIELD, RuntimeEvent.Category.WAIT, "MidtownCoordinator",
+                        "yielding to another bot at " + target.pos().toShortString(),
+                        target.pos().getX(), target.pos().getY(), target.pos().getZ());
+            }
+            yieldTicks++;
+            int limit = selfId.compareTo(blocker) < 0 ? YIELD_WAIT_TICKS_HIGH : YIELD_WAIT_TICKS_LOW;
+            if (yieldTicks < limit || (peerDetours >= MAX_PEER_DETOURS && yieldTicks < limit * 6)) {
+                edgeTracker.resetNoProgress();
+                return new TickAction.Idle();
+            }
+            if (peerDetours < MAX_PEER_DETOURS) {
+                yieldTicks = 0;
+                peerDetours++;
+                BlockPos from = edgeFrom != null ? edgeFrom : BlockPos.containing(playerX, playerY, playerZ);
+                edgeTracker.blacklist(new EdgeKey(from, target.pos()), tickCounter, 60);
+                edgeTracker.resetEdge();
+                replanCount = Math.max(0, replanCount - 1); // a detour around a bot is not a failure
+                TickAction detour = triggerReplan(playerX, playerY, playerZ,
+                        "Detour around another bot at " + target.pos().toShortString());
+                if (detour instanceof TickAction.MoveTo m) return new TickAction.MoveTo(m.node(), true);
+                return detour;
+            }
+            // waited far too long even after every detour: normal stuck handling decides from here
+        } else if (yieldTicks > 0) {
+            // the way is clear again: restart the edge's timers so the wait does not count as a timeout
+            yieldTicks = 0;
+            BlockPos from = edgeFrom != null ? edgeFrom : BlockPos.containing(playerX, playerY, playerZ);
+            edgeTracker.beginEdge(from, target.pos(), playerX, playerY, playerZ, tickCounter, target.timeoutTicks());
+        }
+
         boolean breaking = isBreakingTargetBlock(target);
         if (breaking) {
             edgeTracker.resetNoProgress();
@@ -340,6 +413,14 @@ public final class MidtownCoordinator {
         }
 
         return new TickAction.MoveTo(target, replanned);
+    }
+
+    /** Uuid of a peer whose body is in the feet or head cell of {@code pos}, or null. */
+    private String peerOn(BlockPos pos) {
+        if (peerAt == null || pos == null) return null;
+        String p = peerAt.apply(pos);
+        if (p == null) p = peerAt.apply(pos.above());
+        return p != null && !p.equals(selfId) ? p : null;
     }
 
     private TickAction triggerReplan(double playerX, double playerY, double playerZ, String reason) {

@@ -34,6 +34,20 @@ Script VM (Runner / Fiber / Actions)
 - Script functions `goto()`, `mine()`, `follow()` and `tunnel()` call Midtown directly. Old `#` lines are still
   accepted, translated to Midtown, and marked as legacy in the editor (see [SCRIPTING.md](SCRIPTING.md)).
 
+## Multi-bot awareness (2.15.0)
+
+- `PeerTraffic` (`dev.midtown.plan`) knows the other bots: players this client sees, refreshed every 5 ticks, and
+  the next steps of nearby fleet bots' paths, relayed by manhattan-fleet-server.
+- Each plan gets an immutable `PeerTraffic.PeerField` in its `CalculationContext`: +120 ticks to path through a cell
+  a bot's body is in, +12 through a cell on a bot's intended path; `isBreakProtected` refuses the block a bot stands
+  on or is in, `isPlaceProtected` refuses cells its body fills. `BodyController.breakBlockTick` and `ClearProcess`
+  check the same right before breaking, because bots move after a plan is made.
+- `MidtownCoordinator` yields when a bot stands on the next step: the bot whose id sorts first waits up to 50 ticks,
+  the other 12, then it routes around (an edge blacklisted for 60 ticks, a replan that does not count against
+  `maxReplans`, at most 8 per goal). The edge timers restart when the way is clear, so a wait is never a timeout.
+  Event `PEER_YIELD` (category WAIT).
+- Deaths reported by other fleet bots go into `DeathMemory` (`recordRemoteDeath`, no breadcrumbs).
+
 ## The migration phases
 
 | Phase | Goal | State |

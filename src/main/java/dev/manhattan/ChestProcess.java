@@ -130,6 +130,7 @@ final class ChestProcess {
     /** Notes what the chest holds now (what was taken or put included), saves the index and closes the chest. */
     private void closeAndNote(Minecraft mc) {
         if (chest != null) {
+            dev.manhattan.fleet.FleetChestWatcher.noteBeforeClose(mc);
             dev.manhattan.fleet.FleetClient fc = dev.manhattan.fleet.FleetClient.instance();
             if (noItem) fc.reportChestState(chest, "EMPTY");
             else if (full) fc.reportChestState(chest, "FULL");

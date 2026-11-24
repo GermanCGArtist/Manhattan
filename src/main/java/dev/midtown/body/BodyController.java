@@ -287,6 +287,10 @@ public final class BodyController {
         if (mc == null || mc.player == null || mc.gameMode == null || pos == null) {
             return false;
         }
+        if (dev.midtown.plan.PeerTraffic.protectsBreakHere(mc, pos)) {
+            stopBreaking(mc); // another bot stands on it (or in it): wait until it has moved on
+            return false;
+        }
         LocalPlayer player = mc.player;
         Direction hitDir = Direction.getApproximateNearest(
                 player.getX() - (pos.getX() + 0.5),

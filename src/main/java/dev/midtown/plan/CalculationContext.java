@@ -135,6 +135,7 @@ public final class CalculationContext {
     private final EdgeBlacklistPredicate dynamicEdgeBlacklist;
     private final EnumMap<BlockKind, Integer> defaultBreakTicksByKind;
     private final DeathMemory.DeathField deathField;
+    private final PeerTraffic.PeerField peerField;
 
     private final List<ToolEntry> tools;
     private final float digSpeedMultiplier;
@@ -168,6 +169,7 @@ public final class CalculationContext {
         this.dynamicEdgeBlacklist = b.dynamicEdgeBlacklist;
         this.defaultBreakTicksByKind = new EnumMap<>(b.defaultBreakTicksByKind);
         this.deathField = b.deathField;
+        this.peerField = b.peerField;
         this.tools = List.copyOf(b.tools);
         this.digSpeedMultiplier = b.digSpeedMultiplier;
     }
@@ -322,6 +324,11 @@ public final class CalculationContext {
         return deathField;
     }
 
+    /** Other bots: where they stand and where they are about to walk (empty when alone). */
+    public PeerTraffic.PeerField peerField() {
+        return peerField;
+    }
+
     public double horizontalTicksPerBlock() {
         return allowSprint ? DEFAULT_SPRINT_TICKS_PER_BLOCK : DEFAULT_WALK_TICKS_PER_BLOCK;
     }
@@ -342,6 +349,9 @@ public final class CalculationContext {
         if (disallowedBreakKinds.contains(world.kindAt(tx, ty, tz))) {
             return true;
         }
+        if (!peerField.isEmpty() && peerField.protectsBreak(tx, ty, tz)) {
+            return true; // another bot stands on it or is in it
+        }
         if (world instanceof WorldSnapshot ws && !disallowedBreakBlocks.isEmpty()) {
             BlockState state = ws.blockStateAt(tx, ty, tz);
             if (disallowedBreakBlocks.contains(state.getBlock())) {
@@ -358,6 +368,9 @@ public final class CalculationContext {
 
     /** Returns true if placing at {@code (tx, ty, tz)} from standing {@code (sx, sy, sz)} is forbidden. */
     public boolean isPlaceProtected(int tx, int ty, int tz, int sx, int sy, int sz) {
+        if (!peerField.isEmpty() && peerField.protectsPlace(tx, ty, tz)) {
+            return true;
+        }
         for (ProtectedRegion r : protectedRegions) {
             if (r.blocksPlace(tx, ty, tz, sx, sy, sz)) {
                 return true;
@@ -489,6 +502,7 @@ public final class CalculationContext {
         private double parkourCostPenalty = 2.0;  // distance and gap * 1.5 are paid on top; 6 made a fall + pillar out cheaper
         private HazardCost hazardCost = HazardCost.DEFAULT;
         private DeathMemory.DeathField deathField = DeathMemory.DeathField.EMPTY;
+        private PeerTraffic.PeerField peerField = PeerTraffic.PeerField.EMPTY;
         private final List<ProtectedRegion> protectedRegions = new ArrayList<>();
         private final Set<Block> disallowedBreakBlocks = new HashSet<>();
         private final Set<BlockKind> disallowedBreakKinds = new HashSet<>();
@@ -563,6 +577,10 @@ public final class CalculationContext {
         public Builder parkourCostPenalty(double v) { this.parkourCostPenalty = v; return this; }
         public Builder hazardCost(HazardCost v) {
             this.hazardCost = Objects.requireNonNull(v, "hazardCost");
+            return this;
+        }
+        public Builder peerField(PeerTraffic.PeerField v) {
+            this.peerField = v != null ? v : PeerTraffic.PeerField.EMPTY;
             return this;
         }
         public Builder deathField(DeathMemory.DeathField v) {

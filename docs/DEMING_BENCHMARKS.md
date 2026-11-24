@@ -23,6 +23,27 @@ rule passes on `BENCHMARK_RESULT engine=midtown scenario=<name> pass=true` and f
 an instance that logs neither before the spec's `timeout_secs` fails too. An unknown scenario name logs `pass=false`
 at once.
 
+## Fleet scenarios (a dedicated server and several bots)
+
+`bench-fleet-*.json` start a dedicated Fabric server with manhattan-fleet-server and its test-only bench bridge
+(`manhattan-fleet-benchbridge-<version>.jar`, built next to the server jar in `../manhattan-fleet-server`) and 4 or 8
+clients that Deming connects to it. `server.properties` names the scenario (`manhattan-fleet-bench=<scenario>`).
+
+1. The server bridge builds the terrain (a dirt box, for `fleet_doorway_4` also a bedrock pen with one 1-wide door),
+   turns block drops and mobs off, gives every bot Efficiency V tools and makes `FBEditor` an operator.
+2. Every client becomes a fleet worker (`-Dmanhattan.fleetRole=editor` also edits). When all bots are registered,
+   the server says `[FleetBench] READY ... box=...`; the editor saves the box as an area and submits a CLEAR_AREA
+   project through the same code as the Fleet panel's Submit button.
+3. 25 s into the job, `fleet_kick_4` kicks `FBWorker2` (it reconnects by itself) and `fleet_death_4` kills
+   `FBWorker1`.
+4. When the job is done the server checks the box block by block, that every chunk is DONE exactly once and none
+   FAILED, and says `[FleetBench] RESULT scenario=... pass=...`; each client logs its `BENCHMARK_RESULT` from that.
+   The server log also gets a `FLEET_BENCH_RESULT` line and a progress line every 30 s.
+
+`waves.py` runs a spec that has a `server` alone in its wave, with its own accounts (the server knows the bots by
+name). `--only fleet` runs just these. Restarting the fleet server in the middle of a job is not covered here
+(Deming cannot restart its server); `FleetReliabilityTest` in the server repository simulates it.
+
 ## Running many at once
 
 `python tests/deming/waves.py` runs every spec, packed into waves of up to 32 games (`--max`). The machine

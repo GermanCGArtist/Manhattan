@@ -543,7 +543,6 @@ public final class Runner {
             if (!wasSub) {
                 String stamped = summary + "|" + System.currentTimeMillis();
                 RuntimeBus.setFinishedSummary(stamped);
-                System.setProperty("baritonequeue.finished", stamped);
                 emitBenchmark(true, elapsedMs);
                 if (Config.cfg.logoffOnDone) {
                     dev.survivalkit.Api.disconnect("Script complete.");

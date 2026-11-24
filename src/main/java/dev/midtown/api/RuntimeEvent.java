@@ -25,7 +25,9 @@ public final class RuntimeEvent {
         RESTOCK_EXHAUSTED,
         DEATH,
         HALT,
-        INCIDENT_DUMP
+        INCIDENT_DUMP,
+        /** Waiting for another bot to clear the next step, or a detour around it. */
+        PEER_YIELD
     }
 
     public enum Category {
@@ -98,6 +100,7 @@ public final class RuntimeEvent {
             case RESTOCK_EXHAUSTED -> Category.LOGISTICS;
             case INTERRUPT_ENTER, INTERRUPT_EXIT, DEATH -> Category.SURVIVAL;
             case RUN_START, RUN_END, HALT, INCIDENT_DUMP -> Category.SYSTEM;
+            case PEER_YIELD -> Category.WAIT;
         };
     }
 

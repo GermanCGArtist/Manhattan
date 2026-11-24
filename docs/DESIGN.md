@@ -12,17 +12,28 @@ Minecraft 26.1.1, Fabric (Mojang names, unobfuscated), Java 25, Midtown navigati
 - `dev.loadchest` – unloading into chests and picking up drops. `LoadChestMod`.
 
 The last three were separate addons until 2.0. They still have their own config files and chat commands, but none
-acts on its own: the script starts them. The packages talk through small `Api` classes and a few system properties
-(they were separate jars once):
+acts on its own: the script starts them. The packages talk through small `Api` classes and the typed in-process
+bus `dev.midtown.api.RuntimeBus` (they were separate jars once and used system properties; since 2.15.0 none are
+left):
 
-| property | set by | meaning |
+| `RuntimeBus` | set by | meaning |
 |---|---|---|
-| `baritonequeue.active` | Runner | a script is running |
-| `baritonequeue.step` | Runner | what it is doing now (for recovery messages) |
-| `baritonequeue.helpers.on` | `enable()` | helpers allowed to act by themselves while the script runs |
-| `baritonequeue.addons.off` | `disable()` | helpers switched off completely |
-| `baritonequeue.halt` | helpers | asks the runner to stop the script |
-| `survivalkit.recovering` / `survivalkit.safe` | Recovery | waiting after a death / safe to carry on |
+| `setScriptActive` / `isScriptActive` | Runner, GameProjectRuntime | a script or project queue is running |
+| `setCurrentStep` | Runner, GameProjectRuntime | what it is doing now (for recovery messages) |
+| `setHelpersOn` / `setAddonsOff` | `enable()` / `disable()` | helpers allowed to act by themselves / switched off |
+| `requestHalt` / `consumeHaltReason` | helpers | asks the runner to stop the script |
+| `setRecovering`, `setSafeAfterRespawn` | Recovery | waiting after a death / safe to carry on |
+| `setFinishedSummary` | Runner, GameProjectRuntime | the last run's summary (session log) |
+| `emit` / `emitAt` | everyone | runtime events for the Monitor, incident bundles and telemetry |
+
+## Fleets (`dev.manhattan.fleet`, `dev.midtown.plan.PeerTraffic`)
+See [FLEET.md](FLEET.md). `FleetClient` talks to manhattan-fleet-server over one JSON payload channel
+(`manhattan_fleet:msg`, contract in `fleet/wire/FleetWire.java`, identical in both repositories). Chunk reports
+go through `FleetOutbox` (saved, resent until acknowledged) and carry the lease epoch; a DONE report is answered
+with the next lease. `FleetWorker` is the worker's state machine and starts leased projects through
+`GameProjectRuntime.startFleetProject`. `FleetChestWatcher` shares chest contents as stock. `PeerTraffic` holds
+the other bots (seen players and relayed path intents); `MidtownEngine` feeds it every 5 ticks, every plan gets an
+immutable `PeerField` (path costs, break and place protection) and `MidtownCoordinator` uses it to yield.
 
 ## The language (`dev.manhattan`)
 - `Lexer` → `Parser` → AST (`Ast`, nodes run themselves) → `Interp`.

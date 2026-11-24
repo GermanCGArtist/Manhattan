@@ -39,6 +39,13 @@ final class FleetPanel {
             if (fc.mode().canEdit() && !fc.isEditorAllowed()) {
                 UiTheme.textColored(WARN, "Not authorized as Editor on this server (need op >= 2 or whitelist).");
             }
+            if (fc.mode().canWork()) {
+                int pending = fc.pendingReports();
+                UiTheme.textColored(pending > 0 ? WARN : DIM, "Worker: "
+                        + dev.manhattan.fleet.FleetWorker.instance().describe()
+                        + (pending > 0 ? " · " + pending + " report(s) waiting for the server" : "")
+                        + (fc.refusedReports() > 0 ? " · " + fc.refusedReports() + " refused (stale lease)" : ""));
+            }
         } else {
             UiTheme.textColored(DIM, "Not connected to a Fleet Server (solo/local server or mod not installed).");
         }

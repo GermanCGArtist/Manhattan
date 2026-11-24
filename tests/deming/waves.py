@@ -42,12 +42,36 @@ def mod_version():
     sys.exit("no mod_version in gradle.properties")
 
 
+def fleet_version():
+    """mod_version of the manhattan-fleet-server checkout next to this repo (for the fleet specs)."""
+    p = os.path.join(os.path.dirname(REPO), "manhattan-fleet-server", "gradle.properties")
+    if not os.path.exists(p):
+        return None
+    for line in open(p, encoding="utf-8"):
+        if line.startswith("mod_version="):
+            return line.split("=", 1)[1].strip()
+    return None
+
+
+def mc_version():
+    for line in open(os.path.join(REPO, "gradle.properties"), encoding="utf-8"):
+        if line.startswith("minecraft_version="):
+            return line.split("=", 1)[1].strip()
+    sys.exit("no minecraft_version in gradle.properties")
+
+
 def set_version(ver):
-    """Rewrites only the jar names, so the files keep their formatting."""
+    """Rewrites only the jar names and Minecraft versions, so the files keep their formatting."""
+    fver = fleet_version()
+    mc = mc_version()
     for f in sorted(glob.glob(os.path.join(SPECS, "*.json"))):
         t = open(f, newline="", encoding="utf-8").read()
         n = re.sub(r"build/libs/manhattan-testbridge-[\w.\-]+?\.jar", "build/libs/manhattan-testbridge-%s.jar" % ver, t)
-        n = re.sub(r"build/libs/manhattan-(?!testbridge)[\w.\-]+?\.jar", "build/libs/manhattan-%s.jar" % ver, n)
+        n = re.sub(r"(?<![\w-])build/libs/manhattan-(?!testbridge|fleet)[\w.\-]+?\.jar", "build/libs/manhattan-%s.jar" % ver, n)
+        n = re.sub(r'"mc_version": "[^"]+"', '"mc_version": "%s"' % mc, n)
+        if fver:
+            n = re.sub(r"manhattan-fleet-server-[\d][\w.\-]*?\.jar", "manhattan-fleet-server-%s.jar" % fver, n)
+            n = re.sub(r"manhattan-fleet-benchbridge-[\w.\-]+?\.jar", "manhattan-fleet-benchbridge-%s.jar" % fver, n)
         if n != t:
             open(f, "w", newline="", encoding="utf-8").write(n)
             print("updated", os.path.basename(f))
@@ -57,10 +81,13 @@ def pack(specs, limit):
     waves = []  # [ [names], count ]
     for name, d in sorted(specs.items(), key=lambda kv: -len(kv[1]["instances"])):
         n = len(d["instances"])
+        if d.get("server"):
+            waves.append([[name], limit + 1])  # brings its own server: runs alone (never shares a wave)
+            continue
         if n > limit:
             sys.exit("%s has %d instances, more than --max %d" % (name, n, limit))
         for w in waves:
-            if w[1] + n <= limit:
+            if w[1] <= limit and w[1] + n <= limit:
                 w[0].append(name)
                 w[1] += n
                 break
@@ -69,8 +96,29 @@ def pack(specs, limit):
     return [w[0] for w in waves]
 
 
+def absolute_mods(name, mods):
+    for m in mods:
+        if "local_path" in m:
+            p = os.path.normpath(os.path.join(REPO, *m["local_path"].split("/")))
+            if not os.path.exists(p):
+                sys.exit("%s: %s is missing - build first (also ../manhattan-fleet-server for fleet specs), "
+                         "or run --set-version" % (name, p))
+            m["local_path"] = p
+
+
 def build_wave(k, names, specs, pin=False):
     inst, timeout = [], 0
+    if len(names) == 1 and specs[names[0]].get("server"):
+        # a fleet spec: its own dedicated server, accounts (the server bench bridge knows them by name) and ports
+        d = copy.deepcopy(specs[names[0]])
+        d.pop("description", None)
+        for i in d["instances"]:
+            if not pin:
+                i["cpu_cores"] = 0
+            absolute_mods(names[0], i["mods"])
+        absolute_mods(names[0], d["server"]["mods"])
+        d["name"] = "waves-%d-%s" % (k, d["name"])
+        return d
     for name in names:
         d = specs[name]
         timeout = max(timeout, d.get("timeout_secs") or 0)
@@ -103,7 +151,11 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--pin", action="store_true", help="keep the specs' cpu_cores (Deming pins them to the lowest CPUs)")
     ap.add_argument("--set-version", action="store_true")
+    ap.add_argument("--out", help="folder for wave files and results (default tmp/deming-waves)")
     a = ap.parse_args()
+    global OUT
+    if a.out:
+        OUT = os.path.abspath(a.out)
     if a.set_version:
         set_version(mod_version())
         return
@@ -133,8 +185,23 @@ def main():
             continue
         t0 = time.time()
         with open(os.path.join(OUT, "result-%d.json" % k), "w") as out:
-            rc = subprocess.call([a.deming, "--json", "--config", cfg, "run", "submit", path], stdout=out, cwd=REPO)
-        line = "wave %d: exit %d after %.0f s" % (k, rc, time.time() - t0)
+            env = dict(os.environ)
+            if wave.get("server"):
+                # The dedicated server's JVM opens a loopback pipe in a unix-domain socket under %TEMP%; under a long
+                # temp path that fails ("Unable to establish loopback connection") and the server dies before it is
+                # ready. Deming has no server JVM arguments, so point it at a short folder through the environment.
+                uds = os.path.join(REPO, "tmp", "uds")
+                os.makedirs(uds, exist_ok=True)
+                env["JAVA_TOOL_OPTIONS"] = (env.get("JAVA_TOOL_OPTIONS", "") + " -Djdk.net.unixdomain.tmpdir=" + uds).strip()
+            rc = subprocess.call([a.deming, "--json", "--config", cfg, "run", "submit", path], stdout=out, cwd=REPO, env=env)
+        status, passed, total = "unknown", 0, len(wave["instances"])
+        try:
+            res = json.load(open(os.path.join(OUT, "result-%d.json" % k), encoding="utf-8"))
+            status = res.get("status", "unknown")
+            passed = sum(1 for i in res.get("instances", []) if i.get("passed"))
+        except (OSError, ValueError) as e:
+            status = "no result (%s)" % e
+        line = "wave %d: %s, %d/%d games passed, exit %d after %.0f s" % (k, status, passed, total, rc, time.time() - t0)
         print(line, flush=True)
         summary.append(line)
     if summary:

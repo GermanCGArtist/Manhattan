@@ -3,7 +3,7 @@
   "instances": [
     {
       "id": "eat_offhand",
-      "mc_version": "26.1.1",
+      "mc_version": "26.3",
       "loader": "fabric",
       "loader_version": "0.20.1",
       "mods": [
@@ -14,10 +14,10 @@
           }
         },
         {
-          "local_path": "build/libs/manhattan-2.12.5.jar"
+          "local_path": "build/libs/manhattan-2.15.0.jar"
         },
         {
-          "local_path": "build/libs/manhattan-testbridge-2.12.5.jar"
+          "local_path": "build/libs/manhattan-testbridge-2.15.0.jar"
         }
       ],
       "account": {
@@ -42,7 +42,7 @@
     },
     {
       "id": "eat_offhand_full_hotbar",
-      "mc_version": "26.1.1",
+      "mc_version": "26.3",
       "loader": "fabric",
       "loader_version": "0.20.1",
       "mods": [
@@ -53,10 +53,10 @@
           }
         },
         {
-          "local_path": "build/libs/manhattan-2.12.5.jar"
+          "local_path": "build/libs/manhattan-2.15.0.jar"
         },
         {
-          "local_path": "build/libs/manhattan-testbridge-2.12.5.jar"
+          "local_path": "build/libs/manhattan-testbridge-2.15.0.jar"
         }
       ],
       "account": {

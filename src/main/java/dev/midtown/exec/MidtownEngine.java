@@ -11,6 +11,7 @@ import dev.midtown.exec.MidtownCoordinator.TickAction;
 import dev.midtown.plan.BlockKind;
 import dev.midtown.plan.CalculationContext;
 import dev.midtown.plan.DeathMemory;
+import dev.midtown.plan.PeerTraffic;
 import dev.midtown.plan.MidtownPlanner;
 import dev.midtown.plan.MoveEdge;
 import dev.midtown.plan.PlanResult;
@@ -84,6 +85,9 @@ public final class MidtownEngine implements PathEngine {
     private volatile double blockBreakPenalty = CalculationContext.DEFAULT_BLOCK_BREAK_PENALTY;
     private volatile double placeCostTicks = CalculationContext.DEFAULT_PLACE_COST_TICKS;
     private volatile EngineStatus lastLoggedStatus = EngineStatus.IDLE;
+    private int peerObserveTicks;
+    private volatile String selfUuid = "";
+    private volatile String selfDimension = "";
 
     public MidtownEngine() {
         this.coordinator = new MidtownCoordinator(new EdgeTracker(), new Planner.DirectStepPlanner());
@@ -108,6 +112,52 @@ public final class MidtownEngine implements PathEngine {
         this.coordinator.setBlockPresentCheck(this::isWorldBlockPresent);
         this.executor = Objects.requireNonNull(executor, "executor");
         this.useCustomPlanner = true;
+    }
+
+    /**
+     * Feeds {@link PeerTraffic} with the other players this client sees (every 5 ticks) and keeps the
+     * coordinator's yield lookup pointed at the current player.
+     */
+    private void observePeers(Minecraft mc, LocalPlayer player) {
+        if (mc.level == null) return;
+        String uuid = player.getUUID().toString();
+        String dim = mc.level.dimension().identifier().toString();
+        if (!uuid.equals(selfUuid) || !dim.equals(selfDimension)) {
+            selfUuid = uuid;
+            selfDimension = dim;
+            coordinator.setPeerLookup(pos -> PeerTraffic.global().peerAt(selfUuid, selfDimension,
+                    pos.getX(), pos.getY(), pos.getZ(), System.currentTimeMillis()), uuid);
+        }
+        if (++peerObserveTicks % 5 != 0) return;
+        long now = System.currentTimeMillis();
+        for (var other : mc.level.players()) {
+            if (other == player || other.isSpectator() || other.isDeadOrDying()) continue;
+            PeerTraffic.global().observe(other.getUUID().toString(), other.getGameProfile().name(), dim,
+                    other.getX(), other.getY(), other.getZ(), now);
+        }
+    }
+
+    /**
+     * The next {@code max} steps of the current path as {x, y, z} (for fleet path intents); empty when idle.
+     */
+    public List<int[]> upcomingSteps(int max) {
+        if (coordinator.status() != EngineStatus.MOVING) return List.of();
+        List<PathNode> path = coordinator.path();
+        int from = Math.max(0, coordinator.pathIndex());
+        List<int[]> out = new java.util.ArrayList<>();
+        for (int i = from; i < path.size() && out.size() < max; i++) {
+            BlockPos p = path.get(i).pos();
+            out.add(new int[]{p.getX(), p.getY(), p.getZ()});
+        }
+        return out;
+    }
+
+    /** Adds a death another fleet bot reported, so this bot's planner avoids that place too. */
+    public static synchronized boolean importSharedDeath(String dimension, int x, int y, int z, long timestampMs) {
+        ensureDeathMemoryLoaded();
+        boolean added = DEATH_MEMORY.recordRemoteDeath(dimension, x, y, z, timestampMs);
+        if (added) saveDeathMemory();
+        return added;
     }
 
     private boolean isWorldBlockSolid(BlockPos pos) {
@@ -267,6 +317,7 @@ public final class MidtownEngine implements PathEngine {
             checkStatusTransition();
             return;
         }
+        observePeers(mc, player);
         if (mc.level != null && !player.isDeadOrDying()) {
             ensureDeathMemoryLoaded();
             DEATH_MEMORY.recordTrailPosition(
@@ -606,6 +657,7 @@ public final class MidtownEngine implements PathEngine {
                 .blockBreakPenalty(blockBreakPenalty)
                 .placeCostTicks(placeCostTicks)
                 .deathField(currentDeathField(goal))
+                .peerField(PeerTraffic.global().field(selfUuid, selfDimension, System.currentTimeMillis()))
                 .dynamicEdgeBlacklist((fx, fy, fz, tx, ty, tz) ->
                         coordinator.edgeTracker().isBlacklisted(
                                 new BlockPos(fx, fy, fz),

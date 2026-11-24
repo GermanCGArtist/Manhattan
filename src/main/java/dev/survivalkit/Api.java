@@ -179,7 +179,7 @@ public final class Api {
 
     /** True while SurvivalKit is recovering from a death. */
     public static boolean recovering() {
-        return "true".equals(System.getProperty("survivalkit.recovering"));
+        return dev.midtown.api.RuntimeBus.isRecovering();
     }
 
     /**

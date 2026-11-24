@@ -43,7 +43,6 @@ final class Session {
         havePos = true;
 
         String fin = dev.midtown.api.RuntimeBus.finishedSummary();
-        if (fin == null) fin = System.getProperty("baritonequeue.finished");
         if (fin != null && !fin.equals(lastFinished)) {
             lastFinished = fin;
             int sep = fin.indexOf('|');

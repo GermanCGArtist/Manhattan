@@ -3,7 +3,7 @@
   "instances": [
     {
       "id": "nav_pillar_up",
-      "mc_version": "26.1.1",
+      "mc_version": "26.3",
       "loader": "fabric",
       "loader_version": "0.20.1",
       "mods": [
@@ -14,10 +14,10 @@
           }
         },
         {
-          "local_path": "build/libs/manhattan-2.12.5.jar"
+          "local_path": "build/libs/manhattan-2.15.0.jar"
         },
         {
-          "local_path": "build/libs/manhattan-testbridge-2.12.5.jar"
+          "local_path": "build/libs/manhattan-testbridge-2.15.0.jar"
         }
       ],
       "account": {
@@ -42,7 +42,7 @@
     },
     {
       "id": "nav_pillar_bridge",
-      "mc_version": "26.1.1",
+      "mc_version": "26.3",
       "loader": "fabric",
       "loader_version": "0.20.1",
       "mods": [
@@ -53,10 +53,10 @@
           }
         },
         {
-          "local_path": "build/libs/manhattan-2.12.5.jar"
+          "local_path": "build/libs/manhattan-2.15.0.jar"
         },
         {
-          "local_path": "build/libs/manhattan-testbridge-2.12.5.jar"
+          "local_path": "build/libs/manhattan-testbridge-2.15.0.jar"
         }
       ],
       "account": {
@@ -81,7 +81,7 @@
     },
     {
       "id": "mine_pillars_floating",
-      "mc_version": "26.1.1",
+      "mc_version": "26.3",
       "loader": "fabric",
       "loader_version": "0.20.1",
       "mods": [
@@ -92,10 +92,10 @@
           }
         },
         {
-          "local_path": "build/libs/manhattan-2.12.5.jar"
+          "local_path": "build/libs/manhattan-2.15.0.jar"
         },
         {
-          "local_path": "build/libs/manhattan-testbridge-2.12.5.jar"
+          "local_path": "build/libs/manhattan-testbridge-2.15.0.jar"
         }
       ],
       "account": {
@@ -120,7 +120,7 @@
     },
     {
       "id": "clear_pillars_floating",
-      "mc_version": "26.1.1",
+      "mc_version": "26.3",
       "loader": "fabric",
       "loader_version": "0.20.1",
       "mods": [
@@ -131,10 +131,10 @@
           }
         },
         {
-          "local_path": "build/libs/manhattan-2.12.5.jar"
+          "local_path": "build/libs/manhattan-2.15.0.jar"
         },
         {
-          "local_path": "build/libs/manhattan-testbridge-2.12.5.jar"
+          "local_path": "build/libs/manhattan-testbridge-2.15.0.jar"
         }
       ],
       "account": {
@@ -159,7 +159,7 @@
     },
     {
       "id": "nav_bridge_off_pillar",
-      "mc_version": "26.1.1",
+      "mc_version": "26.3",
       "loader": "fabric",
       "loader_version": "0.20.1",
       "mods": [
@@ -170,10 +170,10 @@
           }
         },
         {
-          "local_path": "build/libs/manhattan-2.12.5.jar"
+          "local_path": "build/libs/manhattan-2.15.0.jar"
         },
         {
-          "local_path": "build/libs/manhattan-testbridge-2.12.5.jar"
+          "local_path": "build/libs/manhattan-testbridge-2.15.0.jar"
         }
       ],
       "account": {

@@ -16,14 +16,15 @@ import java.util.List;
  * Client-side wire protocol matching {@code manhattan-fleet-server} ({@code manhattan_fleet:msg}, v1).
  */
 public final class FleetProtocol {
-    public static final int PROTOCOL_VERSION = 1;
-    public static final int MAX_JSON_BYTES = 512 * 1024;
+    public static final int PROTOCOL_VERSION = dev.manhattan.fleet.wire.FleetWire.PROTOCOL_VERSION;
+    public static final int MAX_JSON_BYTES = dev.manhattan.fleet.wire.FleetWire.MAX_JSON_BYTES;
     public static final Gson GSON = new Gson();
 
     private FleetProtocol() {}
 
     public record FleetPayload(String json) implements CustomPacketPayload {
-        public static final Identifier CHANNEL_ID = Identifier.fromNamespaceAndPath("manhattan_fleet", "msg");
+        public static final Identifier CHANNEL_ID = Identifier.fromNamespaceAndPath(
+                dev.manhattan.fleet.wire.FleetWire.CHANNEL_NAMESPACE, dev.manhattan.fleet.wire.FleetWire.CHANNEL_PATH);
         public static final Type<FleetPayload> TYPE = new Type<>(CHANNEL_ID);
 
         public static final StreamCodec<FriendlyByteBuf, FleetPayload> CODEC = StreamCodec.of(
@@ -108,6 +109,10 @@ public final class FleetProtocol {
         public int[] assignedBed;
         public long leaseExpiresAtMs;
         public boolean inheritedFromGrace;
+        /** Sent back with every report and heartbeat for this chunk (protocol v2). */
+        public long leaseEpoch;
+        /** Echo of the claim this grant answers; null for a hand-off after a report. */
+        public String claimId;
     }
 
     public static final class BotInfo {
@@ -144,6 +149,7 @@ public final class FleetProtocol {
         public int doneChunks;
         public int claimedChunks;
         public int failedChunks;
+        public String statusReason;
         public List<String> activeWorkers = new ArrayList<>();
     }
 
@@ -156,6 +162,7 @@ public final class FleetProtocol {
         public int centerZ;
         public String ownerName;
         public String state;
+        public long leaseEpoch;
     }
 
     public static final class FleetSnapshot {
@@ -175,5 +182,45 @@ public final class FleetProtocol {
         public String state;
         public String updatedBy;
         public long updatedAtMs;
+        /** Item id -> count as last seen inside this chest by a fleet bot. */
+        public java.util.Map<String, Integer> stock = new java.util.LinkedHashMap<>();
+        public long stockAtMs;
+        public String stockBy;
+        public List<Reservation> reservations = new ArrayList<>();
+
+        /** Count of {@code item} not reserved by bots other than {@code selfUuid}; -1 when nobody has looked. */
+        public int unreserved(String item, String selfUuid) {
+            if (stockAtMs <= 0) return -1;
+            int have = stock == null ? 0 : stock.getOrDefault(item, 0);
+            int reserved = 0;
+            long now = System.currentTimeMillis();
+            if (reservations != null) {
+                for (Reservation r : reservations) {
+                    if (r == null || !item.equals(r.item) || r.expiresAtMs < now) continue;
+                    if (selfUuid != null && selfUuid.equals(r.botUuid)) continue;
+                    reserved += r.count;
+                }
+            }
+            return Math.max(0, have - reserved);
+        }
+    }
+
+    public static final class Reservation {
+        public String botUuid;
+        public String botName;
+        public String item;
+        public int count;
+        public long expiresAtMs;
+    }
+
+    /** A place the fleet avoids (a bot died there). */
+    public static final class Hazard {
+        public String dimension;
+        public int x;
+        public int y;
+        public int z;
+        public String kind;
+        public String reportedBy;
+        public long timestampMs;
     }
 }

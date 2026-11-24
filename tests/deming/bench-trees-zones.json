@@ -3,13 +3,13 @@
   "instances": [
     {
       "id": "tz-01-project-clear-trees-zones",
-      "mc_version": "26.1.1",
+      "mc_version": "26.3",
       "loader": "fabric",
       "loader_version": "0.20.1",
       "mods": [
         { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
-        { "local_path": "build/libs/manhattan-2.12.5.jar" },
-        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+        { "local_path": "build/libs/manhattan-2.15.0.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.15.0.jar" }
       ],
       "account": { "offline": { "username": "BenchTZ01" } },
       "ram_mb": 2560,
@@ -30,13 +30,13 @@
     },
     {
       "id": "tz-02-project-queue-pipeline",
-      "mc_version": "26.1.1",
+      "mc_version": "26.3",
       "loader": "fabric",
       "loader_version": "0.20.1",
       "mods": [
         { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
-        { "local_path": "build/libs/manhattan-2.12.5.jar" },
-        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+        { "local_path": "build/libs/manhattan-2.15.0.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.15.0.jar" }
       ],
       "account": { "offline": { "username": "BenchTZ02" } },
       "ram_mb": 2560,
@@ -57,13 +57,13 @@
     },
     {
       "id": "tz-03-chunk-no-selection-clobber",
-      "mc_version": "26.1.1",
+      "mc_version": "26.3",
       "loader": "fabric",
       "loader_version": "0.20.1",
       "mods": [
         { "modrinth": { "project_id_or_slug": "fabric-api", "version_id": null } },
-        { "local_path": "build/libs/manhattan-2.12.5.jar" },
-        { "local_path": "build/libs/manhattan-testbridge-2.12.5.jar" }
+        { "local_path": "build/libs/manhattan-2.15.0.jar" },
+        { "local_path": "build/libs/manhattan-testbridge-2.15.0.jar" }
       ],
       "account": { "offline": { "username": "BenchTZ03" } },
       "ram_mb": 2560,

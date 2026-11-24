@@ -28,7 +28,120 @@ public final class FleetClientTest {
         testProtocolEnvelopeRoundTrip();
         testProjectBedPoolBackwardCompat();
         testChunkRunnerWithLeaseProvider();
+        testWireContractMatchesServer();
+        testOutboxResendBackoffAckAndPersistence();
+        testOutboxSurvivesCorruptFile();
+        testWorkerScopesToLeasedTask();
+        testChestStockUnreserved();
         System.out.println("FleetClientTest: ALL " + passed + " tests passed.");
+    }
+
+    /** The wire contract must be byte-identical with manhattan-fleet-server's copy (when that checkout exists). */
+    private static void testWireContractMatchesServer() {
+        try {
+            java.nio.file.Path mine = java.nio.file.Path.of("src/main/java/dev/manhattan/fleet/wire/FleetWire.java");
+            java.nio.file.Path theirs = java.nio.file.Path.of(
+                    "../manhattan-fleet-server/src/main/java/dev/manhattan/fleet/wire/FleetWire.java");
+            assertTrue(java.nio.file.Files.exists(mine), "FleetWire.java exists");
+            if (java.nio.file.Files.exists(theirs)) {
+                String a = java.nio.file.Files.readString(mine).replace("\r\n", "\n");
+                String b = java.nio.file.Files.readString(theirs).replace("\r\n", "\n");
+                assertTrue(a.equals(b), "FleetWire.java differs between Manhattan and manhattan-fleet-server; copy it over");
+            } else {
+                System.out.println("  (no ../manhattan-fleet-server checkout: wire contract comparison skipped)");
+            }
+            assertTrue(FleetProtocol.PROTOCOL_VERSION == dev.manhattan.fleet.wire.FleetWire.PROTOCOL_VERSION,
+                    "client protocol version comes from the wire contract");
+        } catch (java.io.IOException e) {
+            throw new AssertionError(e);
+        }
+        passed++;
+    }
+
+    private static java.nio.file.Path tmp(String prefix) {
+        try {
+            return TestDirs.create(prefix);
+        } catch (java.io.IOException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    private static void testOutboxResendBackoffAckAndPersistence() {
+        java.nio.file.Path dir = tmp("fleet-outbox");
+        java.nio.file.Path file = dir.resolve("outbox.json");
+        dev.manhattan.fleet.FleetOutbox box = new dev.manhattan.fleet.FleetOutbox(file);
+        JsonObject body = new JsonObject();
+        body.addProperty("jobId", "job_001");
+        String id = box.add("srv", "chunk_report", body, 1_000L);
+        assertTrue(body.get("msgId").getAsString().equals(id), "msgId is put into the body");
+        assertTrue(box.due("other", 1_000L).isEmpty(), "entries belong to their server");
+        assertTrue(box.due("srv", 1_000L).size() == 1, "due at once");
+        assertTrue(box.due("srv", 2_000L).isEmpty(), "not again before the backoff");
+        assertTrue(box.due("srv", 4_001L).size() == 1, "resent after 3 s");
+        assertTrue(box.due("srv", 4_001L + 5_999L).isEmpty(), "second backoff is 6 s");
+        assertTrue(box.due("srv", 4_001L + 6_000L).size() == 1, "resent after 6 s");
+
+        dev.manhattan.fleet.FleetOutbox reloaded = new dev.manhattan.fleet.FleetOutbox(file);
+        assertTrue(reloaded.pending("srv") == 1, "unacknowledged report survives a restart of the game");
+        reloaded.rearm("srv", 50_000L);
+        assertTrue(reloaded.due("srv", 50_000L).size() == 1, "rearm makes it due at once after reconnecting");
+        assertTrue(reloaded.ack(id), "ack removes it");
+        assertTrue(new dev.manhattan.fleet.FleetOutbox(file).size() == 0, "ack is saved");
+
+        dev.manhattan.fleet.FleetOutbox old = new dev.manhattan.fleet.FleetOutbox(file);
+        old.add("srv", "chunk_report", new JsonObject(), 0L);
+        assertTrue(old.due("srv", dev.manhattan.fleet.FleetOutbox.MAX_AGE_MS + 1).isEmpty() && old.size() == 0,
+                "very old reports are dropped");
+        passed++;
+    }
+
+    private static void testOutboxSurvivesCorruptFile() {
+        java.nio.file.Path dir = tmp("fleet-outbox-corrupt");
+        java.nio.file.Path file = dir.resolve("outbox.json");
+        try {
+            java.nio.file.Files.writeString(file, "{ not json");
+        } catch (java.io.IOException e) {
+            throw new AssertionError(e);
+        }
+        dev.manhattan.fleet.FleetOutbox box = new dev.manhattan.fleet.FleetOutbox(file);
+        assertTrue(box.size() == 0, "corrupt outbox starts empty");
+        box.add("srv", "chunk_report", new JsonObject(), 1L);
+        assertTrue(new dev.manhattan.fleet.FleetOutbox(file).size() == 1, "and works again");
+        passed++;
+    }
+
+    private static void testWorkerScopesToLeasedTask() {
+        Project p = new Project("p", "P", "w");
+        p.ensureInitialized();
+        dev.manhattan.project.ProjectTask a = new dev.manhattan.project.ProjectTask("t_a", "A",
+                dev.manhattan.project.ProjectTask.Kind.CLEAR_AREA);
+        dev.manhattan.project.ProjectTask b = new dev.manhattan.project.ProjectTask("t_b", "B",
+                dev.manhattan.project.ProjectTask.Kind.CLEAR_AREA);
+        p.tasks.add(a);
+        p.tasks.add(b);
+        dev.manhattan.fleet.FleetWorker.scopeToLeasedTask(p, "t_b/16,32");
+        assertTrue(!a.enabled && b.enabled, "only the leased task runs");
+        dev.manhattan.fleet.FleetWorker.scopeToLeasedTask(p, "t_unknown/0,0");
+        assertTrue(!a.enabled && b.enabled, "an unknown task id changes nothing");
+        passed++;
+    }
+
+    private static void testChestStockUnreserved() {
+        FleetProtocol.ChestSync cs = new FleetProtocol.ChestSync();
+        assertTrue(cs.unreserved("minecraft:dirt", "me") == -1, "never looked at: unknown");
+        cs.stockAtMs = 1L;
+        cs.stock.put("minecraft:dirt", 64);
+        FleetProtocol.Reservation r = new FleetProtocol.Reservation();
+        r.botUuid = "other";
+        r.item = "minecraft:dirt";
+        r.count = 40;
+        r.expiresAtMs = System.currentTimeMillis() + 60_000L;
+        cs.reservations.add(r);
+        assertTrue(cs.unreserved("minecraft:dirt", "me") == 24, "others' reservations are subtracted");
+        assertTrue(cs.unreserved("minecraft:dirt", "other") == 64, "own reservation is not");
+        r.expiresAtMs = 0L;
+        assertTrue(cs.unreserved("minecraft:dirt", "me") == 64, "lapsed reservations do not count");
+        passed++;
     }
 
     private static void testFleetModeParsing() {

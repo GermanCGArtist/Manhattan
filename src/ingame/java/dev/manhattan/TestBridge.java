@@ -71,6 +71,7 @@ public class TestBridge implements ClientModInitializer {
     private static boolean benchSelectionClobbered = false;
     private static List<int[]> benchKeepBoxes = List.of();
     private static boolean benchResultEmitted = false;
+    private static FleetBench fleetBench;
 
     @Override
     public void onInitializeClient() {
@@ -89,7 +90,10 @@ public class TestBridge implements ClientModInitializer {
         if (mc.gui.screen() instanceof PauseScreen && mc.level != null) mc.gui.setScreen(null);
         // a test game never keeps the user's mouse: let go whenever the game grabbed it (this jar exists only in test profiles)
         if (mc.mouseHandler.isMouseGrabbed()) mc.mouseHandler.releaseMouse();
-        if (BENCHMARK != null && !BENCHMARK.isBlank()) {
+        if (BENCHMARK != null && BENCHMARK.trim().startsWith("fleet_")) {
+            if (fleetBench == null) fleetBench = new FleetBench(BENCHMARK.trim());
+            fleetBench.tick(mc, chat);
+        } else if (BENCHMARK != null && !BENCHMARK.isBlank()) {
             tickBenchmark(mc);
         }
     }

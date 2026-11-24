@@ -3,7 +3,7 @@
   "instances": [
     {
       "id": "midtown-chunk-clear-2x2-easy",
-      "mc_version": "26.1.1",
+      "mc_version": "26.3",
       "loader": "fabric",
       "loader_version": "0.20.1",
       "mods": [
@@ -14,10 +14,10 @@
           }
         },
         {
-          "local_path": "build/libs/manhattan-2.12.5.jar"
+          "local_path": "build/libs/manhattan-2.15.0.jar"
         },
         {
-          "local_path": "build/libs/manhattan-testbridge-2.12.5.jar"
+          "local_path": "build/libs/manhattan-testbridge-2.15.0.jar"
         }
       ],
       "account": {
@@ -43,7 +43,7 @@
     },
     {
       "id": "midtown-chunk-clear-straggler-strip",
-      "mc_version": "26.1.1",
+      "mc_version": "26.3",
       "loader": "fabric",
       "loader_version": "0.20.1",
       "mods": [
@@ -54,10 +54,10 @@
           }
         },
         {
-          "local_path": "build/libs/manhattan-2.12.5.jar"
+          "local_path": "build/libs/manhattan-2.15.0.jar"
         },
         {
-          "local_path": "build/libs/manhattan-testbridge-2.12.5.jar"
+          "local_path": "build/libs/manhattan-testbridge-2.15.0.jar"
         }
       ],
       "account": {
@@ -83,7 +83,7 @@
     },
     {
       "id": "midtown-chunk-clear-serpentine-3x3",
-      "mc_version": "26.1.1",
+      "mc_version": "26.3",
       "loader": "fabric",
       "loader_version": "0.20.1",
       "mods": [
@@ -94,10 +94,10 @@
           }
         },
         {
-          "local_path": "build/libs/manhattan-2.12.5.jar"
+          "local_path": "build/libs/manhattan-2.15.0.jar"
         },
         {
-          "local_path": "build/libs/manhattan-testbridge-2.12.5.jar"
+          "local_path": "build/libs/manhattan-testbridge-2.15.0.jar"
         }
       ],
       "account": {
@@ -123,7 +123,7 @@
     },
     {
       "id": "midtown-chunk-clear-nearest-3x2",
-      "mc_version": "26.1.1",
+      "mc_version": "26.3",
       "loader": "fabric",
       "loader_version": "0.20.1",
       "mods": [
@@ -134,10 +134,10 @@
           }
         },
         {
-          "local_path": "build/libs/manhattan-2.12.5.jar"
+          "local_path": "build/libs/manhattan-2.15.0.jar"
         },
         {
-          "local_path": "build/libs/manhattan-testbridge-2.12.5.jar"
+          "local_path": "build/libs/manhattan-testbridge-2.15.0.jar"
         }
       ],
       "account": {
@@ -163,7 +163,7 @@
     },
     {
       "id": "midtown-chunk-clear-l-shape",
-      "mc_version": "26.1.1",
+      "mc_version": "26.3",
       "loader": "fabric",
       "loader_version": "0.20.1",
       "mods": [
@@ -174,10 +174,10 @@
           }
         },
         {
-          "local_path": "build/libs/manhattan-2.12.5.jar"
+          "local_path": "build/libs/manhattan-2.15.0.jar"
         },
         {
-          "local_path": "build/libs/manhattan-testbridge-2.12.5.jar"
+          "local_path": "build/libs/manhattan-testbridge-2.15.0.jar"
         }
       ],
       "account": {
@@ -203,7 +203,7 @@
     },
     {
       "id": "midtown-chunk-clear-deep-trench",
-      "mc_version": "26.1.1",
+      "mc_version": "26.3",
       "loader": "fabric",
       "loader_version": "0.20.1",
       "mods": [
@@ -214,10 +214,10 @@
           }
         },
         {
-          "local_path": "build/libs/manhattan-2.12.5.jar"
+          "local_path": "build/libs/manhattan-2.15.0.jar"
         },
         {
-          "local_path": "build/libs/manhattan-testbridge-2.12.5.jar"
+          "local_path": "build/libs/manhattan-testbridge-2.15.0.jar"
         }
       ],
       "account": {
@@ -243,7 +243,7 @@
     },
     {
       "id": "midtown-chunk-colossal-4x4",
-      "mc_version": "26.1.1",
+      "mc_version": "26.3",
       "loader": "fabric",
       "loader_version": "0.20.1",
       "mods": [
@@ -254,10 +254,10 @@
           }
         },
         {
-          "local_path": "build/libs/manhattan-2.12.5.jar"
+          "local_path": "build/libs/manhattan-2.15.0.jar"
         },
         {
-          "local_path": "build/libs/manhattan-testbridge-2.12.5.jar"
+          "local_path": "build/libs/manhattan-testbridge-2.15.0.jar"
         }
       ],
       "account": {

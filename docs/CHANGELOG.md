@@ -2,7 +2,28 @@
 
 Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
 
-## Unreleased
+## 2.15.0 – fleets: reliable reports, bots that see each other (2026-11-24)
+Needs manhattan-fleet-server 0.2.0 (fleet protocol v2); see [FLEET.md](FLEET.md).
+- Chunk reports go through an outbox that is saved to disk and resent until the server acknowledges them, so a
+  report made while disconnected, or lost on the way, still arrives (and is applied only once).
+- Every lease has an epoch: a late report on a lease another bot has taken over is refused instead of overwriting
+  its work. Heartbeats only renew the lease they name.
+- A finished chunk is answered with the next lease in the same round trip: no 2.5-4 s idle gap between chunks.
+- Midtown sees the other bots: paths avoid cells they stand in and the next steps they are about to walk (relayed by
+  the fleet server), blocks they stand on are never broken, nothing is placed into them, and a bot waits for or
+  routes around a bot on its next step (right of way by id, detours do not count as failures).
+- Deaths are shared with the fleet; every bot's planner avoids those places, like its own deaths.
+- What a bot sees inside chests is shared as fleet stock; bots reserve items before a supply trip and prefer chests
+  with unreserved stock.
+- The fleet worker loop is its own state machine (`FleetWorker`), out of `GameProjectRuntime`; the Fleet panel shows
+  its state and how many reports wait for the server.
+- Fixed: `survivalkit` reported "not recovering" to the fleet even while waiting after a death (it read a system
+  property nothing set any more), and the tools-in-the-hotbar helper had not run since 2.x for the same reason. The
+  last system properties between the packages are gone; everything goes through `RuntimeBus`.
+- Tests: `MidtownPeerTest` (peer costs, protection, yielding), more `FleetClientTest` checks (outbox, wire contract,
+  task scoping, stock), and five Deming fleet scenarios on a dedicated server (`bench-fleet-*.json`).
+
+## Before 2.15.0 (collected notes; the GitHub releases list 2.13.x and 2.14.x one by one)
 - `clear_trees` is chunked like `clear_area`: a big selection is cut into chunks (and bands in Y, regions apart from
   each other on their own), and each chunk is scanned just before it is cut, so work starts at once instead of after a
   scan of the whole selection. Finished chunks go into the job ledger and are skipped after a restart. A tree belongs

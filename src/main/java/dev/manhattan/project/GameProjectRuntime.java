@@ -57,7 +57,6 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
     private int baseTripCooldownTicks;
     private int baseTripFailStreak;
     private int emergencyCooldownTicks;
-    private int fleetRestartCooldownTicks;
     private int bedCheckTicks;
     private volatile String safetyHaltReason;
 
@@ -76,7 +75,6 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
         if (sleepCooldownTicks > 0) sleepCooldownTicks--;
         if (baseTripCooldownTicks > 0) baseTripCooldownTicks--;
         if (emergencyCooldownTicks > 0) emergencyCooldownTicks--;
-        if (fleetRestartCooldownTicks > 0) fleetRestartCooldownTicks--;
 
         if (mc == null || mc.player == null || mc.level == null) {
             return;
@@ -94,8 +92,8 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
             return;
         }
 
+        dev.manhattan.fleet.FleetWorker.instance().tick(this, running() || QueueMod.projectRunnerRunning());
         if (!running()) {
-            tickFleetWorkerIdle();
             return;
         }
 
@@ -135,71 +133,16 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
     }
 
     /**
-     * Autonomous Fleet Worker loop: when connected in WORKER/BOTH mode and idle, polls the Fleet Server
-     * for a chunk lease and automatically starts the assigned Project without requiring an Editor online.
+     * Starts a project the fleet server leased to this worker (see {@link dev.manhattan.fleet.FleetWorker}),
+     * with a fresh in-memory TaskLedger (the Fleet Server owns progress). Returns an error, or null.
      */
-    private void tickFleetWorkerIdle() {
-        if (safetyHaltReason != null) return;
-        if (fleetRestartCooldownTicks > 0) return;
-        dev.manhattan.fleet.FleetClient fc = dev.manhattan.fleet.FleetClient.instance();
-        if (!fc.isWorkerActive()) return;
-        dev.manhattan.fleet.FleetProtocol.WorkGrant grant = fc.activeGrant();
-        if (grant == null || grant.idle) {
-            fc.requestWorkIfIdle();
-            return;
-        }
-        String json = grant.projectJson != null ? grant.projectJson : fc.cachedProjectJson(grant.projectHash);
-        if (json == null || json.isBlank()) {
-            fc.requestWorkIfIdle();
-            return;
-        }
-        try {
-            Project fleetProject = dev.manhattan.fleet.FleetProtocol.GSON.fromJson(json, Project.class);
-            if (fleetProject == null) return;
-            fleetProject.ensureInitialized();
-            // Fleet workers stay connected and return to IDLE to claim the next job/chunk instead of disconnecting.
-            fleetProject.survival.logoffOnDone = false;
-            fleetProject.survival.logoffOnError = false;
-            if (fleetProject.places != null && fleetProject.places.areas != null && !fleetProject.places.areas.isEmpty()) {
-                QueueMod.importFleetAreas(fleetProject.places.areas);
-            }
-            if (fleetProject.embeddedSchematics != null && !fleetProject.embeddedSchematics.isEmpty()) {
-                QueueMod.importFleetSchematics(fleetProject.embeddedSchematics, fleetProject.embeddedSchematicFiles);
-            }
-            if (grant.assignedBed != null && grant.assignedBed.length == 3) {
-                fleetProject.places.bed = grant.assignedBed.clone();
-                dev.survivalkit.Api.setBedPos(grant.assignedBed);
-            }
-            // Scope execution to the exact task that owns grant.chunkKey ("<taskId>/<x>,<z>[,<y>]")
-            // so the worker does not run unrelated tasks or misreport another task's chunk key as unknown.
-            if (grant.chunkKey != null && grant.chunkKey.contains("/")) {
-                String leasedTaskId = grant.chunkKey.substring(0, grant.chunkKey.indexOf('/'));
-                boolean matched = false;
-                for (ProjectTask t : fleetProject.tasks) {
-                    if (t != null && leasedTaskId.equals(t.id)) {
-                        matched = true;
-                        break;
-                    }
-                }
-                if (matched) {
-                    for (ProjectTask t : fleetProject.tasks) {
-                        if (t != null) t.enabled = leasedTaskId.equals(t.id);
-                    }
-                }
-            }
-            fleetRestartCooldownTicks = 60;
-            startFleetQueue(fleetProject);
-        } catch (Exception ignored) {
-            fleetRestartCooldownTicks = 60;
-        }
-    }
-
-    /** Starts a Fleet Server-assigned project using a fresh in-memory TaskLedger (the Fleet Server owns progress). */
-    private void startFleetQueue(Project project) {
-        if (project == null || running() || QueueMod.projectRunnerRunning() || safetyHaltReason != null) return;
+    public String startFleetProject(Project project) {
+        if (project == null) return "no project";
+        if (running() || QueueMod.projectRunnerRunning()) return "a queue is already running";
+        if (safetyHaltReason != null) return "halted: " + safetyHaltReason;
         String cleanId = ProjectStore.sanitizeId(project.id == null || project.id.isBlank() ? "fleet" : project.id);
         ledgerCache.put(cleanId, new TaskQueue.InMemoryTaskLedger());
-        startQueue(project);
+        return startQueue(project);
     }
 
     public String safetyHaltReason() {
@@ -1134,6 +1077,8 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
                             int needNow = Math.max(0, qty - countExactItem(item));
                             if (needNow <= 0) return null;
                             if (!isLoadedStorageOrUnloaded(chestPos)) return null;
+                            dev.manhattan.fleet.FleetClient.instance().reserveItems(chestPos,
+                                    BuiltInRegistries.ITEM.getKey(item).toString(), needNow);
                             return bestEffort(QueueMod.projectCreateChestGetHandle(chestPos, item, needNow, false, true));
                         });
                     }
@@ -1311,22 +1256,14 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
         runningProject = null;
         if (!success) {
             IncidentBundle.captureAndWrite("queue_failed", summary);
-            dev.manhattan.fleet.FleetClient fc = dev.manhattan.fleet.FleetClient.instance();
-            if (fc.isWorkerActive()) {
-                dev.manhattan.fleet.FleetProtocol.WorkGrant grant = fc.activeGrant();
-                if (grant != null && !grant.idle && grant.jobId != null && grant.chunkKey != null) {
-                    fc.reportChunk(grant.jobId, grant.chunkKey, "FAILED", summary);
-                }
-                fleetRestartCooldownTicks = 200; // 10s backoff after failure so broken grants never tight-loop
-            }
         }
+        dev.manhattan.fleet.FleetWorker.instance().onQueueFinished(success, summary);
         RuntimeBus.emit(RuntimeEvent.Type.RUN_END, RuntimeEvent.Category.SYSTEM,
                 "GameProjectRuntime", (success ? "SUCCESS: " : "FAILED: ") + summary);
         RuntimeBus.stopRunTelemetry();
         cleanupAfterQueueEnd();
         String stamped = summary + "|" + System.currentTimeMillis();
         RuntimeBus.setFinishedSummary(stamped);
-        System.setProperty("baritonequeue.finished", stamped);
         if (logoff) {
             dev.survivalkit.Api.disconnect(summary);
         }
@@ -1829,11 +1766,19 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
         BlockPos me = (mc != null && mc.player != null) ? mc.player.blockPosition() : BlockPos.ZERO;
         record Cand(BlockPos pos, int rank, double dist) {}
         List<Cand> cands = new ArrayList<>();
+        dev.manhattan.fleet.FleetClient fc = dev.manhattan.fleet.FleetClient.instance();
+        String dim = (mc != null && mc.level != null) ? mc.level.dimension().identifier().toString() : "minecraft:overworld";
         for (BlockPos pos : rawChests) {
             if (pos == null) continue;
             var info = dev.survivalkit.Api.chestInfo(pos, itemId);
-            if (info.known() && info.fresh() && info.count() == 0) continue;
-            int rank = (info.known() && info.count() > 0) ? 0 : 1;
+            // what any fleet bot last saw there, minus what other bots have reserved (-1: nobody looked)
+            int fleet = fc.fleetUnreserved(dim, pos, itemId);
+            if (fleet == 0 && !(info.known() && info.fresh() && info.count() > 0)) {
+                cands.add(new Cand(pos, 2, pos.distSqr(me))); // taken or reserved by other bots: last resort
+                continue;
+            }
+            if (fleet < 0 && info.known() && info.fresh() && info.count() == 0) continue;
+            int rank = (fleet > 0 || (info.known() && info.count() > 0)) ? 0 : 1;
             cands.add(new Cand(pos, rank, pos.distSqr(me)));
         }
         cands.sort(Comparator.comparingInt(Cand::rank).thenComparingDouble(Cand::dist));
