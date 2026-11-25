@@ -210,6 +210,22 @@ public class ProjectQueueTest {
             eq("activeId unset initially", ProjectStore.activeId(tmp, world), null);
             ProjectStore.setActiveId(tmp, world, "Canal Build");
             eq("activeId saved", ProjectStore.activeId(tmp, world), "canal_build");
+            // Re-selecting the same project must not touch the file: every write under the manhattan folder
+            // wakes Liskov's file watcher (the v2.16.1 stop/start loop).
+            Path activeFile;
+            try (var walk = Files.walk(tmp)) {
+                activeFile = walk.filter(f -> f.getFileName().toString().startsWith("_active")).findFirst().orElse(null);
+            }
+            check("active file exists", activeFile != null);
+            if (activeFile != null) {
+                java.nio.file.attribute.FileTime old = java.nio.file.attribute.FileTime.fromMillis(1_000_000_000L);
+                Files.setLastModifiedTime(activeFile, old);
+                ProjectStore.setActiveId(tmp, world, "canal_build");
+                eq("same activeId leaves file untouched", Files.getLastModifiedTime(activeFile), old);
+                ProjectStore.setActiveId(tmp, world, "alpha");
+                eq("changed activeId saved", ProjectStore.activeId(tmp, world), "alpha");
+                ProjectStore.setActiveId(tmp, world, "Canal Build");
+            }
 
             Project loaded = ProjectStore.load(tmp, world, "canal_build");
             check("loaded non-null", loaded != null);

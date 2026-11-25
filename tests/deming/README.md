@@ -31,6 +31,7 @@ for Midtown).
 | `bench-fleet-kick-4.json` | 4 + server | fleet: a worker is kicked mid-job and reconnects (grace, outbox resend) |
 | `bench-fleet-death-4.json` | 4 + server | fleet: a worker dies mid-job (lease released, chunk redone) |
 | `bench-fleet-doorway-4.json` | 4 + server | fleet: 4 bots leave a pen through one 1-wide door (yielding) |
+| `bench-fleet-reload-4.json` | 4 + server | fleet: project id `default` plus a file written under the manhattan folder mid-run; no stop/start loop |
 
 The fleet specs bring a dedicated server and need `../manhattan-fleet-server` built too; see
 [docs/DEMING_BENCHMARKS.md](../../docs/DEMING_BENCHMARKS.md#fleet-scenarios-a-dedicated-server-and-several-bots).
@@ -54,6 +55,9 @@ bridge port and account so specs can share a wave, and runs the waves one after 
 allows `--max` games and `--ram` MB (default 72000; games beyond it wait). Results: `tmp/deming-waves/result-N.json`
 and `summary.txt`; Deming keeps every run under `%LOCALAPPDATA%\deming\runs`. `--only <text>` picks specs,
 `--dry-run` only writes the wave files.
+
+Manhattan needs Liskov (since 2.16.0): `waves.py` adds `../Liskov/liskov-ui/build/libs/liskov-<liskov_version>.jar`
+(or the newest built one) to every game that lists no Liskov jar; `--liskov <jar>` picks another one.
 
 The games are not pinned to CPUs (`cpu_cores` is set to 0 in the wave files). Deming pins `cpu_cores` to the
 *lowest* logical processors, so with pinning all games of a wave share CPUs 0 to 3 and most of them time out

@@ -1,0 +1,220 @@
+{
+  "name": "fleet-reload-4",
+  "description": "4 bots clear 9 chunks while a file is written under the manhattan folder and the project id is the workers' own \"default\" (v2.16.1 stop/start loop)",
+  "instances": [
+    {
+      "id": "fbeditor",
+      "mc_version": "26.3",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        {
+          "modrinth": {
+            "project_id_or_slug": "fabric-api",
+            "version_id": null
+          }
+        },
+        {
+          "local_path": "build/libs/manhattan-2.16.2.jar"
+        },
+        {
+          "local_path": "build/libs/manhattan-testbridge-2.16.2.jar"
+        }
+      ],
+      "account": {
+        "offline": {
+          "username": "FBEditor"
+        }
+      },
+      "ram_mb": 3072,
+      "cpu_cores": 0,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=fleet_clear_4",
+        "-Dmanhattan.fleetRole=editor",
+        "-Dmanhattan.testbridge.port=25700",
+        "-Dmanhattan.fleetBench.projectId=default",
+        "-Dmanhattan.fleetBench.touchManhattanDir=true"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=fleet_clear_4 pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=fleet_clear_4 pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "fbworker1",
+      "mc_version": "26.3",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        {
+          "modrinth": {
+            "project_id_or_slug": "fabric-api",
+            "version_id": null
+          }
+        },
+        {
+          "local_path": "build/libs/manhattan-2.16.2.jar"
+        },
+        {
+          "local_path": "build/libs/manhattan-testbridge-2.16.2.jar"
+        }
+      ],
+      "account": {
+        "offline": {
+          "username": "FBWorker1"
+        }
+      },
+      "ram_mb": 3072,
+      "cpu_cores": 0,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=fleet_clear_4",
+        "-Dmanhattan.fleetRole=worker",
+        "-Dmanhattan.testbridge.port=25701",
+        "-Dmanhattan.fleetBench.projectId=default",
+        "-Dmanhattan.fleetBench.touchManhattanDir=true"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=fleet_clear_4 pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=fleet_clear_4 pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "fbworker2",
+      "mc_version": "26.3",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        {
+          "modrinth": {
+            "project_id_or_slug": "fabric-api",
+            "version_id": null
+          }
+        },
+        {
+          "local_path": "build/libs/manhattan-2.16.2.jar"
+        },
+        {
+          "local_path": "build/libs/manhattan-testbridge-2.16.2.jar"
+        }
+      ],
+      "account": {
+        "offline": {
+          "username": "FBWorker2"
+        }
+      },
+      "ram_mb": 3072,
+      "cpu_cores": 0,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=fleet_clear_4",
+        "-Dmanhattan.fleetRole=worker",
+        "-Dmanhattan.testbridge.port=25702",
+        "-Dmanhattan.fleetBench.projectId=default",
+        "-Dmanhattan.fleetBench.touchManhattanDir=true"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=fleet_clear_4 pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=fleet_clear_4 pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "fbworker3",
+      "mc_version": "26.3",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        {
+          "modrinth": {
+            "project_id_or_slug": "fabric-api",
+            "version_id": null
+          }
+        },
+        {
+          "local_path": "build/libs/manhattan-2.16.2.jar"
+        },
+        {
+          "local_path": "build/libs/manhattan-testbridge-2.16.2.jar"
+        }
+      ],
+      "account": {
+        "offline": {
+          "username": "FBWorker3"
+        }
+      },
+      "ram_mb": 3072,
+      "cpu_cores": 0,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=fleet_clear_4",
+        "-Dmanhattan.fleetRole=worker",
+        "-Dmanhattan.testbridge.port=25703",
+        "-Dmanhattan.fleetBench.projectId=default",
+        "-Dmanhattan.fleetBench.touchManhattanDir=true"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=fleet_clear_4 pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=fleet_clear_4 pass=false|FATAL"
+        }
+      }
+    }
+  ],
+  "server": {
+    "mc_version": "26.3",
+    "loader": "fabric",
+    "loader_version": "0.20.1",
+    "mods": [
+      {
+        "modrinth": {
+          "project_id_or_slug": "fabric-api",
+          "version_id": null
+        }
+      },
+      {
+        "local_path": "../manhattan-fleet-server/build/libs/manhattan-fleet-server-0.2.0.jar"
+      },
+      {
+        "local_path": "../manhattan-fleet-server/build/libs/manhattan-fleet-benchbridge-0.2.0.jar"
+      }
+    ],
+    "online_mode": false,
+    "port": null,
+    "server_properties": {
+      "level-type": "minecraft:flat",
+      "generate-structures": "false",
+      "spawn-protection": "0",
+      "allow-flight": "true",
+      "max-players": "40",
+      "view-distance": "8",
+      "simulation-distance": "8",
+      "enforce-secure-profile": "false",
+      "pause-when-empty-seconds": "0",
+      "spawn-monsters": "false",
+      "difficulty": "peaceful",
+      "gamemode": "survival",
+      "manhattan-fleet-bench": "fleet_clear_4",
+      "white-list": "false",
+      "enforce-whitelist": "false"
+    },
+    "ready_pattern": "Done \\(",
+    "auto_connect_clients": true,
+    "ram_mb": 4096
+  },
+  "timeout_secs": 1800
+}

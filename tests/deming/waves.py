@@ -19,6 +19,9 @@ SPECS = os.path.join(REPO, "tests", "deming")
 OUT = os.path.join(REPO, "tmp", "deming-waves")
 
 
+LISKOV_JAR = None
+
+
 def find_deming():
     """deming.exe from a Deming checkout next to the repo (or next to any parent, for worktrees), else PATH."""
     d = REPO
@@ -96,6 +99,34 @@ def pack(specs, limit):
     return [w[0] for w in waves]
 
 
+LISKOV_DIR = os.path.join(os.path.dirname(REPO), "Liskov", "liskov-ui", "build", "libs")
+
+
+def liskov_jar():
+    """Manhattan needs Liskov since 2.16.0. The jar named by --liskov, else the one matching liskov_version in
+    gradle.properties, else the newest built one in ../Liskov/liskov-ui/build/libs."""
+    if LISKOV_JAR:
+        return LISKOV_JAR
+    jars = [j for j in glob.glob(os.path.join(LISKOV_DIR, "liskov-*.jar")) if not j.endswith("-sources.jar")]
+    if not jars:
+        sys.exit("no Liskov jar in %s - build ../Liskov first or pass --liskov" % LISKOV_DIR)
+    want = None
+    for line in open(os.path.join(REPO, "gradle.properties"), encoding="utf-8"):
+        if line.startswith("liskov_version="):
+            want = os.path.join(LISKOV_DIR, "liskov-%s.jar" % line.split("=", 1)[1].strip())
+    if want and os.path.exists(want):
+        return want
+    def key(j):
+        v = re.match(r"liskov-([\d.]+)", os.path.basename(j))
+        return [int(x) for x in v.group(1).strip(".").split(".")] if v else []
+    return max(jars, key=key)
+
+
+def add_liskov(mods):
+    if not any("liskov" in os.path.basename(m.get("local_path", "")) for m in mods):
+        mods.append({"local_path": liskov_jar()})
+
+
 def absolute_mods(name, mods):
     for m in mods:
         if "local_path" in m:
@@ -116,6 +147,7 @@ def build_wave(k, names, specs, pin=False):
             if not pin:
                 i["cpu_cores"] = 0
             absolute_mods(names[0], i["mods"])
+            add_liskov(i["mods"])
         absolute_mods(names[0], d["server"]["mods"])
         d["name"] = "waves-%d-%s" % (k, d["name"])
         return d
@@ -138,6 +170,7 @@ def build_wave(k, names, specs, pin=False):
                     if not os.path.exists(p):
                         sys.exit("%s: %s is missing - build first, or run --set-version" % (name, p))
                     m["local_path"] = p
+            add_liskov(i["mods"])
             inst.append(i)
     return {"name": "waves-%d" % k, "instances": inst, "server": None, "timeout_secs": timeout}
 
@@ -151,9 +184,11 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--pin", action="store_true", help="keep the specs' cpu_cores (Deming pins them to the lowest CPUs)")
     ap.add_argument("--set-version", action="store_true")
+    ap.add_argument("--liskov", help="Liskov jar added to every game (default: liskov_version, else the newest in ../Liskov)")
     ap.add_argument("--out", help="folder for wave files and results (default tmp/deming-waves)")
     a = ap.parse_args()
-    global OUT
+    global OUT, LISKOV_JAR
+    LISKOV_JAR = os.path.abspath(a.liskov) if a.liskov else None
     if a.out:
         OUT = os.path.abspath(a.out)
     if a.set_version:

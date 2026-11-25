@@ -45,6 +45,19 @@ final class FleetBench {
     private boolean emitted;
     private int quitTicks = -1;
 
+    /** Project id the editor submits under (default: fleet_bench_<scenario>); "default" matches a worker's own
+     *  default project on disk, which is what made v2.16.1 stop and restart its fleet run in a loop. */
+    private final String projectId = System.getProperty("manhattan.fleetBench.projectId", "");
+    /** Write a file under the manhattan folder once working, like a death record does (wakes Liskov's watcher). */
+    private final boolean touchManhattanDir = Boolean.getBoolean("manhattan.fleetBench.touchManhattanDir");
+    private boolean touched;
+    private boolean wasRunning;
+    private final java.util.Map<String, Integer> startsPerChunk = new java.util.HashMap<>();
+    private int worstRestarts;
+    private String worstChunk = "";
+    /** Starts of the same leased chunk above this = the stop/start loop. */
+    private static final int MAX_STARTS_PER_CHUNK = 3;
+
     FleetBench(String scenario) {
         this.scenario = scenario;
         this.editor = "editor".equalsIgnoreCase(System.getProperty("manhattan.fleetRole", "worker"));
@@ -79,6 +92,8 @@ final class FleetBench {
             modeSet = true;
         }
 
+        watchRestarts(fc);
+
         List<String> lines = new ArrayList<>();
         for (String l; (l = incoming.poll()) != null; ) lines.add(l);
         synchronized (chat) { // also whatever the test bridge's own capture found (singleplayer)
@@ -106,6 +121,35 @@ final class FleetBench {
         }
     }
 
+    /** Counts queue starts per leased chunk, and (if asked) writes into the manhattan folder once working. */
+    private void watchRestarts(FleetClient fc) {
+        boolean running = dev.manhattan.project.GameProjectRuntime.instance().running();
+        FleetProtocol.WorkGrant g = fc.activeGrant();
+        String key = g == null || g.idle || g.chunkKey == null ? null : g.chunkKey;
+        if (running && !wasRunning && key != null) {
+            int n = startsPerChunk.merge(key, 1, Integer::sum);
+            if (n > worstRestarts) {
+                worstRestarts = n;
+                worstChunk = key;
+            }
+            if (n > MAX_STARTS_PER_CHUNK) {
+                System.out.println("[fleetbench] restart loop: chunk " + key + " started " + n + " times");
+            }
+        }
+        wasRunning = running;
+        if (touchManhattanDir && !touched && running && ticks > 200) {
+            touched = true;
+            try {
+                java.nio.file.Path dir = dev.liskov.core.LiskovFs.get().manhattanDir().resolve("deaths");
+                java.nio.file.Files.createDirectories(dir);
+                java.nio.file.Files.writeString(dir.resolve("fleetbench-touch.json"), "{\"t\":" + System.currentTimeMillis() + "}");
+                System.out.println("[fleetbench] wrote a file under " + dir + " while working");
+            } catch (Throwable e) {
+                System.out.println("[fleetbench] could not write under the manhattan folder: " + e);
+            }
+        }
+    }
+
     private FleetMode wantedMode() {
         return editor ? FleetMode.BOTH : FleetMode.WORKER;
     }
@@ -119,7 +163,7 @@ final class FleetBench {
         Areas.setSingleBox(new BlockPos(b[0], b[1], b[2]), new BlockPos(b[3], b[4], b[5]));
         Areas.save("fleet_box");
         Areas.clearSelection();
-        Project p = new Project("fleet_bench_" + scenario, "Fleet bench " + scenario, "manhattan-benchmark");
+        Project p = new Project(projectId.isBlank() ? "fleet_bench_" + scenario : projectId, "Fleet bench " + scenario, "manhattan-benchmark");
         p.ensureInitialized();
         p.chunkSize = 16;
         ProjectTask t = new ProjectTask("t_clear", "Clear the box", ProjectTask.Kind.CLEAR_AREA);
@@ -150,6 +194,10 @@ final class FleetBench {
     private void emit(boolean pass, String detail) {
         if (emitted) return;
         emitted = true;
+        if (worstRestarts > MAX_STARTS_PER_CHUNK) {
+            pass = false;
+            detail = detail + " restart-loop chunk=" + worstChunk + " starts=" + worstRestarts;
+        }
         System.out.println("[fleetbench] result pass=" + pass + " " + detail);
         BenchmarkLogger.emit(EngineSelector.selectedName(), scenario, pass,
                 Math.max(0L, System.currentTimeMillis() - startMs), 0, 0, 0, 0);

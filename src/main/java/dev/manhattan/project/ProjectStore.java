@@ -206,7 +206,18 @@ public final class ProjectStore {
             }
             return;
         }
-        writeAtomically(activeFile, sanitizeId(id) + "\n");
+        String content = sanitizeId(id) + "\n";
+        try {
+            // Skip identical rewrites: every write under the manhattan folder wakes Liskov's file watcher, which
+            // reloads the projects (and used to stop the running queue, see GameProjectRuntime.reloadAllFromDisk).
+            if (Files.isRegularFile(activeFile)
+                    && content.equals(Files.readString(activeFile, StandardCharsets.UTF_8))) {
+                return;
+            }
+        } catch (IOException ignored) {
+            // unreadable: just write it again
+        }
+        writeAtomically(activeFile, content);
     }
 
     /** Resolves {@code <rootDir>/<sanitizedWorld>/_queue.json}. */

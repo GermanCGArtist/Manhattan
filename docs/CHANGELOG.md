@@ -2,6 +2,23 @@
 
 Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
 
+## 2.16.2 – no stop/start loop on fleet workers (2026-11-25)
+- Fixed: fleet workers could stop and restart their leased project every 4 seconds for hours ("Stopped project:
+  Switched active project to 'default'." / "Started project ..."), redoing the chest trip, the pre-dusk sleep or
+  "bridging to it once" at every start. Anything the bot wrote under `liskov/local/manhattan` (a death record, the
+  config) woke Liskov's file watcher; its reload re-selected the active project, which stops a running queue; the
+  fleet worker restarted it, and the reload had rewritten `_active.txt`, which woke the watcher again. A reload
+  that arrives while a queue runs now waits until the run has ended, and `_active.txt` is only written when it
+  changes.
+- Fixed: a fleet project without an id ran under the id `default` with the local default project's ledger on disk;
+  it now keeps its own in-memory ledger as intended.
+- Fleet workers keep their chest-trip and sleep backoffs from one lease to the next, so a supply chest that is short
+  (e.g. no diamond sword) is not walked to again at the start of every chunk.
+- Fleet workers take the pre-dusk sleep gate only when the Fleet Server made them the designated sleeper (the same
+  rule as normal bedtime), instead of every worker going to bed before every task all night.
+- Tests: Deming spec `bench-fleet-reload-4` (fleet project id `default`, a file written under the manhattan folder
+  mid-run; fails when one chunk is started more than 3 times). `waves.py` adds the Liskov jar to every game.
+
 ## 2.16.0 – Liskov shared UI & filesystem redesign (2026-11-24)
 Requires `liskov >= 0.2.0` (`dev.liskov:liskov:0.2.0+mc26.3`).
 - Shared ImGui host (`LiskovUiHost`): removed Manhattan's duplicated Dear ImGui natives, RenderPearl quad renderer, and input mixins in favor of Liskov's unified UI host (`manhattan.shell` + `manhattan.overlay` layers and `LiskovUiHost.registerTexture` for `ItemIcons`).

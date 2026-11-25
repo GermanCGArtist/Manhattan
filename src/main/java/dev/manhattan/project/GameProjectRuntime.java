@@ -59,6 +59,8 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
     private int emergencyCooldownTicks;
     private int bedCheckTicks;
     private volatile String safetyHaltReason;
+    /** A disk reload arrived while a queue ran; {@link #tick} applies it once the run has ended. */
+    private boolean reloadPendingAfterRun;
 
     private static final int BED_CHECK_INTERVAL_TICKS = 20;
     private static final int BED_TRUST_RADIUS = 48;
@@ -75,6 +77,9 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
         if (sleepCooldownTicks > 0) sleepCooldownTicks--;
         if (baseTripCooldownTicks > 0) baseTripCooldownTicks--;
         if (emergencyCooldownTicks > 0) emergencyCooldownTicks--;
+        if (reloadPendingAfterRun && !running() && mc != null && mc.level != null) {
+            reloadAllFromDisk();
+        }
 
         if (mc == null || mc.player == null || mc.level == null) {
             return;
@@ -141,8 +146,13 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
         if (running() || QueueMod.projectRunnerRunning()) return "a queue is already running";
         if (safetyHaltReason != null) return "halted: " + safetyHaltReason;
         String cleanId = ProjectStore.sanitizeId(project.id == null || project.id.isBlank() ? "fleet" : project.id);
+        // startQueue() would rename an id-less project to "default" and then load the local default project's
+        // on-disk ledger instead of this in-memory one.
+        project.id = cleanId;
         ledgerCache.put(cleanId, new TaskQueue.InMemoryTaskLedger());
-        return startQueue(project);
+        // Every lease is a new run; keep the logistics/sleep backoffs across them so a supply chest that is short
+        // is not re-checked at the start of every chunk.
+        return startQueue(project, true);
     }
 
     public String safetyHaltReason() {
@@ -541,6 +551,10 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
     }
 
     public String startQueue(Project project) {
+        return startQueue(project, false);
+    }
+
+    private String startQueue(Project project, boolean keepCooldowns) {
         if (project == null) {
             return "Project is null.";
         }
@@ -573,7 +587,7 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
 
         safetyHaltReason = null;
         dev.manhattan.fleet.FleetClient.instance().clearSafetyHalt();
-        resetRuntimeCooldowns();
+        if (!keepCooldowns) resetRuntimeCooldowns();
 
         activateProject(project);
         RuntimeBus.setPaused(false);
@@ -895,7 +909,14 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
 
     @Override
     public boolean canSleepNow() {
-        return sleepCooldownTicks <= 0;
+        if (sleepCooldownTicks > 0) return false;
+        // Fleet workers: only the bot the Fleet Server designated sleeps (same rule as isBedTime). Without this
+        // the pre-dusk gate sent every worker to bed before each task, all night long.
+        dev.manhattan.fleet.FleetClient fc = dev.manhattan.fleet.FleetClient.instance();
+        if (fc.isConnected() && fc.mode().canWork()) {
+            return fc.isDesignatedSleeper();
+        }
+        return true;
     }
 
     @Override
@@ -1632,6 +1653,15 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
 
     /** Reloads projects and queue metadata from disk without restarting Minecraft. */
     public void reloadAllFromDisk() {
+        if (running()) {
+            // Liskov's file watcher calls this whenever anything under the manhattan folder changes, and the bot
+            // writes there itself while it works (deaths, config, ledgers, the active-project marker). Reloading
+            // mid-run went through selectProject() and stopped the queue; a fleet worker restarted it, the
+            // restart rewrote the marker, and the bot looped stop/start every 4 s (v2.16.1). Reload after the run.
+            reloadPendingAfterRun = true;
+            return;
+        }
+        reloadPendingAfterRun = false;
         String activeId = activeProject != null ? activeProject.id : null;
         projectCache.clear();
         loadedWorld = null;
