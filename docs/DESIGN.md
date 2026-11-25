@@ -101,8 +101,9 @@ immutable `PeerField` (path costs, break and place protection) and `MidtownCoord
 - States WORK, WALK, SWIM, SINK, UNDER, RISE. It plans over the whole selection with a time budget; for each cell
   a stand on the shore (checked with `Placer.placeableFrom`) or a dive spot. Walking uses Midtown with `GoalSpec`,
   digging only when the stand needs it; swimming and diving use its own key holds.
-- Safe areas (`RegionRules`) force allowBreak/allowPlace off near a protected box every tick;
-  `Api.setOwnBreak` changes the player's own wish, applied after leaving.
+- Safe areas reach the Midtown planner as boxes (`Zones.syncEngine`): deny-all ones as protected areas, mining-only
+  or bridging-only ones as no-break / no-place areas. Nothing is switched off globally near one (that trapped bots
+  mid-pillar beside a box); `Guard` vetoes clicks into a box as the last line of defence.
 
 ## Area clearing (`dev.manhattan.ClearProcess`)
 Its own executor (longer walks go through Midtown): top-down passes 3 layers thick, lanes 6 apart, stops every 3

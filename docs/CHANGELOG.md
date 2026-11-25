@@ -2,6 +2,18 @@
 
 Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
 
+## 2.16.3 – no getting stuck beside a safe area (2026-11-25)
+- Fixed: near a safe area (such as a project's `..._protect_1`), BuildTools switched breaking and placing off
+  everywhere, not just inside the area. A bot halfway up its own pillar beside one (on the way to the dump chest)
+  could then go neither up nor down: every path failed at once, the chest trip backed off again and again, and
+  `clear_area` wrote off the whole area ("2301 it could not get at", 0 blocks broken) so fleet chunks were handed
+  back as done with thousands of blocks left. Safe areas now only reach the planner as their own boxes, with
+  exactly what each denies (mining, bridging, or both), and `/buildtools protect mining|bridging <name> allow`
+  takes effect in the planner straight away. Guard still vetoes any click into one.
+- `clear_area`: when paths fail instantly again and again from the same block, the bot counts as boxed in and waits
+  and retries the same stop (up to about two minutes) instead of skipping every stop as unreachable.
+- Untested in game (no Deming run for this release); unit tests pass.
+
 ## 2.16.2 – no stop/start loop on fleet workers (2026-11-25)
 - Fixed: fleet workers could stop and restart their leased project every 4 seconds for hours ("Stopped project:
   Switched active project to 'default'." / "Started project ..."), redoing the chest trip, the pre-dusk sleep or

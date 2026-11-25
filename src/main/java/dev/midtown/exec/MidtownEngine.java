@@ -61,6 +61,7 @@ public final class MidtownEngine implements PathEngine {
     private final MineController mineController = new MineController();
     private final Map<String, List<Area>> protectedAreas = new ConcurrentHashMap<>();
     private final Map<String, List<Area>> noPlaceAreas = new ConcurrentHashMap<>();
+    private final Map<String, List<Area>> noBreakAreas = new ConcurrentHashMap<>();
     private final Set<Block> disallowedBreakBlocks = Collections.synchronizedSet(new LinkedHashSet<>());
 
     private volatile boolean useCustomPlanner;
@@ -681,6 +682,12 @@ public final class MidtownEngine implements PathEngine {
                         entry.getKey(), area, true, false, false, 0));
             }
         }
+        for (Map.Entry<String, List<Area>> entry : noBreakAreas.entrySet()) {
+            for (Area area : entry.getValue()) {
+                builder.addProtectedRegion(new CalculationContext.ProtectedRegion(
+                        entry.getKey(), area, false, true, false, 0));
+            }
+        }
         return builder.build();
     }
 
@@ -838,6 +845,15 @@ public final class MidtownEngine implements PathEngine {
         if (boxes != null) for (Area a : boxes) if (a != null) copy.add(a);
         if (copy.isEmpty()) noPlaceAreas.remove(name);
         else noPlaceAreas.put(name, Collections.unmodifiableList(copy));
+    }
+
+    @Override
+    public void setNoBreakArea(String name, List<Area> boxes) {
+        if (name == null) return;
+        List<Area> copy = new ArrayList<>();
+        if (boxes != null) for (Area a : boxes) if (a != null) copy.add(a);
+        if (copy.isEmpty()) noBreakAreas.remove(name);
+        else noBreakAreas.put(name, Collections.unmodifiableList(copy));
     }
 
     @Override

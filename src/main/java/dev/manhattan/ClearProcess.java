@@ -158,6 +158,8 @@ public final class ClearProcess {
         gapSkipped = 0;
         planPass(mc.level);
         broken = tBreak = tWalk = tTravel = tPick = tOther = nearFluid = resumes = travelFails = 0;
+        boxedAt = null;
+        boxedFails = boxedWait = boxedWaits = 0;
         workTicks = 0;
         started = System.currentTimeMillis();
         failure = null;
@@ -875,6 +877,7 @@ public final class ClearProcess {
                     }
                     travelFails++;
                     state = State.NEXT;
+                    if (boxedIn(p.blockPosition(), stateTicks)) return;   // retry this stop once we can move again
                     stop++;
                     return;
                 }
@@ -885,6 +888,7 @@ public final class ClearProcess {
 
         // NEXT: the next stop that has something to do
         tOther++;
+        if (boxedWait > 0) { boxedWait--; return; }
         exactTarget = false;
         releaseKeys();
         double reach = reach(p);
@@ -978,6 +982,35 @@ public final class ClearProcess {
     }
 
     private static final int BRIDGE_WORTH = 1;
+
+    /** Instant path failures in a row from one spot before it counts as boxed in, and how long to wait each time. */
+    private static final int BOXED_FAILS = 6, BOXED_WAIT_TICKS = 20 * 5, BOXED_MAX_WAITS = 24;
+    private BlockPos boxedAt;
+    private int boxedFails, boxedWait, boxedWaits;
+
+    /**
+     * Is the bot boxed in rather than this stop out of reach? A path that fails within a few ticks, again and again
+     * from the same block, means nothing can be reached from here (stuck halfway up its own pillar, say), not that
+     * the stops are unreachable: writing them all off would end the clear with most of it left. Then it waits and
+     * tries the same stop again, up to about two minutes, before it goes on as before.
+     */
+    private boolean boxedIn(BlockPos at, int ticksTried) {
+        if (ticksTried > 10 || !at.equals(boxedAt)) {
+            boxedAt = at;
+            boxedFails = ticksTried > 10 ? 0 : 1;
+            boxedWaits = 0;
+            return false;
+        }
+        if (++boxedFails < BOXED_FAILS || boxedWaits >= BOXED_MAX_WAITS) return false;
+        if (boxedWaits == 0) {
+            Util.msg("No way anywhere from " + at.toShortString() + " right now; waiting and trying again instead of giving up on the area.");
+        }
+        boxedWaits++;
+        boxedFails = 0;
+        boxedWait = BOXED_WAIT_TICKS;
+        EngineSelector.current().cancel();
+        return true;
+    }
 
     /** Can a block in the way be dug or walked through, i.e. is the cell no fluid, no bedrock and not protected? */
     private boolean openCell(Level level, BlockPos c) {

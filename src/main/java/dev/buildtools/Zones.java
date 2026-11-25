@@ -32,17 +32,41 @@ final class Zones {
         dev.midtown.api.EngineSelector.forEachCreated(Zones::syncEngine);
     }
 
+    /** Names handed to the planner as no-place / no-break boxes last time, so a resync can take them away again. */
+    private static final java.util.Set<String> partialNames = new java.util.HashSet<>();
+    private static final String NO_PLACE = "safe_area_no_place:", NO_BREAK = "safe_area_no_break:";
+
+    /**
+     * Each safe area goes to the planner with exactly what it denies, for its own box only: no breaking and no placing,
+     * just one of the two, or nothing (both allowed). Being near one changes nothing else (it used to switch breaking
+     * and placing off everywhere, which left a bot halfway up a pillar beside one unable to go up or down).
+     */
     static void syncEngine(dev.midtown.api.PathEngine engine) {
         engine.clearProtectedAreas();
+        for (String n : partialNames) {
+            engine.setNoPlaceArea(n, null);
+            engine.setNoBreakArea(n, null);
+        }
+        partialNames.clear();
         if (!cfg.protect) return;
-        java.util.Map<String, java.util.List<dev.midtown.api.Area>> grouped = new java.util.LinkedHashMap<>();
+        java.util.Map<String, java.util.List<dev.midtown.api.Area>> denyAll = new java.util.LinkedHashMap<>();
+        java.util.Map<String, java.util.List<dev.midtown.api.Area>> noPlace = new java.util.LinkedHashMap<>();
+        java.util.Map<String, java.util.List<dev.midtown.api.Area>> noBreak = new java.util.LinkedHashMap<>();
         for (Config.Zone z : cfg.zones) {
+            if (z.allowBreak && z.allowPlace) continue;
             String key = (z.group != null && !z.group.isBlank()) ? z.group : z.name;
-            grouped.computeIfAbsent(key, k -> new java.util.ArrayList<>())
+            var target = !z.allowBreak && !z.allowPlace ? denyAll : z.allowBreak ? noPlace : noBreak;
+            target.computeIfAbsent(key, k -> new java.util.ArrayList<>())
                     .add(dev.midtown.api.Area.of(z.x1, z.y1, z.z1, z.x2, z.y2, z.z2));
         }
-        for (var e : grouped.entrySet()) {
-            engine.setProtectedArea(e.getKey(), e.getValue());
+        for (var e : denyAll.entrySet()) engine.setProtectedArea(e.getKey(), e.getValue());
+        for (var e : noPlace.entrySet()) {
+            engine.setNoPlaceArea(NO_PLACE + e.getKey(), e.getValue());
+            partialNames.add(NO_PLACE + e.getKey());
+        }
+        for (var e : noBreak.entrySet()) {
+            engine.setNoBreakArea(NO_BREAK + e.getKey(), e.getValue());
+            partialNames.add(NO_BREAK + e.getKey());
         }
     }
 

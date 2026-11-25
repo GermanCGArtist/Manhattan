@@ -90,6 +90,9 @@ public interface PathEngine {
      */
     default void setNoPlaceArea(String name, List<Area> boxes) {}
 
+    /** Boxes nothing may be broken in (placing stays allowed), under a name; null or empty removes them. */
+    default void setNoBreakArea(String name, List<Area> boxes) {}
+
     default void clearProtectedAreas() {}
 
     default boolean isProtectedAt(BlockPos pos) {

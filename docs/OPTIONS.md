@@ -57,7 +57,7 @@ The want-list and work items are set with `want()` and `work_item()` (or `/survi
 | `buildtools.protect` | true | safe areas are on |
 | `buildtools.avoidBlocks` | true | while safe areas are on: never break chests, hoppers, beds, furnaces, redstone parts |
 | `buildtools.trim` | true | cut selections around safe areas |
-| `buildtools.reachBlocks` | 6 | how close to a safe area still counts as "able to reach into it" |
+| `buildtools.reachBlocks` | 6 | unused since 2.16.3 (safe areas only protect their own box) |
 | `buildtools.scaffoldRecord` | true | remember placed scaffolding blocks, so they can be picked up later |
 | `buildtools.scaffoldAuto` | true | pick them up by itself once `scaffoldBatch` stand nearby |
 | `buildtools.scaffoldBatch` | 25 | |

@@ -313,6 +313,7 @@ public class BuildToolsMod implements ClientModInitializer {
                 case "bridging" -> z.allowPlace = on;
                 default -> z.reach = on;
             }
+            Zones.syncEngines();   // the planner gets the area's new rules straight away
             Config.save();
             Util.msg(z.describe());
             return 1;
