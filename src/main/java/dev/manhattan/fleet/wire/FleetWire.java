@@ -1,5 +1,19 @@
 package dev.manhattan.fleet.wire;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.zip.GZIPInputStream;
+import java.util.zip.GZIPOutputStream;
+
 /**
  * The Manhattan Fleet wire contract, shared by the Manhattan client and manhattan-fleet-server.
  *
@@ -9,7 +23,9 @@ package dev.manhattan.fleet.wire;
  * misread a message.
  *
  * <p>Every message is one JSON envelope {@code {"v": <version>, "type": "<type>", "body": {...}}} on the
- * custom payload channel {@code manhattan_fleet:msg}.
+ * custom payload channel {@code manhattan_fleet:msg}. Envelopes larger than {@link #MAX_SINGLE_PACKET_BYTES}
+ * are transparently gzip-compressed and split into {@link #PACKET_CHUNK} frames so every C2S/S2C packet stays
+ * safely below Minecraft's 32,767-byte serverbound custom-payload limit.
  */
 public final class FleetWire {
     private FleetWire() {}
@@ -23,6 +39,23 @@ public final class FleetWire {
     public static final String CHANNEL_PATH = "msg";
     /** Upper bound for one JSON envelope (project definitions with many areas and embedded schematics). */
     public static final int MAX_JSON_BYTES = 512 * 1024;
+    /**
+     * Envelopes larger than this (UTF-8 bytes) are gzip-compressed and split into {@link #PACKET_CHUNK} frames
+     * so every packet stays safely under Minecraft's 32,767-byte C2S {@code ServerboundCustomPayloadPacket} cap.
+     */
+    public static final int MAX_SINGLE_PACKET_BYTES = 24 * 1024;
+    /** Maximum Base64 characters per {@link #PACKET_CHUNK} frame (~20.2 KB total JSON envelope). */
+    public static final int CHUNK_DATA_CHARS = 20 * 1024;
+    /** Maximum allowed decompressed JSON size (16 MiB) to guard against malformed/zip-bomb packets. */
+    public static final int MAX_DECOMPRESSED_BYTES = 16 * 1024 * 1024;
+    /** Hard cap on chunks per single framed transfer. */
+    public static final int MAX_CHUNKS_PER_TRANSFER = 2048;
+    /** Incomplete chunked transfers older than this are evicted. */
+    public static final long CHUNK_TTL_MS = 60_000L;
+
+    // ------------------------------------------------------------------ bidirectional framing
+    /** Transparent gzip + chunk wrapper used when an envelope exceeds {@link #MAX_SINGLE_PACKET_BYTES}. */
+    public static final String PACKET_CHUNK = "packet_chunk";
 
     // ------------------------------------------------------------------ client -> server
     public static final String HELLO = "hello";
@@ -86,9 +119,9 @@ public final class FleetWire {
      * {@link #WELCOME} and log a warning when it differs although the version matches.
      */
     public static final String SCHEMA = "fleet-v2:hello,heartbeat,claim_work,chunk_report,chest_report,chest_lock,"
-            + "sleep_status,submit_job,job_control,worker_control,path_intent,hazard_report,stock_report,reserve_items|"
+            + "sleep_status,submit_job,job_control,worker_control,path_intent,hazard_report,stock_report,reserve_items,packet_chunk|"
             + "welcome,fleet_snapshot,work_lease,report_ack,sleep_order,chest_sync,chest_lock_reply,worker_command,"
-            + "job_ack,error,peer_paths,hazard_sync,stock_sync,reserve_reply";
+            + "job_ack,error,peer_paths,hazard_sync,stock_sync,reserve_reply,packet_chunk";
 
     /** True when a peer speaking {@code version} can be served. */
     public static boolean isCompatible(int version) {
@@ -100,5 +133,153 @@ public final class FleetWire {
         return "Manhattan Fleet protocol mismatch: this side speaks v" + PROTOCOL_VERSION
                 + " (accepts v" + MIN_COMPATIBLE_VERSION + "-v" + PROTOCOL_VERSION + "), the other side v" + peerVersion
                 + ". Update Manhattan to 2.15.0+ and manhattan-fleet-server to 0.2.0+.";
+    }
+
+    // ------------------------------------------------------------------ compression & chunk framing
+
+    /**
+     * Frames a JSON envelope for transmission over {@code manhattan_fleet:msg}.
+     * Envelopes at or below {@link #MAX_SINGLE_PACKET_BYTES} are returned unchanged in a single-element list.
+     * Larger envelopes are gzip-compressed, Base64-encoded, and split into {@link #PACKET_CHUNK} frames each
+     * well below Minecraft's 32,767-byte C2S custom-payload limit.
+     */
+    public static List<String> frameForWire(String envelopeJson) {
+        String raw = envelopeJson == null ? "{}" : envelopeJson;
+        byte[] utf8 = raw.getBytes(StandardCharsets.UTF_8);
+        if (utf8.length <= MAX_SINGLE_PACKET_BYTES) {
+            return List.of(raw);
+        }
+        String encoded;
+        try {
+            encoded = Base64.getEncoder().encodeToString(gzip(utf8));
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to gzip-compress fleet envelope", e);
+        }
+        String transferId = UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+        int total = Math.max(1, (encoded.length() + CHUNK_DATA_CHARS - 1) / CHUNK_DATA_CHARS);
+        List<String> frames = new ArrayList<>(total);
+        for (int i = 0; i < total; i++) {
+            int start = i * CHUNK_DATA_CHARS;
+            int end = Math.min(encoded.length(), start + CHUNK_DATA_CHARS);
+            String slice = encoded.substring(start, end);
+            String frame = "{\"v\":" + PROTOCOL_VERSION
+                    + ",\"type\":\"" + PACKET_CHUNK
+                    + "\",\"body\":{\"id\":\"" + transferId
+                    + "\",\"i\":" + i
+                    + ",\"n\":" + total
+                    + ",\"gz\":true,\"d\":\"" + slice + "\"}}";
+            frames.add(frame);
+        }
+        return frames;
+    }
+
+    /** Gzip-compresses {@code raw} bytes. */
+    public static byte[] gzip(byte[] raw) throws IOException {
+        byte[] src = raw == null ? new byte[0] : raw;
+        ByteArrayOutputStream baos = new ByteArrayOutputStream(Math.min(src.length, 4096));
+        try (GZIPOutputStream gz = new GZIPOutputStream(baos)) {
+            gz.write(src);
+        }
+        return baos.toByteArray();
+    }
+
+    /** Decompresses gzip bytes with a hard {@code maxBytes} ceiling. */
+    public static byte[] gunzip(byte[] compressed, int maxBytes) throws IOException {
+        if (compressed == null || compressed.length == 0) return new byte[0];
+        int limit = Math.max(1, maxBytes);
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        byte[] buf = new byte[8192];
+        int total = 0;
+        try (GZIPInputStream gis = new GZIPInputStream(new ByteArrayInputStream(compressed))) {
+            int n;
+            while ((n = gis.read(buf)) >= 0) {
+                total += n;
+                if (total > limit) {
+                    throw new IOException("Decompressed fleet payload exceeds limit of " + limit + " bytes");
+                }
+                out.write(buf, 0, n);
+            }
+        }
+        return out.toByteArray();
+    }
+
+    /**
+     * Stateful reassembler for incoming {@link #PACKET_CHUNK} frames. Thread-safe and TTL-bounded.
+     */
+    public static final class PacketReassembler {
+        private static final class Pending {
+            final long createdAtMs;
+            final boolean gzipped;
+            final String[] parts;
+            int received;
+
+            Pending(long nowMs, int total, boolean gzipped) {
+                this.createdAtMs = nowMs;
+                this.gzipped = gzipped;
+                this.parts = new String[total];
+            }
+        }
+
+        private final Map<String, Pending> transfers = new LinkedHashMap<>();
+
+        /**
+         * Accepts one chunk; returns the complete decompressed JSON envelope once all chunks have arrived,
+         * or {@code null} while waiting for remaining chunks.
+         */
+        public synchronized String accept(
+                String senderKey,
+                String transferId,
+                int index,
+                int total,
+                boolean gzipped,
+                String data
+        ) throws IOException {
+            if (transferId == null || transferId.isBlank() || data == null) return null;
+            if (total < 1 || total > MAX_CHUNKS_PER_TRANSFER || index < 0 || index >= total) return null;
+            long now = System.currentTimeMillis();
+            evictExpired(now);
+            String sender = senderKey == null ? "" : senderKey;
+            String key = sender + "|" + transferId;
+            Pending p = transfers.get(key);
+            if (p == null) {
+                p = new Pending(now, total, gzipped);
+                transfers.put(key, p);
+            }
+            if (p.parts.length != total) return null;
+            if (p.parts[index] == null) {
+                p.parts[index] = data;
+                p.received++;
+            }
+            if (p.received < p.parts.length) return null;
+            transfers.remove(key);
+            int totalChars = 0;
+            for (String s : p.parts) totalChars += s.length();
+            StringBuilder sb = new StringBuilder(totalChars);
+            for (String s : p.parts) sb.append(s);
+            String joined = sb.toString();
+            if (!p.gzipped) return joined;
+            byte[] compressed = Base64.getDecoder().decode(joined);
+            byte[] raw = gunzip(compressed, MAX_DECOMPRESSED_BYTES);
+            return new String(raw, StandardCharsets.UTF_8);
+        }
+
+        public synchronized void clearSender(String senderKey) {
+            if (senderKey == null) return;
+            String prefix = senderKey + "|";
+            transfers.keySet().removeIf(k -> k.startsWith(prefix));
+        }
+
+        public synchronized void clearAll() {
+            transfers.clear();
+        }
+
+        private void evictExpired(long nowMs) {
+            Iterator<Map.Entry<String, Pending>> it = transfers.entrySet().iterator();
+            while (it.hasNext()) {
+                if (nowMs - it.next().getValue().createdAtMs > CHUNK_TTL_MS) {
+                    it.remove();
+                }
+            }
+        }
     }
 }

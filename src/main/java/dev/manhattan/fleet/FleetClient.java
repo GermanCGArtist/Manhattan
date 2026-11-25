@@ -102,6 +102,7 @@ public final class FleetClient {
 
     // Safety halt latch: blocks claiming/restarting fleet work until explicitly cleared
     private volatile String safetyHaltReason;
+    private final FleetWire.PacketReassembler packetReassembler = new FleetWire.PacketReassembler();
 
     private record ChestLockState(boolean granted, String lockedBy, long expiresAtMs, long requestedAtMs) {}
 
@@ -173,6 +174,7 @@ public final class FleetClient {
         latestSnapshot = new FleetSnapshot();
         syncedChests.clear();
         chestLocks.clear();
+        packetReassembler.clearAll();
         lastIntentSig = "";
         PeerTraffic.global().clear();
         MapLayers.unregister(FLEET_MAP_LAYER_ID);
@@ -783,6 +785,21 @@ public final class FleetClient {
 
         JsonObject body = env.body();
         switch (env.type()) {
+            case FleetWire.PACKET_CHUNK -> {
+                String id = body.has("id") ? body.get("id").getAsString() : "";
+                int idx = body.has("i") ? body.get("i").getAsInt() : -1;
+                int total = body.has("n") ? body.get("n").getAsInt() : 0;
+                boolean gz = !body.has("gz") || body.get("gz").getAsBoolean();
+                String data = body.has("d") ? body.get("d").getAsString() : null;
+                try {
+                    String full = packetReassembler.accept("server", id, idx, total, gz, data);
+                    if (full != null) handleServerMessage(full);
+                } catch (java.io.IOException e) {
+                    LOG.error("[Fleet] Failed to decompress chunked server message {}: {}", id, e.toString());
+                    setNotice("Fleet message decompress failed: " + e.getMessage(), true);
+                }
+            }
+
             case FleetWire.WELCOME -> {
                 serverConnected = true;
                 editorAllowed = body.has("editorAllowed") && body.get("editorAllowed").getAsBoolean();
@@ -990,7 +1007,10 @@ public final class FleetClient {
 
     private boolean send(String type, JsonObject body) {
         if (!ClientPlayNetworking.canSend(FleetPayload.TYPE)) return false;
-        ClientPlayNetworking.send(new FleetPayload(FleetProtocol.encodeEnvelope(type, body)));
+        String encoded = FleetProtocol.encodeEnvelope(type, body);
+        for (String frame : FleetWire.frameForWire(encoded)) {
+            ClientPlayNetworking.send(new FleetPayload(frame));
+        }
         return true;
     }
 

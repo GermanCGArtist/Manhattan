@@ -33,6 +33,7 @@ public final class FleetClientTest {
         testOutboxSurvivesCorruptFile();
         testWorkerScopesToLeasedTask();
         testChestStockUnreserved();
+        testLargeJobCompressionAndChunking();
         System.out.println("FleetClientTest: ALL " + passed + " tests passed.");
     }
 
@@ -249,6 +250,71 @@ public final class FleetClientTest {
         assertTrue(runner.done && runner.error == null, "ChunkRunner should finish cleanly on NO_WORK");
         assertTrue(reported.size() == 1 && reported.get(0).equals(key0 + ":DONE"),
                 "Expected exact chunk DONE report, got: " + reported);
+        passed++;
+    }
+
+    private static void testLargeJobCompressionAndChunking() {
+        final int mcC2sLimit = 32_767;
+        try {
+            // 1. Small envelopes pass through untouched as a single frame.
+            String small = FleetProtocol.encodeEnvelope(dev.manhattan.fleet.wire.FleetWire.HEARTBEAT, new JsonObject());
+            List<String> smallFrames = dev.manhattan.fleet.wire.FleetWire.frameForWire(small);
+            assertTrue(smallFrames.size() == 1 && smallFrames.get(0).equals(small),
+                    "Small envelope must not be wrapped");
+
+            // 2. Large JSON project (~150 KB with 2000 chunks) compresses heavily and every frame stays < 32 KB.
+            StringBuilder sb = new StringBuilder(160_000);
+            sb.append("{\"v\":2,\"type\":\"submit_job\",\"body\":{\"projectId\":\"mega\",\"chunks\":[");
+            for (int i = 0; i < 2000; i++) {
+                if (i > 0) sb.append(',');
+                sb.append("{\"chunkKey\":\"t_001/").append(i * 16).append(",0\",\"cx\":").append(i)
+                        .append(",\"cz\":0,\"centerX\":").append(i * 16 + 8).append(",\"centerZ\":8}");
+            }
+            sb.append("]}}");
+            String bigJson = sb.toString();
+            assertTrue(bigJson.length() > 100_000, "Large project fixture should exceed 100 KB");
+
+            List<String> bigFrames = dev.manhattan.fleet.wire.FleetWire.frameForWire(bigJson);
+            assertTrue(bigFrames.size() <= 2, "150 KB repetitive JSON should compress into 1-2 frames, got " + bigFrames.size());
+            dev.manhattan.fleet.wire.FleetWire.PacketReassembler reassembler =
+                    new dev.manhattan.fleet.wire.FleetWire.PacketReassembler();
+            String reassembled = null;
+            for (String frame : bigFrames) {
+                int wireBytes = frame.getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+                assertTrue(wireBytes < mcC2sLimit, "Every frame must be < 32,767 bytes, got " + wireBytes);
+                FleetProtocol.Envelope env = FleetProtocol.decodeEnvelope(frame);
+                assertTrue(env != null && dev.manhattan.fleet.wire.FleetWire.PACKET_CHUNK.equals(env.type()),
+                        "Oversized envelope must be wrapped in packet_chunk");
+                JsonObject b = env.body();
+                reassembled = reassembler.accept("u1",
+                        b.get("id").getAsString(), b.get("i").getAsInt(), b.get("n").getAsInt(),
+                        b.get("gz").getAsBoolean(), b.get("d").getAsString());
+            }
+            assertTrue(bigJson.equals(reassembled), "Compressed JSON job must round-trip identically");
+
+            // 3. Large incompressible payload (~120 KB binary schematic) splits into multiple < 32 KB frames
+            //    and round-trips even when chunks arrive out of order.
+            byte[] randomBytes = new byte[90_000];
+            new java.util.Random(12345).nextBytes(randomBytes);
+            String b64 = java.util.Base64.getEncoder().encodeToString(randomBytes);
+            String hugeSchem = "{\"v\":2,\"type\":\"submit_job\",\"body\":{\"projectJson\":\"" + b64 + "\"}}";
+            List<String> schemFrames = dev.manhattan.fleet.wire.FleetWire.frameForWire(hugeSchem);
+            assertTrue(schemFrames.size() >= 5, "90 KB incompressible payload should span multiple frames");
+            String schemOut = null;
+            for (int i = schemFrames.size() - 1; i >= 0; i--) {
+                String frame = schemFrames.get(i);
+                int wireBytes = frame.getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+                assertTrue(wireBytes < mcC2sLimit, "Every schematic frame must be < 32,767 bytes, got " + wireBytes);
+                FleetProtocol.Envelope env = FleetProtocol.decodeEnvelope(frame);
+                JsonObject b = env.body();
+                schemOut = reassembler.accept("u2",
+                        b.get("id").getAsString(), b.get("i").getAsInt(), b.get("n").getAsInt(),
+                        b.get("gz").getAsBoolean(), b.get("d").getAsString());
+            }
+            assertTrue(hugeSchem.equals(schemOut), "Out-of-order schematic frames must round-trip identically");
+        } catch (java.io.IOException e) {
+            throw new AssertionError(e);
+        }
         passed++;
     }
 
