@@ -1453,7 +1453,7 @@ public class QueueMod implements ClientModInitializer {
             int chunkSizeY = 0;
             int gap = -1;
             if (task.kind == ProjectTask.Kind.CLEAR_AREA) {
-                boxes = resolveProjectBoxes(task);
+                boxes = resolveProjectBoxes(project, task);
                 chunkSizeY = effectiveSizeY;
                 gap = cfg.chunkGap;
             } else if (task.kind == ProjectTask.Kind.FILL_WATER
@@ -1461,7 +1461,7 @@ public class QueueMod implements ClientModInitializer {
                     || task.kind == ProjectTask.Kind.FLOOD
                     || task.kind == ProjectTask.Kind.CLEAR_TREES
                     || task.kind == ProjectTask.Kind.MINE) {
-                boxes = resolveProjectBoxes(task);
+                boxes = resolveProjectBoxes(project, task);
             } else if (task.kind == ProjectTask.Kind.SCHEM_BUILD) {
                 String[] err = new String[1];
                 List<SchemSource.Placement> pls = SchemCmd.select(
@@ -1515,8 +1515,12 @@ public class QueueMod implements ClientModInitializer {
         return out;
     }
 
-    private static List<int[]> resolveProjectBoxes(ProjectTask task) {
+    private static List<int[]> resolveProjectBoxes(Project project, ProjectTask task) {
         if (task.areaName != null && !task.areaName.isBlank()) {
+            if (project != null && project.places != null && project.places.areas != null) {
+                List<int[]> embedded = project.places.areas.get(task.areaName);
+                if (embedded != null && !embedded.isEmpty()) return embedded;
+            }
             List<int[]> saved = cfg.areas.get(task.areaName);
             if (saved != null && !saved.isEmpty()) return saved;
         }
