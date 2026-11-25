@@ -49,6 +49,7 @@ final class RestockProcess extends Feature {
     private long now;
     private ArrayDeque<Action> queue;
     private static final long RETRY_MAX = 20L * 60 * 30;    // never wait longer than 30 min between looks
+    private static final long RECHECK_EMPTY_MS = 30L * 60 * 1000;   // a chest seen without what is missing: skip for 30 min
     private final Map<String, Long> exhausted = new HashMap<>();
     private final Map<String, Integer> emptyTrips = new HashMap<>();
     private long returnExhaustedUntil;
@@ -343,8 +344,24 @@ final class RestockProcess extends Feature {
             cands.add(new Cand(pos, rank, pos.distSqr(p.blockPosition())));
         }
         cands.sort((x, y) -> x.rank != y.rank ? Integer.compare(x.rank, y.rank) : Double.compare(x.dist, y.dist));
+        // A chest seen recently that held none of what is missing is not worth opening again: with a storage area
+        // full of chests, one missing item (a diamond hoe nobody stocked) meant opening every one of them on every
+        // trip. Those stay off the route unless the route would otherwise be empty (then the nearest one, so the trip
+        // still happens and refreshes the index); chests seen longer ago may have been refilled and stay on it.
+        long now = System.currentTimeMillis();
         List<BlockPos> out = new ArrayList<>();
-        for (Cand c : cands) out.add(c.pos());
+        BlockPos fallback = null;
+        for (Cand c : cands) {
+            if (c.rank() == 2) {
+                ChestIndex.Entry e = ChestIndex.at(mc, c.pos());
+                if (e != null && now - e.time < RECHECK_EMPTY_MS) {
+                    if (fallback == null) fallback = c.pos();
+                    continue;
+                }
+            }
+            out.add(c.pos());
+        }
+        if (out.isEmpty() && fallback != null) out.add(fallback);
         return out;
     }
 

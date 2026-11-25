@@ -384,8 +384,11 @@ final class TreeClear {
                 return false;
             });
             try {
-                if (dev.buildtools.Api.scaffoldCount() == 0) return;
-                Util.msg("clear_trees: taking down " + dev.buildtools.Api.scaffoldCount() + " pillar blocks ("
+                // only what the teardown can reach from here: blocks recorded far away (an earlier chunk, another
+                // area) were counted too, so every empty chunk announced the same "taking down 11" and took none down
+                int reachable = dev.buildtools.Api.scaffoldCollectableNear(player(line));
+                if (reachable == 0) return;
+                Util.msg("clear_trees: taking down " + reachable + " pillar blocks ("
                         + (chunkEnd ? "chunk done" : low ? "running low on blocks" : "too many standing") + "), keeping " + keep.size() + ".");
                 long t0 = System.nanoTime();
                 in.await(() -> new Actions.Feature(dev.buildtools.Api::collectScaffoldNow, dev.buildtools.Api::collectingScaffold,

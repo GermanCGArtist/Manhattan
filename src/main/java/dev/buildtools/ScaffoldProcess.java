@@ -93,8 +93,11 @@ final class ScaffoldProcess extends Feature {
         start(mc, mc.player, false);
     }
 
+    /** How far "collect the scaffolding now" reaches; recorded blocks further away stay up. */
+    static final int COLLECT_RADIUS = 128;
+
     private void start(Minecraft mc, LocalPlayer p, boolean auto) {
-        int n = Scaffold.near(p, auto ? 40 : 128);
+        int n = Scaffold.near(p, auto ? 40 : COLLECT_RADIUS);
         if (n == 0) {
             if (!auto) Util.msg("No scaffolding recorded near you.");
             return;

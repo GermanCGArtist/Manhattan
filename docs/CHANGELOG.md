@@ -2,6 +2,16 @@
 
 Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
 
+## 2.16.4 – fewer pointless chest visits, honest pillar count (2026-11-25)
+- Fixed: with one wanted item that no supply chest has (e.g. a `diamond_hoe`), the restock opened every chest in the
+  supply area on every trip ("Nothing to take from the supply chest ... trying the next supply chest" about 18 times
+  in a row). Chests the index saw within the last 30 minutes without anything that is missing are now left off the
+  route (the nearest one is still visited when nothing else is left, so the index stays fresh).
+- Fixed: `clear_trees` announced "taking down 11 pillar blocks (chunk done)" on every empty chunk while taking none
+  down. It counted every recorded scaffold block, including ones more than 128 blocks away that the teardown never
+  reaches. It now counts, and only announces, what the teardown can reach from where the bot stands.
+- Untested in game (no Deming run for this release); unit tests pass.
+
 ## 2.16.3 – no getting stuck beside a safe area (2026-11-25)
 - Fixed: near a safe area (such as a project's `..._protect_1`), BuildTools switched breaking and placing off
   everywhere, not just inside the area. A bot halfway up its own pillar beside one (on the way to the dump chest)

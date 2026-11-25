@@ -111,6 +111,11 @@ public final class Api {
         return Scaffold.count();
     }
 
+    /** Recorded scaffolding that {@link #collectScaffoldNow()} would take down from where the player stands. */
+    public static int scaffoldCollectableNear(net.minecraft.client.player.LocalPlayer p) {
+        return p == null ? 0 : Scaffold.near(p, ScaffoldProcess.COLLECT_RADIUS);
+    }
+
     /**
      * Set by the schematic builder: true when a throwaway block placed at this spot is NOT part of the schematic being
      * built, so it is scaffolding and is recorded even while Baritone's builder runs. null = no schematic build.
