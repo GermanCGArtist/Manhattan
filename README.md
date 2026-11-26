@@ -1,6 +1,6 @@
 # Manhattan
 
-A script language for automating Minecraft 26.1.1 (Fabric client mod, mod id `manhattan`).
+A script language and project automation suite for Minecraft 26.3 (Fabric client mod, mod id `manhattan`), built on [Liskov](https://github.com/GermanCGArtist/Liskov).
 
 Everything the bot does is one script: variables, `if`/`while`/`for`, functions, `try`/`catch`, resumable `job`
 phases, and `on <condition> ... end` blocks that interrupt the main script to fight, eat, sleep or restock. Movement
@@ -55,8 +55,18 @@ water bottom-up, then mine two areas).
 
 ## Requirements
 
-Minecraft 26.1.1, Fabric Loader 0.19.3+, Fabric API, Java 25. Litematica is optional (for schematics). Baritone is
-not needed.
+- **Minecraft:** `26.3`
+- **Fabric Loader:** `0.20.1+` and **Fabric API**
+- **Java:** `25`
+- **[Liskov](https://github.com/GermanCGArtist/Liskov):** `0.2.3+mc26.3` (shared ImGui UI host, Drives filesystem, Command Palette, and server sync)
+- **Optional:** Litematica (for schematics) and [Manhattan Fleet Server](https://github.com/GermanCGArtist/manhattan-fleet-server) (for multi-bot fleets). Baritone is not needed.
+
+## Related Suite Mods
+
+- **[Liskov](https://github.com/GermanCGArtist/Liskov)** — Shared UI host (`Ctrl+P` Command Palette, `F8` File Explorer), Drives filesystem, `.liskov-vcs/` version control, and `liskov:sync`
+- **[Manhattan Fleet Server](https://github.com/GermanCGArtist/manhattan-fleet-server)** — Server-side multi-bot fleet coordinator
+- **[Vitruvius](https://github.com/GermanCGArtist/Vitruvius)** — Blender-style 3D schematic scene editor (`F6`)
+- **Neurath** — Transit network diagram, JourneyMap vector overlay, and Spectate mode (`N` / `V`)
 
 ## Building
 

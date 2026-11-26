@@ -170,10 +170,17 @@ final class Shell {
         dl.addRect(fit[0] - 1f, fit[1] - 1f, fit[0] + fit[2] + 1f, fit[1] + fit[3] + 1f, c, 0f, 0, 2f);
         if (!ImGuiManager.isGameFocused()) {
             UiTheme.push(UiTheme.small);
-            String hint = "Click the game to play · Esc returns to the panels";
+            String hint = "Click game to play/chat · Esc: close · J: full game";
             dl.addRectFilled(fit[0] + 8, fit[1] + 8, fit[0] + 16 + ImGui.calcTextSizeX(hint), fit[1] + 12 + ImGui.getFontSize(), u32(PANEL, 0.88f), 0f);
             dl.addRect(fit[0] + 8, fit[1] + 8, fit[0] + 16 + ImGui.calcTextSizeX(hint), fit[1] + 12 + ImGui.getFontSize(), u32(BORDER_HI), 0f);
             dl.addText(fit[0] + 12, fit[1] + 10, u32(FG, 0.95f), hint);
+            ImGui.popFont();
+        } else {
+            UiTheme.push(UiTheme.small);
+            String hint = "Game active · T: chat · Esc: panels · J: full game";
+            dl.addRectFilled(fit[0] + 8, fit[1] + 8, fit[0] + 16 + ImGui.calcTextSizeX(hint), fit[1] + 12 + ImGui.getFontSize(), u32(PANEL, 0.80f), 0f);
+            dl.addRect(fit[0] + 8, fit[1] + 8, fit[0] + 16 + ImGui.calcTextSizeX(hint), fit[1] + 12 + ImGui.getFontSize(), u32(ACCENT, 0.85f), 0f);
+            dl.addText(fit[0] + 12, fit[1] + 10, u32(ACCENT, 0.95f), hint);
             ImGui.popFont();
         }
     }
@@ -304,7 +311,7 @@ final class Shell {
                       + snap.stepTailText() + "   elapsed " + snap.elapsedText())
                 : DockedPanels.activeTabName() + " · " + snap.totalSteps() + " steps";
         dl.addText(x, ty, u32(DIM), Alerts.shorten(mid, (int) (W * 0.55f / (6.5f * s))));
-        String right = "J: workspace   " + Platform.shortcutName() + "+P: commands   Esc: panels   " + Math.round(s * 100) + "%";
+        String right = "J: full game   " + Platform.shortcutName() + "+P: palette   " + Platform.shortcutName() + "+Shift+P: scripts   " + Platform.shortcutName() + "+Enter: run   Esc: back   " + Math.round(s * 100) + "%";
         dl.addText(W - ImGui.calcTextSizeX(right) - 12f * s, ty, u32(DIM), right);
         ImGui.popFont();
         ImGui.end();

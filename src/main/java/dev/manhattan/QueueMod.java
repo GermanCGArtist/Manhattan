@@ -77,8 +77,8 @@ public class QueueMod implements ClientModInitializer {
             PathRender.render();
         });
         KeyMapping.Category category = KeyMapping.Category.register(Identifier.fromNamespaceAndPath("baritonequeue", "main"));
-        open = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.baritonequeue.open", 74 /* GLFW_KEY_J */, category));
-        capture = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.baritonequeue.capture", 75 /* GLFW_KEY_K */, category));
+        open = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.baritonequeue.open", com.mojang.blaze3d.platform.InputConstants.KEY_J, category));
+        capture = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.baritonequeue.capture", com.mojang.blaze3d.platform.InputConstants.KEY_K, category));
 
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> SchemCmd.register(dispatcher));
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> registerProjectCommands(dispatcher));

@@ -23,26 +23,32 @@ Tools and Alerts tiles.
 **Alerts** shows the latest error, a stalled step, a tool close to the item-saver limit, low health or food, and a
 full inventory.
 
-Switch layouts with the activity bar, **Ctrl+P**, or `/queue ui edit|monitor|close`. The activity bar also opens
-**Presets**, **Chests**, **Areas**, **Capture** and **Log** as a drawer over the left side.
+Switch layouts with the activity bar, **Ctrl+P** (Liskov unified Command Palette), **Ctrl+Shift+P** (Manhattan script & workspace palette), or `/queue ui edit|monitor|close`. The activity bar also opens **Projects**, **Fleet**, **Presets**, **Chests**, **Areas**, **Capture** and **Log** as a drawer over the left side.
 
-Clicking into the game gives it the keyboard and mouse, so chests and other screens work inside the game area.
-Clicking the panels or pressing Esc takes them back. There is no mouse look while the workspace is open.
+Clicking into the docked game viewport gives the game keyboard and mouse focus so you can move, open chat (`T` or `/`), or interact with chests and inventories directly inside the workspace:
+
+- While a Minecraft screen (Chat, Inventory, Chest, Pause) is open in the docked viewport, all typing, `Enter`, `Esc`, and clicks inside the game area go directly to Minecraft—never stolen by Manhattan panels.
+- Pressing **Esc** in the live game viewport (with no Minecraft screen open) returns keyboard focus to Manhattan's panels.
+- Pressing **Esc** in Manhattan's panels steps back cleanly: closes autocomplete → closes Command Palette → unfocuses active text input → closes active drawer → closes the workspace and re-grabs the mouse for full-screen gameplay.
+- Pressing **J** (when not typing in a text field or Minecraft screen) toggles directly back to full-screen gameplay.
 
 ## The editor
 
 | key / button | |
 |---|---|
-| **Run** | runs the script of this tab |
+| **Run** / `Ctrl+Enter` / `F5` | runs the script of this tab |
+| `Ctrl+S` | saves the active script to disk immediately |
 | **Test** | checks the script and the world without running it ([what it checks](SCRIPTING.md#checking-a-script)) |
 | **Stop** / **Skip** | ends the script / ends only the action that runs now |
 | **Pick block** | aim at a block and press J: its position goes into the script |
 | **Save preset** | saves the selected lines as a preset |
-| Tab / Enter | takes the completion (shown as grey ghost text and a list) |
-| Up / Down / PgUp / PgDn / Esc | moves through / closes the completion list |
-| Ctrl+Space | lists every completion |
-| Ctrl+/ | comments or uncomments the selected lines |
-| Ctrl+P | command palette: run, test, skip, stop, layouts, drawers, UI scale (100/125/150%), Pick block, insert a preset, open a script tab, go to a chest or spot |
+| `Tab` / `Enter` | takes the completion (shown as grey ghost text and a list) |
+| `Up` / `Down` / `PgUp` / `PgDn` / `Esc` | moves through / closes the completion list |
+| `Ctrl+Space` | lists every completion |
+| `Ctrl+/` | comments or uncomments the selected lines |
+| `Ctrl+P` | Liskov unified command palette (all installed suite mods, themes, explorer, Manhattan quick actions) |
+| `Ctrl+Shift+P` | Manhattan workspace palette: run, test, skip, stop, layouts, drawers, UI scale (100/125/150%), Pick block, insert a preset, open a script tab, go to a chest or spot |
+| `F8` | open / toggle Liskov File Explorer |
 
 **Tabs**: `main` is the script saved in the mod's config; every `<game folder>/scripts/*.txt` is a tab too. The job
 memory ([jobs](SCRIPTING.md#jobs-resumable-phases)) is kept per tab.

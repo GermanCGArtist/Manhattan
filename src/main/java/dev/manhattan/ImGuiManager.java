@@ -60,17 +60,44 @@ public final class ImGuiManager {
 
             @Override
             public boolean wantsKeyboard() {
+                if (!Shell.isOpen()) return false;
+                Minecraft mc = Minecraft.getInstance();
+                if (mc != null && mc.gui != null && mc.gui.screen() != null) {
+                    boolean textActive = !unfocusRequested && LiskovUiHost.imguiWantsTextInput();
+                    return CommandPalette.isOpen() || textActive;
+                }
                 return isFocused();
             }
 
             @Override
             public boolean wantsMouse() {
-                return Shell.isOpen();
+                if (!Shell.isOpen()) return false;
+                Minecraft mc = Minecraft.getInstance();
+                if (mc != null && mc.gui != null && mc.gui.screen() != null) {
+                    boolean overPopup = CommandPalette.isOpen()
+                            || (Shell.drawer != Shell.Drawer.NONE && LiskovUiHost.imguiWantsMouse());
+                    if (!overPopup && insideViewport(LiskovUiHost.cursorX(), LiskovUiHost.cursorY())) {
+                        return false;
+                    }
+                }
+                return true;
             }
 
             @Override
             public boolean wantsKey(int key, int scancode, int action, int mods) {
                 if (!Shell.isOpen()) return false;
+                // Always let standard Minecraft/OS function keys pass through (F1 HUD, F2 screenshot, F3 debug, F11 fullscreen)
+                if (key == 290 || key == 291 || key == 292 || key == 300) {
+                    return false;
+                }
+                Minecraft mc = Minecraft.getInstance();
+                boolean screenOpen = mc != null && mc.gui != null && mc.gui.screen() != null;
+                boolean textActive = !unfocusRequested && LiskovUiHost.imguiWantsTextInput();
+                if (screenOpen) {
+                    // Never steal keys (like Enter, Esc, J, K, or typing) from ChatScreen, PauseScreen, Inventory, etc.
+                    // unless the user is actively typing in a Manhattan panel or Manhattan's Command Palette is open.
+                    return CommandPalette.isOpen() || textActive;
+                }
                 if (isFocused()) return true;
                 if (action == InputMap.GLFW_PRESS) {
                     int sdlMods = toSdlMods(mods);
@@ -83,24 +110,45 @@ public final class ImGuiManager {
             @Override
             public void onKey(int key, int scancode, int action, int mods) {
                 if (!Shell.isOpen()) return;
+                Minecraft mc = Minecraft.getInstance();
+                boolean screenOpen = mc != null && mc.gui != null && mc.gui.screen() != null;
                 int sdlMods = toSdlMods(mods);
                 boolean textActive = !unfocusRequested && LiskovUiHost.imguiWantsTextInput();
+                if (screenOpen && !CommandPalette.isOpen() && !textActive) {
+                    return;
+                }
                 boolean uiHasKeys = !gameFocused || focused || textActive;
                 if (action == InputMap.GLFW_PRESS) {
                     boolean ctrl = (mods & InputMap.GLFW_MOD_CONTROL) != 0
                             || (Platform.isMac() && (mods & InputMap.GLFW_MOD_SUPER) != 0);
-                    if (ctrl && scancode == InputConstants.KEY_P) {
+                    boolean shift = (mods & InputMap.GLFW_MOD_SHIFT) != 0;
+                    if (ctrl && shift && scancode == InputConstants.KEY_P) {
                         CommandPalette.toggle();
                         setGameFocused(false);
                         return;
                     }
                     KeyEvent ev = new KeyEvent(scancode, 0, sdlMods);
-                    if (uiHasKeys && !textActive && QueueMod.open != null && QueueMod.open.matches(ev)) {
+                    if (!screenOpen && !textActive && QueueMod.open != null && QueueMod.open.matches(ev)) {
                         closeShell();
+                        return;
+                    }
+                    if (!screenOpen && !uiHasKeys && scancode == InputConstants.KEY_ESCAPE) {
+                        // Game viewport was focused: Esc returns keyboard focus to Manhattan panels
+                        setGameFocused(false);
                         return;
                     }
                     if (uiHasKeys && !textActive && QueueMod.capture != null && QueueMod.capture.matches(ev)) {
                         Shell.toggleDrawer(Shell.Drawer.CAPTURE);
+                        return;
+                    }
+                    if (uiHasKeys && !screenOpen && ctrl && scancode == InputConstants.KEY_S) {
+                        DockedPanels.flushConfig(true);
+                        dev.liskov.ui.theme.MubWidgets.ToastHost.push("Saved Manhattan script", dev.liskov.core.SemanticColor.MR);
+                        return;
+                    }
+                    if (uiHasKeys && !screenOpen && ((ctrl && (scancode == InputConstants.KEY_RETURN || scancode == InputConstants.KEY_NUMPADENTER))
+                            || (!textActive && scancode == InputConstants.KEY_F5))) {
+                        DockedPanels.runCurrent();
                         return;
                     }
                 }
@@ -109,15 +157,15 @@ public final class ImGuiManager {
                             && DockedPanels.handleEditorKey(scancode, sdlMods)) {
                         return;
                     }
-                    if (action == InputMap.GLFW_PRESS && scancode == InputConstants.KEY_ESCAPE && !textActive) {
+                    if (action == InputMap.GLFW_PRESS && scancode == InputConstants.KEY_ESCAPE) {
                         if (CommandPalette.isOpen()) {
                             CommandPalette.close();
+                        } else if (textActive) {
+                            unfocusRequested = true;
                         } else if (Shell.drawer != Shell.Drawer.NONE) {
                             Shell.drawer = Shell.Drawer.NONE;
-                        } else {
-                            gameFocused = true;
-                            focused = false;
-                            unfocusRequested = true;
+                        } else if (!screenOpen) {
+                            closeShell();
                         }
                     }
                 }
