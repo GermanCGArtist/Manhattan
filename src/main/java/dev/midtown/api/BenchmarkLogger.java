@@ -10,6 +10,9 @@ public final class BenchmarkLogger {
 
     public static final String PREFIX = "BENCHMARK_RESULT";
 
+    /** The last line emitted (the test suite's checker reads the runner's verdict and metrics from it). */
+    public static volatile String lastLine;
+
     private BenchmarkLogger() {}
 
     /** Structured benchmark outcome payload. */
@@ -66,6 +69,7 @@ public final class BenchmarkLogger {
     public static String emit(Result result) {
         String line = format(result);
         System.out.println(line);
+        lastLine = line;
         return line;
     }
 

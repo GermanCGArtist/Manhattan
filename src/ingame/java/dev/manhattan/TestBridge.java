@@ -64,6 +64,7 @@ public class TestBridge implements ClientModInitializer {
     private enum BenchState { IDLE, OPENING_WORLD, WAIT_IN_WORLD, SETUP, RUNNING, DONE }
     private static BenchState benchState = BenchState.IDLE;
     private static int benchTicks = 0;
+    private static int suiteSyncedAt = -1;
     private static boolean benchProjectMode = false;
     private static long benchStartMs = 0L;
     private static Project benchProject = null;
@@ -663,7 +664,13 @@ public class TestBridge implements ClientModInitializer {
             case IDLE -> {
                 if (mc.level == null && mc.gui.screen() instanceof TitleScreen && benchTicks >= 10) {
                     System.out.println("[testbridge] benchmark bootstrap: opening world for scenario=" + BENCHMARK);
-                    openWorld(mc, "manhattan-benchmark", 20261109L, false);
+                    // -Dmanhattan.suite.seed=N: a normal (generated terrain) world with that seed instead of the flat one
+                    String suiteSeed = System.getProperty("manhattan.suite.seed");
+                    if (suiteSeed != null && suiteSeed.matches("-?\\d+")) {
+                        openWorld(mc, "manhattan-benchmark", Long.parseLong(suiteSeed), true);
+                    } else {
+                        openWorld(mc, "manhattan-benchmark", 20261109L, false);
+                    }
                     benchState = BenchState.OPENING_WORLD;
                     benchTicks = 0;
                 }
@@ -686,6 +693,29 @@ public class TestBridge implements ClientModInitializer {
             }
             case SETUP -> {
                 String scenario = BENCHMARK.trim();
+                if (SuiteCase.active()) {
+                    // the setup runs on the server; give the client 2 s to receive the new blocks and items before
+                    // the script looks at them (else it plans against the old world and an empty inventory)
+                    if (SuiteCase.synced() && suiteSyncedAt < 0) suiteSyncedAt = benchTicks;
+                    if ((suiteSyncedAt >= 0 && benchTicks >= suiteSyncedAt + 40) || benchTicks >= 20 * 30) {
+                        suiteSyncedAt = -1;
+                        benchProjectMode = false;
+                        benchProject = null;
+                        dev.midtown.api.BenchmarkLogger.lastLine = null;
+                        List<String> script = SuiteCase.script();
+                        SuiteCase.markStart(mc);
+                        String err = SuiteCase.setupFailed() ? "setup failed"
+                                : script == null ? "case has no script" : QueueMod.runner.start(script);
+                        if (err != null) {
+                            SuiteCase.finish(mc, "did not start: " + err);
+                            benchState = BenchState.DONE;
+                        } else {
+                            benchState = BenchState.RUNNING;
+                        }
+                        benchTicks = 0;
+                    }
+                    return;
+                }
                 if (benchTicks >= 20 && (setupSynced(mc, scenario) || benchTicks >= 20 * 30)) {
                     benchResultEmitted = false;
                     benchStartMs = System.currentTimeMillis();
@@ -732,6 +762,19 @@ public class TestBridge implements ClientModInitializer {
             }
             case RUNNING -> {
                 String scenario = BENCHMARK.trim();
+                if (SuiteCase.active()) {
+                    if (!QueueMod.runner.running()) {
+                        SuiteCase.finish(mc, null);
+                        benchState = BenchState.DONE;
+                        benchTicks = 0;
+                    } else if (benchTicks >= SuiteCase.limitTicks()) {
+                        QueueMod.runner.halt("Suite case limit");
+                        SuiteCase.finish(mc, "limit of " + SuiteCase.limitTicks() / 20 + " s reached");
+                        benchState = BenchState.DONE;
+                        benchTicks = 0;
+                    }
+                    return;
+                }
                 if (benchProjectMode) {
                     if (("chunk_no_selection_clobber".equals(scenario) || "project_clear_trees_zones".equals(scenario))
                             && !sameBoxes(Areas.read(), benchKeepBoxes)) {
@@ -796,10 +839,17 @@ public class TestBridge implements ClientModInitializer {
                 gr.set(GameRules.ADVANCE_WEATHER, false, s);
             });
         }
+        if (SuiteCase.active()) {
+            // a generated case brings its own reset and setup (tests/suite/generate.py)
+            SuiteCase.setup(mc);
+            return;
+        }
         List<String> cmds = new ArrayList<>();
         cmds.add("gamemode survival");
         cmds.add("difficulty peaceful");
-        cmds.add("tick rate 50");
+        // -Dmanhattan.benchmark.tickRate=N overrides the world tick rate (throughput measurements, tests/suite/measure.py)
+        String tickRate = System.getProperty("manhattan.benchmark.tickRate", "50");
+        cmds.add("tick rate " + (tickRate.matches("\\d+(\\.\\d+)?") ? tickRate : "50"));
         cmds.add("effect clear @s");
         cmds.add("clear @s");
         cmds.add("time set noon");
