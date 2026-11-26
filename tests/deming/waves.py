@@ -221,6 +221,10 @@ def main():
         t0 = time.time()
         with open(os.path.join(OUT, "result-%d.json" % k), "w") as out:
             env = dict(os.environ)
+            # Test windows must not take the user's focus when they open or come up (SDL3 reads its hints from the
+            # environment); together with the test bridge's no-grab mixin the PC stays usable while 32 games run.
+            env.setdefault("SDL_WINDOW_ACTIVATE_WHEN_SHOWN", "0")
+            env.setdefault("SDL_WINDOW_ACTIVATE_WHEN_RAISED", "0")
             if wave.get("server"):
                 # The dedicated server's JVM opens a loopback pipe in a unix-domain socket under %TEMP%; under a long
                 # temp path that fails ("Unable to establish loopback connection") and the server dies before it is

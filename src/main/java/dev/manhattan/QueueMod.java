@@ -1822,9 +1822,43 @@ public class QueueMod implements ClientModInitializer {
                     budgetSlots -= slotsUsed;
                 }
             }
+            String scaffold = schemScaffoldDeficit(mc.player);
+            if (scaffold != null && budgetSlots >= 2 && !deficit.containsKey(scaffold)) {
+                deficit.put(scaffold, SCHEM_SCAFFOLD_STOCK);
+            }
             cachedDeficit.set(deficit);
             return deficit;
         });
+    }
+
+    /** Throwaway blocks a schematic build fetches when it runs low: pillars up to tall walls and ceilings eat them. */
+    private static final int SCHEM_SCAFFOLD_STOCK = 128, SCHEM_SCAFFOLD_LOW = 24;
+
+    /**
+     * The throwaway block to fetch for a schematic build (the kind already carried, else dirt), or null when there are
+     * enough or the running project has no scaffold storage to fetch them from.
+     */
+    private static String schemScaffoldDeficit(net.minecraft.client.player.LocalPlayer p) {
+        try {
+            var rt = dev.manhattan.project.GameProjectRuntime.instance();
+            var proj = rt != null ? rt.runningProject() : null;
+            if (proj == null || proj.places == null || !proj.places.hasAnyScaffoldStorage()) return null;
+        } catch (Throwable t) {
+            return null;
+        }
+        int have = 0;
+        Item most = null;
+        int mostCount = 0;
+        Map<Item, Integer> byItem = new java.util.HashMap<>();
+        for (int i = 0; i < 36; i++) {
+            var st = p.getInventory().getItem(i);
+            if (!dev.midtown.plan.CalculationContext.isExpendableBlockItem(st)) continue;
+            have += st.getCount();
+            int n = byItem.merge(st.getItem(), st.getCount(), Integer::sum);
+            if (n > mostCount) { mostCount = n; most = st.getItem(); }
+        }
+        if (have >= SCHEM_SCAFFOLD_LOW) return null;
+        return most != null ? net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(most).getPath() : "dirt";
     }
 
     public static PriorityScheduler.ActionHandle projectCreateMineHandle(List<String> mineBlocks, List<int[]> boxes) {
@@ -1916,6 +1950,13 @@ public class QueueMod implements ClientModInitializer {
 
     public static Item projectResolveItem(String name) {
         return name == null ? null : ChestOp.itemOf(name);
+    }
+
+    /** The boxes {x0, y0, z0, x1, y1, z1} of the placements a schematic task builds (empty when none resolve). */
+    public static List<int[]> projectSchemBounds(String placement) {
+        String[] err = new String[1];
+        List<SchemSource.Placement> pls = SchemCmd.select(placement == null || placement.isBlank() ? null : placement, err);
+        return pls == null || pls.isEmpty() ? List.of() : SchemProcess.placementBounds(pls);
     }
 
     public static PriorityScheduler.ActionHandle projectCreateCollectScaffoldHandle() {

@@ -1194,8 +1194,7 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
             case FILL_WATER -> startFillWaterTask(proj, task);
             case CLEAR_AREA -> startClearAreaTask(proj, task);
             case CLEAR_TREES -> startClearTreesTask(proj, task);
-            case SCHEM_BUILD -> QueueMod.projectCreateSchemBuildHandle(
-                    task.placement, task.schemMode, task.schemMissing, task.id);
+            case SCHEM_BUILD -> startSchemBuildTask(task);
             case FLOOD -> startFloodTask(task);
             case DRAIN -> startDrainTask(task);
             case MINE -> startMineTask(task);
@@ -1306,6 +1305,43 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
             chestPos = !ordered.isEmpty() ? ordered.get(0) : matChests.get(0);
         }
         return QueueMod.projectCreateFillWaterHandle(task.block, boxes, chestPos, task.id);
+    }
+
+    /**
+     * Builds the placements, then takes down the throwaway blocks the builder stood on inside the build (pillars up to
+     * tall walls and ceilings, left in a tunnel): they are recorded as scaffolding and never belong to the finished
+     * build. Scaffolding elsewhere stays recorded for collect_scaffold(); walking the whole site for it took longer than
+     * the build itself on big schematics.
+     */
+    private PriorityScheduler.ActionHandle startSchemBuildTask(ProjectTask task) {
+        PriorityScheduler.ActionHandle mainHandle = QueueMod.projectCreateSchemBuildHandle(
+                task.placement, task.schemMode, task.schemMissing, task.id);
+        List<int[]> bounds = QueueMod.projectSchemBounds(task.placement);
+        java.util.function.Predicate<BlockPos> outside = pos -> {
+            for (int[] b : bounds) {
+                if (pos.getX() >= b[0] - 1 && pos.getX() <= b[3] + 1 && pos.getY() >= b[1] - 1 && pos.getY() <= b[4] + 1
+                        && pos.getZ() >= b[2] - 1 && pos.getZ() <= b[5] + 1) return false;
+            }
+            return true;
+        };
+        java.util.Map<BlockPos, net.minecraft.world.level.block.Block> elsewhere = new java.util.LinkedHashMap<>();
+        List<Supplier<PriorityScheduler.ActionHandle>> steps = new ArrayList<>();
+        steps.add(() -> mainHandle);
+        // a few passes: walking from pillar to pillar can put down new throwaway blocks (recorded too)
+        for (int i = 0; i < 5; i++) {
+            steps.add(() -> {
+                if (bounds.isEmpty()) return null;
+                elsewhere.putAll(dev.buildtools.Api.stashScaffoldIf(outside));
+                return dev.buildtools.Api.scaffoldCount() > 0 ? QueueMod.projectCreateCollectScaffoldHandle() : null;
+            });
+        }
+        steps.add(() -> {
+            elsewhere.putAll(dev.buildtools.Api.stashScaffoldIf(outside));
+            dev.buildtools.Api.restoreScaffold(elsewhere);
+            return null;
+        });
+        if (task.pickupAfter) steps.add(QueueMod::projectCreatePickupHandle);
+        return new SequentialHandle(steps, mainHandle::remainingWork, null);
     }
 
     private PriorityScheduler.ActionHandle startClearAreaTask(Project proj, ProjectTask task) {

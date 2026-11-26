@@ -743,7 +743,8 @@ public class TestBridge implements ClientModInitializer {
                         emitProjectBenchmark(scenario, pass, elapsedMs);
                         benchState = BenchState.DONE;
                         benchTicks = 0;
-                    } else if (benchTicks >= ("project_schem_standartsetup_c".equals(scenario) ? 20 * 2100 : 20 * 360)) {
+                    } else if (benchTicks >= ("project_schem_standartsetup_c".equals(scenario) ? 20 * 2100
+                            : "project_schem_metro_tunnel".equals(scenario) ? 20 * 1500 : 20 * 360)) {
                         GameProjectRuntime.instance().stopQueue("Benchmark timeout");
                         verifyProjectBenchmark(mc, scenario, benchProject);
                         long elapsedMs = Math.max(0L, System.currentTimeMillis() - benchStartMs);
@@ -1125,6 +1126,28 @@ public class TestBridge implements ClientModInitializer {
                 cmds.add("give @s diamond_shovel[unbreakable={}] 1");
                 cmds.add("give @s dirt 64");
             }
+            case "project_schem_metro_tunnel" -> {
+                // A rock mass with the metro tunnel already dug out (the lining's outside corners stay rock),
+                // entered from x 102. The lining (3 placements of metro_tunnel_2x_2_a) goes at x 106..117.
+                cmds.add("fill 102 -60 89 121 -46 108 stone");
+                cmds.add("fill 102 -59 92 117 -49 105 air");
+                cmds.add("fill 102 -59 92 117 -58 93 stone");
+                cmds.add("fill 102 -59 104 117 -58 105 stone");
+                cmds.add("fill 102 -51 92 117 -49 92 stone");
+                cmds.add("fill 102 -51 105 117 -49 105 stone");
+                cmds.add("fill 102 -49 92 117 -49 95 stone");
+                cmds.add("fill 102 -49 102 117 -49 105 stone");
+                addStockedChest(cmds, 96, -60, 92, "minecraft:smooth_stone", 12, 64);
+                addStockedChest(cmds, 96, -60, 94, "minecraft:cobblestone_stairs", 2, 64);
+                addStockedChest(cmds, 96, -60, 96, "minecraft:smooth_stone_slab", 1, 64);
+                addStockedChest(cmds, 96, -60, 98, "minecraft:torch", 1, 16);
+                cmds.add("setblock 92 -60 100 chest");
+                addStockedChest(cmds, 92, -60, 102, "minecraft:dirt", 4, 64);
+                cmds.add("setblock 92 -60 104 red_bed");
+                cmds.add("give @s diamond_pickaxe[unbreakable={}] 1");
+                cmds.add("give @s diamond_shovel[unbreakable={}] 1");
+                cmds.add("give @s dirt 64");
+            }
             default -> { }
         }
         cmds.add("tp @s 100 -60 100 0 0");
@@ -1229,6 +1252,12 @@ public class TestBridge implements ClientModInitializer {
                             && mc.level.getBlockState(new BlockPos(114, -60, 103)).is(Blocks.OAK_LOG)
                             && mc.level.getBlockState(new BlockPos(114, -54, 103)).is(Blocks.OAK_LOG)
                             && mc.level.getBlockState(new BlockPos(116, -53, 105)).is(Blocks.OAK_LEAVES);
+            case "project_schem_metro_tunnel" ->
+                    mc.level.getBlockState(new BlockPos(96, -60, 98)).is(Blocks.CHEST)
+                            && mc.level.getBlockState(new BlockPos(92, -60, 104)).getBlock() instanceof net.minecraft.world.level.block.BedBlock
+                            && mc.level.getBlockState(new BlockPos(121, -46, 108)).is(Blocks.STONE)
+                            && mc.level.getBlockState(new BlockPos(110, -54, 98)).isAir()
+                            && mc.level.getBlockState(new BlockPos(110, -49, 102)).is(Blocks.STONE);
             case "project_schem_standartsetup_c" ->
                     mc.level.getBlockState(new BlockPos(96, -60, 92)).is(Blocks.CHEST)
                             && mc.level.getBlockState(new BlockPos(96, -60, 102)).is(Blocks.CHEST)
@@ -1511,7 +1540,8 @@ public class TestBridge implements ClientModInitializer {
                  "midtown_body_interrupt",
                  "chunk_no_selection_clobber",
                  "project_clear_trees_zones",
-                 "project_schem_standartsetup_c" -> true;
+                 "project_schem_standartsetup_c",
+                 "project_schem_metro_tunnel" -> true;
             default -> false;
         };
     }
@@ -1658,6 +1688,28 @@ public class TestBridge implements ClientModInitializer {
                 t1.areaName = "woods_test";
                 p.tasks.add(t1);
             }
+            case "project_schem_metro_tunnel" -> {
+                String schemPath = System.getProperty("manhattan.schemFile",
+                        "F:\\workflow\\Manhattan\\tests\\deming\\schematics\\metro_tunnel_2x_2_a.litematic");
+                for (int i = 0; i < 3; i++) {
+                    Project.EmbeddedSchematic es = new Project.EmbeddedSchematic();
+                    es.name = "metro_tunnel_2x_2_a";
+                    es.filePath = schemPath;
+                    es.origin = new int[]{106 + 4 * i, -59, 92};
+                    es.enabled = true;
+                    p.embeddedSchematics.add(es);
+                }
+                p.places.dumpChest = new int[]{92, -60, 100};
+                p.places.scaffoldChest = new int[]{92, -60, 102};
+                p.places.bed = new int[]{92, -60, 104};
+                p.places.materialAreas.add(new int[]{95, -60, 91, 97, -60, 99});
+
+                ProjectTask t1 = new ProjectTask("t_schem", "Build the metro tunnel lining", ProjectTask.Kind.SCHEM_BUILD);
+                t1.placement = "metro_tunnel_2x_2_a";
+                t1.schemMode = "add";
+                t1.schemMissing = "skip";
+                p.tasks.add(t1);
+            }
             case "project_schem_standartsetup_c" -> {
                 String schemPath = System.getProperty(
                         "manhattan.schemFile",
@@ -1764,6 +1816,19 @@ public class TestBridge implements ClientModInitializer {
                 yield noOakLogs && keepMeOk && zonesClean && allowedZoneCleared
                         && autoSweepRestored && bodyIdle && taskDone;
             }
+            case "project_schem_metro_tunnel" -> {
+                boolean built = verifySchemBuilt(mc, rt, "metro_tunnel_2x_2_a", scenario);
+                // scaffolding must not stay inside the finished tunnel
+                int dirt = 0;
+                for (int x = 106; x <= 117; x++) for (int y = -59; y <= -49; y++) for (int z = 92; z <= 105; z++) {
+                    if (mc.level.getBlockState(new BlockPos(x, y, z)).is(Blocks.DIRT)) {
+                        if (dirt < 10) System.out.println("[testbridge]   scaffold left at " + x + " " + y + " " + z);
+                        dirt++;
+                    }
+                }
+                System.out.println("[testbridge] " + scenario + " verify: built=" + built + " dirtLeft=" + dirt);
+                yield built && dirt == 0;
+            }
             case "project_schem_standartsetup_c" -> {
                 TaskQueue.TaskLedger.State st = rt.taskState("t_schem");
                 String[] err = new String[1];
@@ -1803,6 +1868,45 @@ public class TestBridge implements ClientModInitializer {
             }
             default -> false;
         };
+    }
+
+    /** Whether every cell of the named placements matches (ADD mode) and task t_schem is DONE; logs what is left. */
+    private static boolean verifySchemBuilt(Minecraft mc, GameProjectRuntime rt, String name, String scenario) {
+        TaskQueue.TaskLedger.State st = rt.taskState("t_schem");
+        String[] err = new String[1];
+        List<SchemSource.Placement> pls = SchemCmd.select(name, err);
+        if (pls == null || pls.isEmpty()) {
+            System.out.println("[testbridge] " + scenario + " verify: placement missing (" + err[0] + ")");
+            return false;
+        }
+        try {
+            Schem.Plan plan = Schem.plan(pls, err);
+            if (plan == null) {
+                System.out.println("[testbridge] " + scenario + " verify: plan null (" + err[0] + ")");
+                return false;
+            }
+            java.util.Map<Long, Schem.Why> left = Schem.leftCells(plan, Schem.Mode.ADD, mc.level);
+            java.util.Map<String, Integer> byBlock = new java.util.LinkedHashMap<>();
+            int shown = 0;
+            for (var entry : left.entrySet()) {
+                BlockPos bp = BlockPos.of(entry.getKey());
+                int idx = plan.idx(bp.getX() - plan.min.getX(), bp.getY() - plan.min.getY(), bp.getZ() - plan.min.getZ());
+                var want = plan.st[idx];
+                var cur = Schem.norm(mc.level.getBlockState(bp));
+                String key = net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(want.getBlock()).getPath();
+                byBlock.merge(key, 1, Integer::sum);
+                if (shown < 40) {
+                    System.out.println("[testbridge]   left #" + (++shown) + " at " + bp.toShortString()
+                            + " want=" + want + " actual=" + cur + " why=" + entry.getValue().reason());
+                }
+            }
+            System.out.println("[testbridge] " + scenario + " verify: taskState=" + st
+                    + " leftTotal=" + left.size() + " byBlock=" + byBlock);
+            return st == TaskQueue.TaskLedger.State.DONE && left.isEmpty();
+        } catch (Exception e) {
+            System.out.println("[testbridge] " + scenario + " verify failed: " + e);
+            return false;
+        }
     }
 
     private static void emitProjectBenchmark(String scenario, boolean pass, long elapsedMs) {

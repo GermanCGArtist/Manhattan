@@ -313,6 +313,8 @@ public final class SchemProcess {
     private final Set<BlockPos> mtDeferred = new HashSet<>();
     private final Set<BlockPos> mtBadSpots = new HashSet<>();
     private final Set<Integer> mtRetriedLayers = new HashSet<>();
+    /** Layers whose set-aside cells already had their extra try before blocks that wall them in (see mtPickNext). */
+    private final Set<Integer> mtSealRetryLayers = new HashSet<>();
     private BlockPos mtCur, mtStand, mtBreakPos;
     private BlockState mtWant;
     private Item mtItem;
@@ -608,6 +610,7 @@ public final class SchemProcess {
         mtDeferred.clear();
         mtBadSpots.clear();
         mtRetriedLayers.clear();
+        mtSealRetryLayers.clear();
         mtCur = null;
         mtStand = null;
         mtBreakPos = null;
@@ -646,6 +649,12 @@ public final class SchemProcess {
 
     private static final String MOTOR_OWNER = "schem";
 
+    /** Sets a cell aside for later in this phase; the reason goes to the log, so stuck builds can be read back. */
+    private void mtDefer(BlockPos pos, String why) {
+        if (pos == null) return;
+        if (mtDeferred.add(pos)) System.out.println("[Queue] schem: set aside " + pos.toShortString() + ": " + why);
+    }
+
     private void mtStop() {
         if (mtMoving || isMidtown()) {
             EngineSelector.current().cancel();
@@ -678,7 +687,7 @@ public final class SchemProcess {
                 mc.gameMode.stopDestroyBlock();
                 mtBreaking = false;
                 mtBreakPos = null;
-                if (mtCur != null) mtDeferred.add(mtCur);
+                if (mtCur != null) mtDefer(mtCur, "could not break what is in the way");
                 mtCur = null;
                 return;
             } else {
@@ -777,13 +786,13 @@ public final class SchemProcess {
             if (!mtMoving) {
                 mtStand = mtFindStandSpot(level, p, mtCur, mtWant);
                 if (mtStand != null) {
-                    EngineSelector.current().goTo(GoalSpec.exact(mtStand));
+                    EngineSelector.current().goTo(GoalSpec.exact(mtClimbStep(mtStand)));
                     mtMoving = true;
                     mtMoveTicks = 0;
                     mtNoProgress = 0;
                     mtBestDist = p.getEyePosition().distanceTo(Vec3.atCenterOf(mtCur));
                 } else {
-                    mtDeferred.add(mtCur);
+                    mtDefer(mtCur, "standing in it, no spot to step out to");
                     mtCur = null;
                 }
             } else {
@@ -794,7 +803,7 @@ public final class SchemProcess {
 
         BlockPos workPos = mtHasSupportNeighbor(level, mtCur, mtWant) ? mtCur : mtFindScaffoldStep(level, mtCur);
         if (workPos == null) {
-            mtDeferred.add(mtCur);
+            mtDefer(mtCur, "nothing to place against, no scaffold step");
             mtCur = null;
             mtStand = null;
             return;
@@ -804,13 +813,13 @@ public final class SchemProcess {
                 if (!mtMoving) {
                     mtStand = mtFindStandSpot(level, p, workPos, null);
                     if (mtStand != null) {
-                        EngineSelector.current().goTo(GoalSpec.exact(mtStand));
+                        EngineSelector.current().goTo(GoalSpec.exact(mtClimbStep(mtStand)));
                         mtMoving = true;
                         mtMoveTicks = 0;
                         mtNoProgress = 0;
                         mtBestDist = p.getEyePosition().distanceTo(Vec3.atCenterOf(workPos));
                     } else {
-                        mtDeferred.add(mtCur);
+                        mtDefer(mtCur, "standing in the scaffold step, no spot to step out to");
                         mtCur = null;
                     }
                 } else {
@@ -826,7 +835,7 @@ public final class SchemProcess {
                     return;
                 }
                 // In reach of scaffold step, but cannot place (no surplus scaffold item or protected): defer target
-                mtDeferred.add(mtCur);
+                mtDefer(mtCur, "no scaffold block to place");
                 mtCur = null;
                 mtStand = null;
                 return;
@@ -835,7 +844,7 @@ public final class SchemProcess {
                 mtStand = mtFindStandSpot(level, p, workPos, null);
                 BlockPos supportTarget = mtFindSupportNeighbor(level, workPos);
                 GoalSpec goal = mtStand != null
-                        ? GoalSpec.exact(mtStand)
+                        ? GoalSpec.exact(mtClimbStep(mtStand))
                         : GoalSpec.lineOfSight(supportTarget != null ? supportTarget : workPos, MT_REACH - 0.3);
                 EngineSelector.current().goTo(goal);
                 mtMoving = true;
@@ -856,14 +865,14 @@ public final class SchemProcess {
             }
             if (++mtPlaceTicks > 20) {
                 mtBadSpots.add(p.blockPosition());
-                mtDeferred.add(mtCur);
+                mtDefer(mtCur, "clicks did not place it");
                 mtCur = null;
                 mtStand = null;
                 mtPlaceTicks = 0;
                 return;
             }
             if (!mtEquip(mc, p, mtItem)) {
-                mtDeferred.add(mtCur);
+                mtDefer(mtCur, "could not hold the item");
                 mtCur = null;
                 mtPlaceTicks = 0;
                 return;
@@ -893,7 +902,7 @@ public final class SchemProcess {
             mtStand = mtFindStandSpot(level, p, mtCur, mtWant);
             BlockPos supportTarget = mtFloorOnly(mtWant) ? mtCur.below() : mtFindSupportNeighbor(level, mtCur);
             GoalSpec goal = mtStand != null
-                    ? GoalSpec.exact(mtStand)
+                    ? GoalSpec.exact(mtClimbStep(mtStand))
                     : GoalSpec.lineOfSight(supportTarget != null ? supportTarget : mtCur, MT_REACH - 0.3);
             EngineSelector.current().goTo(goal);
             mtMoving = true;
@@ -926,7 +935,7 @@ public final class SchemProcess {
                 }
             }
             if (mtStand != null) mtBadSpots.add(mtStand);
-            if (mtCur != null) mtDeferred.add(mtCur);
+            if (mtCur != null) mtDefer(mtCur, "no way to a spot in reach (" + st + ", stand " + mtStand + ")");
             mtCur = null;
             mtStand = null;
             mtSpotRetries = 0;
@@ -934,6 +943,18 @@ public final class SchemProcess {
         } else if (st == EngineStatus.DONE) {
             EngineSelector.current().cancel();
             mtMoving = false;
+            // climbing a pillar to a stand spot in the air: one block per goal
+            if (mtStand != null && mtCur != null && mtFindSupportHit(level, p, targetPos, want) == null) {
+                BlockPos step = mtClimbStep(mtStand);
+                if (!step.equals(p.blockPosition()) && step.getX() == p.blockPosition().getX()
+                        && step.getZ() == p.blockPosition().getZ() && step.getY() > p.blockPosition().getY()) {
+                    EngineSelector.current().goTo(GoalSpec.exact(step));
+                    mtMoving = true;
+                    mtMoveTicks = 0;
+                    mtNoProgress = 0;
+                    return;
+                }
+            }
             if (mtCur != null && (mtFindSupportHit(level, p, targetPos, want) == null || p.getBoundingBox().intersects(new AABB(targetPos)))) {
                 mtBadSpots.add(p.blockPosition());
                 if (mtStand != null) mtBadSpots.add(mtStand);
@@ -941,12 +962,32 @@ public final class SchemProcess {
                 if (mtFindSupportHit(level, p, targetPos, want) == null && ++mtSpotRetries < 4 && mtFindStandSpot(level, p, targetPos, want) != null) {
                     return;
                 }
-                mtDeferred.add(mtCur);
+                mtDefer(mtCur, "arrived, still nothing to click (stand " + mtStand + ")");
                 mtCur = null;
                 mtSpotRetries = 0;
                 mtPlaceTicks = 0;
             }
         }
+    }
+
+    /**
+     * The next goal on the way to a stand spot. A spot with ground under it is the goal itself. A spot in the air (a
+     * pillar spot, see mtFindStandSpot) is reached one block at a time: first the foot of its column, then one block up
+     * per goal. Planning a 5-block pillar in one go runs the planner out of nodes in a wide tunnel; a single step never.
+     */
+    private BlockPos mtClimbStep(BlockPos stand) {
+        Minecraft mc = Minecraft.getInstance();
+        Level level = mc.level;
+        if (stand == null || level == null || mc.player == null) return stand;
+        if (dev.buildtools.Api.solid(level, stand.below())) return stand;
+        BlockPos base = stand;
+        for (int i = 0; i <= MT_MAX_PILLAR && !dev.buildtools.Api.solid(level, base.below()); i++) base = base.below();
+        if (!dev.buildtools.Api.solid(level, base.below())) return stand;
+        BlockPos at = mc.player.blockPosition();
+        if (at.getX() == stand.getX() && at.getZ() == stand.getZ() && at.getY() >= base.getY() && at.getY() < stand.getY()) {
+            return at.above();
+        }
+        return base;
     }
 
     private static BlockPos mtFindScaffoldStep(Level level, BlockPos target) {
@@ -1039,6 +1080,22 @@ public final class SchemProcess {
             }
         }
 
+        // A cell of a higher layer that a block of this layer would wall in (a ceiling row against the rock above an
+        // arch): if it already has something to be placed against, it goes first, out of the bottom-up order.
+        java.util.Set<BlockPos> rescued = new HashSet<>();
+        for (BlockPos w : new ArrayList<>(candidates)) {
+            BlockPos n = mtSealedBy(level, w, ph);
+            if (n == null || candidates.contains(n) || mtDeferred.contains(n) || !mtQueue.contains(n)) continue;
+            int nIdx = plan.idx(n.getX() - plan.min.getX(), n.getY() - plan.min.getY(), n.getZ() - plan.min.getZ());
+            Object[] nCost = Schem.cost(plan.st[nIdx]);
+            if (nCost == null || (skipMissing && Schem.have((Item) nCost[0]) == 0)) continue;
+            if (mtHasSupportNeighbor(level, n, plan.st[nIdx])) {
+                candidates.add(n);
+                rescued.add(n);
+            }
+        }
+
+        int sealers = 0;
         for (BlockPos w : candidates) {
             int idx = plan.idx(w.getX() - plan.min.getX(), w.getY() - plan.min.getY(), w.getZ() - plan.min.getZ());
             BlockState d = plan.st[idx];
@@ -1049,6 +1106,16 @@ public final class SchemProcess {
             boolean inReach = dist <= MT_REACH && !overlaps && mtFindSupportHit(level, p, w, d) != null;
 
             double score = dist;
+            // A wall's top row against the rock, an arch corner: placing the inner block first walls the outer one in
+            // (rock behind, rock above, wall below, the new block in front), and it can never be placed. Outer first:
+            // such a block waits until nothing else is left and the cells set aside have had their second try.
+            // (a rescued cell does not count: the cells of a ceiling row under the rock all wall each other in, and it
+            // is out of order precisely so it gets placed while it still can be)
+            boolean seals = !rescued.contains(w) && mtSealsTodoNeighbor(level, w, ph);
+            if (seals) {
+                sealers++;
+                score += 1000.0;
+            }
             if (!inReach) score += 100.0;
             if (!supported) score += 50.0;
             if (overlaps) score += 200.0;
@@ -1064,12 +1131,83 @@ public final class SchemProcess {
         }
 
         if (best == null) return false;
+        // Only blocks that would wall something in are left: first give the cells set aside their second try
+        // (the caller clears mtDeferred once), only then close them in.
+        if (bestScore >= 1000.0 && sealers > 0 && mtSealRetryLayers.add(best.getY())) {
+            final int layerY = best.getY();
+            boolean any = mtDeferred.removeIf(q -> q.getY() >= layerY && q.getY() <= layerY + 1);
+            if (any) {
+                mtBadSpots.clear();
+                return mtPickNext(level, p, ph);
+            }
+        }
         mtCur = best;
         mtWant = bestWant;
         mtItem = bestItem;
         mtSpotRetries = 0;
         mtPlaceTicks = 0;
         return true;
+    }
+
+    /** Whether a block at {@code w} would wall in a cell this phase still has to fill (see {@link #mtSealedBy}). */
+    private boolean mtSealsTodoNeighbor(Level level, BlockPos w, Phase ph) {
+        return mtSealedBy(level, w, ph) != null;
+    }
+
+    /**
+     * The neighbouring cell, still to be filled in this phase, whose last open side a block at {@code w} would close,
+     * or null. "Open" means air there now and either wanted as air (or outside the schematic), above the cell (bottom-up
+     * order fills it only later) or filled by a later phase; a side neighbour that this phase still has to fill does not
+     * count, it gets closed too. A cell walled in like that can never be placed: nothing of it can be clicked any more.
+     */
+    private BlockPos mtSealedBy(Level level, BlockPos w, Phase ph) {
+        for (Direction d : Direction.values()) {
+            BlockPos n = w.relative(d);
+            int rx = n.getX() - plan.min.getX(), ry = n.getY() - plan.min.getY(), rz = n.getZ() - plan.min.getZ();
+            BlockState nd = plan.at(rx, ry, rz);
+            if (nd == null || nd.isAir() || plan.excluded.get(plan.idx(rx, ry, rz))) continue;
+            BlockState nowN = level.getBlockState(n);
+            if (!nowN.isAir() && !Schem.replaceable(nowN)) continue;   // already filled
+            BlockState normN = Schem.norm(nowN);
+            if (Schem.phaseAt(plan, plan.idx(rx, ry, rz), nd, normN) != ph || !Schem.todo(plan, plan.idx(rx, ry, rz), mode, nd, normN)) continue;
+            boolean open = false;
+            for (Direction e : Direction.values()) {
+                BlockPos o = n.relative(e);
+                if (o.equals(w)) continue;
+                if (mtStaysOpen(level, o, n, ph)) { open = true; break; }
+                // a cell of this phase that is still air beside it is a way in too, as long as that one has a side that
+                // stays open at the same height (the inner block of a wall's top row, in front of the outer one); a way
+                // in from below such a neighbour is not: a ceiling cell would need a pillar up to the ceiling itself
+                if (!e.getAxis().isHorizontal()) continue;
+                BlockState os = level.getBlockState(o);
+                if (!os.isAir() && !Schem.replaceable(os)) continue;
+                for (Direction f : Direction.values()) {
+                    if (!f.getAxis().isHorizontal()) continue;
+                    BlockPos q = o.relative(f);
+                    if (q.equals(n) || q.equals(w)) continue;
+                    // inside the schematic only: the open end of a row (a tunnel mouth) is no way in for the cells
+                    // further along it
+                    if (plan.at(q.getX() - plan.min.getX(), q.getY() - plan.min.getY(), q.getZ() - plan.min.getZ()) == null) continue;
+                    if (mtStaysOpen(level, q, o, ph)) { open = true; break; }
+                }
+                if (open) break;
+            }
+            if (!open) return n;
+        }
+        return null;
+    }
+
+    /**
+     * Whether cell {@code o} next to {@code cell} is air now and stays open while this phase fills {@code cell}: wanted
+     * as air (or outside the schematic), above it (bottom-up order fills it only later: a solid fill stays open on top),
+     * or filled by a later phase (the stairs under a ceiling row stay air until phase 2).
+     */
+    private boolean mtStaysOpen(Level level, BlockPos o, BlockPos cell, Phase ph) {
+        BlockState os = level.getBlockState(o);
+        if (!os.isAir() && !Schem.replaceable(os)) return false;
+        BlockState ow = plan.at(o.getX() - plan.min.getX(), o.getY() - plan.min.getY(), o.getZ() - plan.min.getZ());
+        return ow == null || ow.isAir() || o.getY() > cell.getY()
+                || Schem.phaseAt(ow, Schem.norm(os)).ordinal() > ph.ordinal();
     }
 
     private static boolean mtFloorOnly(BlockState want) {
@@ -1148,8 +1286,58 @@ public final class SchemProcess {
                 }
             }
         }
+        if (best != null) return best;
+        // Nothing to stand on in reach (a tall wall or a ceiling over a wide floor): a spot in the air that a short
+        // pillar from the floor below gets to. Midtown pillars up to it; the throwaway blocks are recorded as
+        // scaffolding and taken down after the build.
+        for (int dy = -4; dy <= 2; dy++) {
+            for (int dx = -4; dx <= 4; dx++) {
+                for (int dz = -4; dz <= 4; dz++) {
+                    BlockPos s = target.offset(dx, dy, dz);
+                    if (s.equals(target) || s.equals(target.below()) || mtBadSpots.contains(s)) continue;
+                    if (!level.hasChunkAt(s)) continue;
+                    if (dev.buildtools.Api.solid(level, s) || dev.buildtools.Api.solid(level, s.above())) continue;
+                    int h = mtPillarHeight(level, s, target);
+                    if (h <= 0) continue;
+                    Vec3 eye = new Vec3(s.getX() + 0.5, s.getY() + 1.62, s.getZ() + 0.5);
+                    double eyeDist = Vec3.atCenterOf(target).distanceTo(eye);
+                    if (eyeDist > MT_REACH - 0.2 || eyeDist < 1.2) continue;
+                    if (mtFindSupportHitFrom(level, p, eye, target, want) == null) continue;
+                    double d = p.blockPosition().distSqr(s) + h * 12.0;
+                    if (d < bestDist) {
+                        bestDist = d;
+                        best = s;
+                    }
+                }
+            }
+        }
         return best;
     }
+
+    /**
+     * How many blocks a pillar under {@code s} needs (1..MT_MAX_PILLAR) to stand there, or 0 when it can't be done: the column
+     * below has to be open down to a solid floor, not protected, not the target and not a cell the schematic wants
+     * filled (a pillar there would be in the way of the build).
+     */
+    private int mtPillarHeight(Level level, BlockPos s, BlockPos target) {
+        for (int h = 1; h <= MT_MAX_PILLAR + 1; h++) {
+            BlockPos c = s.below(h);
+            if (c.equals(target) || !level.hasChunkAt(c)) return 0;
+            BlockState cs = level.getBlockState(c);
+            if (dev.buildtools.Api.solid(level, c)) return h == 1 ? 0 : h - 1;
+            if (!cs.isAir() && !Schem.replaceable(cs)) return 0;
+            if (!level.getFluidState(c).isEmpty()) return 0;
+            if (dev.buildtools.Api.protectedAt(c)) return 0;
+            if (plan != null) {
+                BlockState w = plan.at(c.getX() - plan.min.getX(), c.getY() - plan.min.getY(), c.getZ() - plan.min.getZ());
+                if (w != null && !w.isAir()) return 0;
+            }
+        }
+        return 0;
+    }
+
+    /** The highest pillar the builder stands on: a ceiling 9 or 10 blocks over a tunnel floor needs about 6. */
+    private static final int MT_MAX_PILLAR = 6;
 
     private static boolean isScaffoldBlockItem(BlockItem bi) {
         Block b = bi.getBlock();

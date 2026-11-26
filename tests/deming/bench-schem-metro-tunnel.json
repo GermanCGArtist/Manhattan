@@ -1,0 +1,327 @@
+{
+  "name": "schem-metro-tunnel",
+  "instances": [
+    {
+      "id": "mt-01",
+      "mc_version": "26.3",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        {
+          "modrinth": {
+            "project_id_or_slug": "fabric-api",
+            "version_id": null
+          }
+        },
+        {
+          "local_path": "build/libs/manhattan-2.16.6.jar"
+        },
+        {
+          "local_path": "build/libs/manhattan-testbridge-2.16.6.jar"
+        }
+      ],
+      "account": {
+        "offline": {
+          "username": "BenchMT01"
+        }
+      },
+      "ram_mb": 3072,
+      "cpu_cores": 0,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=project_schem_metro_tunnel",
+        "-Dmanhattan.testbridge.port=25580"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=project_schem_metro_tunnel pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=project_schem_metro_tunnel pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "mt-02",
+      "mc_version": "26.3",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        {
+          "modrinth": {
+            "project_id_or_slug": "fabric-api",
+            "version_id": null
+          }
+        },
+        {
+          "local_path": "build/libs/manhattan-2.16.6.jar"
+        },
+        {
+          "local_path": "build/libs/manhattan-testbridge-2.16.6.jar"
+        }
+      ],
+      "account": {
+        "offline": {
+          "username": "BenchMT02"
+        }
+      },
+      "ram_mb": 3072,
+      "cpu_cores": 0,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=project_schem_metro_tunnel",
+        "-Dmanhattan.testbridge.port=25580"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=project_schem_metro_tunnel pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=project_schem_metro_tunnel pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "mt-03",
+      "mc_version": "26.3",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        {
+          "modrinth": {
+            "project_id_or_slug": "fabric-api",
+            "version_id": null
+          }
+        },
+        {
+          "local_path": "build/libs/manhattan-2.16.6.jar"
+        },
+        {
+          "local_path": "build/libs/manhattan-testbridge-2.16.6.jar"
+        }
+      ],
+      "account": {
+        "offline": {
+          "username": "BenchMT03"
+        }
+      },
+      "ram_mb": 3072,
+      "cpu_cores": 0,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=project_schem_metro_tunnel",
+        "-Dmanhattan.testbridge.port=25580"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=project_schem_metro_tunnel pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=project_schem_metro_tunnel pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "mt-04",
+      "mc_version": "26.3",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        {
+          "modrinth": {
+            "project_id_or_slug": "fabric-api",
+            "version_id": null
+          }
+        },
+        {
+          "local_path": "build/libs/manhattan-2.16.6.jar"
+        },
+        {
+          "local_path": "build/libs/manhattan-testbridge-2.16.6.jar"
+        }
+      ],
+      "account": {
+        "offline": {
+          "username": "BenchMT04"
+        }
+      },
+      "ram_mb": 3072,
+      "cpu_cores": 0,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=project_schem_metro_tunnel",
+        "-Dmanhattan.testbridge.port=25580"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=project_schem_metro_tunnel pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=project_schem_metro_tunnel pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "mt-05",
+      "mc_version": "26.3",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        {
+          "modrinth": {
+            "project_id_or_slug": "fabric-api",
+            "version_id": null
+          }
+        },
+        {
+          "local_path": "build/libs/manhattan-2.16.6.jar"
+        },
+        {
+          "local_path": "build/libs/manhattan-testbridge-2.16.6.jar"
+        }
+      ],
+      "account": {
+        "offline": {
+          "username": "BenchMT05"
+        }
+      },
+      "ram_mb": 3072,
+      "cpu_cores": 0,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=project_schem_metro_tunnel",
+        "-Dmanhattan.testbridge.port=25580"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=project_schem_metro_tunnel pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=project_schem_metro_tunnel pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "mt-06",
+      "mc_version": "26.3",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        {
+          "modrinth": {
+            "project_id_or_slug": "fabric-api",
+            "version_id": null
+          }
+        },
+        {
+          "local_path": "build/libs/manhattan-2.16.6.jar"
+        },
+        {
+          "local_path": "build/libs/manhattan-testbridge-2.16.6.jar"
+        }
+      ],
+      "account": {
+        "offline": {
+          "username": "BenchMT06"
+        }
+      },
+      "ram_mb": 3072,
+      "cpu_cores": 0,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=project_schem_metro_tunnel",
+        "-Dmanhattan.testbridge.port=25580"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=project_schem_metro_tunnel pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=project_schem_metro_tunnel pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "mt-07",
+      "mc_version": "26.3",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        {
+          "modrinth": {
+            "project_id_or_slug": "fabric-api",
+            "version_id": null
+          }
+        },
+        {
+          "local_path": "build/libs/manhattan-2.16.6.jar"
+        },
+        {
+          "local_path": "build/libs/manhattan-testbridge-2.16.6.jar"
+        }
+      ],
+      "account": {
+        "offline": {
+          "username": "BenchMT07"
+        }
+      },
+      "ram_mb": 3072,
+      "cpu_cores": 0,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=project_schem_metro_tunnel",
+        "-Dmanhattan.testbridge.port=25580"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=project_schem_metro_tunnel pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=project_schem_metro_tunnel pass=false|FATAL"
+        }
+      }
+    },
+    {
+      "id": "mt-08",
+      "mc_version": "26.3",
+      "loader": "fabric",
+      "loader_version": "0.20.1",
+      "mods": [
+        {
+          "modrinth": {
+            "project_id_or_slug": "fabric-api",
+            "version_id": null
+          }
+        },
+        {
+          "local_path": "build/libs/manhattan-2.16.6.jar"
+        },
+        {
+          "local_path": "build/libs/manhattan-testbridge-2.16.6.jar"
+        }
+      ],
+      "account": {
+        "offline": {
+          "username": "BenchMT08"
+        }
+      },
+      "ram_mb": 3072,
+      "cpu_cores": 0,
+      "jvm_args": [
+        "-Dmanhattan.tests=true",
+        "-Dmanhattan.engine=midtown",
+        "-Dmanhattan.benchmark=project_schem_metro_tunnel",
+        "-Dmanhattan.testbridge.port=25580"
+      ],
+      "game_args": [],
+      "test_rule": {
+        "log_pattern": {
+          "success_regex": "BENCHMARK_RESULT engine=midtown scenario=project_schem_metro_tunnel pass=true",
+          "failure_regex": "BENCHMARK_RESULT engine=midtown scenario=project_schem_metro_tunnel pass=false|FATAL"
+        }
+      }
+    }
+  ],
+  "server": null,
+  "timeout_secs": 1800
+}
