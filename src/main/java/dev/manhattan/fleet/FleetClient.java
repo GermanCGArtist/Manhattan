@@ -642,6 +642,12 @@ public final class FleetClient {
         return cs.unreserved(itemId, selfUuid());
     }
 
+    /** The fleet's last stock record of that chest, or null when it has none (or this client is not in a fleet). */
+    public ChestSync fleetChest(String dimension, BlockPos pos) {
+        if (!serverConnected || pos == null) return null;
+        return syncedChests.get(chestKey(dimension, pos.getX(), pos.getY(), pos.getZ()));
+    }
+
     public boolean isChestKnownEmpty(String dimension, BlockPos pos) {
         if (!serverConnected || pos == null) return false;
         ChestSync cs = syncedChests.get(chestKey(dimension, pos.getX(), pos.getY(), pos.getZ()));

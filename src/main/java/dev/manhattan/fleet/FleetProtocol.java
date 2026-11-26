@@ -203,6 +203,29 @@ public final class FleetProtocol {
             }
             return Math.max(0, have - reserved);
         }
+
+        /** Count of {@code item} last seen in this chest by any fleet bot (reservations ignored); -1 when nobody looked. */
+        public int seen(String item) {
+            if (stockAtMs <= 0) return -1;
+            return stock == null ? 0 : stock.getOrDefault(item, 0);
+        }
+    }
+
+    /**
+     * Where a supply chest goes in the fetch order for one item: 0 holds some, 1 unknown, 2 only reserved by
+     * other bots (last resort), -1 skip it because the newest look (own index or the fleet's) found none.
+     * Ages are in minutes; a look older than {@code maxAgeMin} does not count; negative counts mean "never looked".
+     */
+    public static int supplyRank(int localCount, double localAgeMin, int fleetSeen, double fleetAgeMin,
+                                 int fleetUnreserved, double maxAgeMin) {
+        boolean localOk = localCount >= 0 && localAgeMin < maxAgeMin;
+        boolean fleetOk = fleetSeen >= 0 && fleetAgeMin < maxAgeMin;
+        int newest = -1;
+        if (localOk && (!fleetOk || localAgeMin <= fleetAgeMin)) newest = localCount;
+        else if (fleetOk) newest = fleetSeen;
+        if (newest == 0) return -1;
+        if (fleetUnreserved == 0 && !(localOk && localCount > 0)) return 2;
+        return (newest > 0 || fleetUnreserved > 0) ? 0 : 1;
     }
 
     public static final class Reservation {

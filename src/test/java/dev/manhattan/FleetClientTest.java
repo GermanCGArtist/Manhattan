@@ -33,6 +33,7 @@ public final class FleetClientTest {
         testOutboxSurvivesCorruptFile();
         testWorkerScopesToLeasedTask();
         testChestStockUnreserved();
+        testSupplyRank();
         testLargeJobCompressionAndChunking();
         System.out.println("FleetClientTest: ALL " + passed + " tests passed.");
     }
@@ -142,6 +143,26 @@ public final class FleetClientTest {
         assertTrue(cs.unreserved("minecraft:dirt", "other") == 64, "own reservation is not");
         r.expiresAtMs = 0L;
         assertTrue(cs.unreserved("minecraft:dirt", "me") == 64, "lapsed reservations do not count");
+        assertTrue(cs.seen("minecraft:dirt") == 64 && cs.seen("minecraft:stone") == 0, "seen ignores reservations");
+        passed++;
+    }
+
+    private static void testSupplyRank() {
+        double inf = Double.MAX_VALUE;
+        // fleet saw none there 2 minutes ago: skip (this was opening every chest on every trip)
+        assertTrue(FleetProtocol.supplyRank(-1, inf, 0, 2, 0, 10) == -1, "fleet saw none lately: skip");
+        assertTrue(FleetProtocol.supplyRank(0, 1, -1, inf, -1, 10) == -1, "own index saw none lately: skip");
+        assertTrue(FleetProtocol.supplyRank(0, 1, 0, 3, 0, 10) == -1, "both saw none: skip");
+        // too old to trust: look again
+        assertTrue(FleetProtocol.supplyRank(-1, inf, 0, 12, 0, 10) == 2, "old empty fleet look: last resort");
+        assertTrue(FleetProtocol.supplyRank(0, 20, -1, inf, -1, 10) == 1, "old empty own look: unknown");
+        // newest look wins
+        assertTrue(FleetProtocol.supplyRank(0, 5, 8, 1, 8, 10) == 0, "fleet saw some after our empty look");
+        assertTrue(FleetProtocol.supplyRank(8, 1, 0, 5, 0, 10) == 0, "we saw some after the fleet's empty look");
+        // there, but all reserved by other bots
+        assertTrue(FleetProtocol.supplyRank(-1, inf, 16, 1, 0, 10) == 2, "all reserved: last resort");
+        assertTrue(FleetProtocol.supplyRank(-1, inf, -1, inf, -1, 10) == 1, "never looked: unknown");
+        assertTrue(FleetProtocol.supplyRank(-1, inf, 16, 1, 16, 10) == 0, "fleet saw some: first");
         passed++;
     }
 

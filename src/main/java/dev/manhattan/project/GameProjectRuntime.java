@@ -64,6 +64,8 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
 
     private static final int BED_CHECK_INTERVAL_TICKS = 20;
     private static final int BED_TRUST_RADIUS = 48;
+    /** Minutes a supply chest seen without an item is skipped when fetching that item. */
+    private static final double EMPTY_CHEST_RECHECK_MIN = 10.0;
 
     private GameProjectRuntime() {
         this.scheduler = new PriorityScheduler(this);
@@ -1854,17 +1856,21 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
         List<Cand> cands = new ArrayList<>();
         dev.manhattan.fleet.FleetClient fc = dev.manhattan.fleet.FleetClient.instance();
         String dim = (mc != null && mc.level != null) ? mc.level.dimension().identifier().toString() : "minecraft:overworld";
+        // A chest looked into lately (by this bot or any fleet bot) and found without the item is skipped, so a
+        // material no chest holds costs no walk past every chest on each trip; after this long it is looked at again.
+        double maxAge = Math.min(dev.survivalkit.Api.indexRefresh(), EMPTY_CHEST_RECHECK_MIN);
+        long now = System.currentTimeMillis();
         for (BlockPos pos : rawChests) {
             if (pos == null) continue;
             var info = dev.survivalkit.Api.chestInfo(pos, itemId);
+            var cs = fc.fleetChest(dim, pos);
+            int seen = cs == null ? -1 : cs.seen(itemId);
+            double fleetAge = seen < 0 ? Double.MAX_VALUE : (now - cs.stockAtMs) / 60000.0;
             // what any fleet bot last saw there, minus what other bots have reserved (-1: nobody looked)
-            int fleet = fc.fleetUnreserved(dim, pos, itemId);
-            if (fleet == 0 && !(info.known() && info.fresh() && info.count() > 0)) {
-                cands.add(new Cand(pos, 2, pos.distSqr(me))); // taken or reserved by other bots: last resort
-                continue;
-            }
-            if (fleet < 0 && info.known() && info.fresh() && info.count() == 0) continue;
-            int rank = (fleet > 0 || (info.known() && info.count() > 0)) ? 0 : 1;
+            int unreserved = fc.fleetUnreserved(dim, pos, itemId);
+            int rank = dev.manhattan.fleet.FleetProtocol.supplyRank(info.known() ? info.count() : -1,
+                    info.ageMinutes(), seen, fleetAge, unreserved, maxAge);
+            if (rank < 0) continue;
             cands.add(new Cand(pos, rank, pos.distSqr(me)));
         }
         cands.sort(Comparator.comparingInt(Cand::rank).thenComparingDouble(Cand::dist));
