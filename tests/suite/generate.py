@@ -468,7 +468,8 @@ def schem_build(p, rng):
     cells = [[origin[0] + x, origin[1] + y, origin[2] + z, st.split("[")[0]] for (x, y, z), st in model.items()]
     name = "suite-%s" % hashlib.sha1(json.dumps(sorted(model.items())).encode()).hexdigest()[:8]
     files = {("schem", name): (dims, model, origin)}
-    return dict(setup=setup, script=["schem_build()"],
+    # with dirt in the footprint, "fix" (replace wrong blocks); the default "add" leaves foreign blocks alone by design
+    return dict(setup=setup, script=['schem_build("all", "fix")' if p["clutter"] else "schem_build()"],
                 checks=[ALIVE, {"type": "block_list", "cells": cells, "label": "schematic built"}],
                 est=40 + len(model) * 1.6, files=files)
 

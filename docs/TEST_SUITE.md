@@ -186,7 +186,8 @@ and every case the run's harness bugs had spoiled was rerun after the fix (`test
 The merged result is in [`tests/suite/baseline/`](../tests/suite/baseline/) (`summary.json` is the baseline for
 the next run, `report.md` the grouped failures).
 
-**2477 cases: 2168 pass, 274 fail, 31 flaky, 4 broke in setup (88 % of the started ones pass).** Twelve
+**2477 cases: 2168 pass, 274 fail, 31 flaky, 4 broke in setup (88 % of the started ones pass)**, before the
+schematic fix below. Twelve
 families pass 99-100 %: walls, gaps, mazes, fluids, climbing, tall and tunnel clears, eating, chests,
 combined navigation + work and job chains; `fill_water` on flowing water (drain_flowing) passes 95 %.
 
@@ -194,11 +195,16 @@ combined navigation + work and job chains; `fill_water` on flowing water (drain_
 
 Ordered by how much they cost. Each has repro commands in the baseline report.
 
-1. **Schematic builds end with blocks missing** (schem_build 45 % pass, combo_build 39 %). Usually 1-10 of
-   50-239 cells, most often in the upper wall rows the bot walked through while building, and dirt clutter in the
-   footprint left in place. In about half the cases Manhattan says "N blocks still wrong" and stops without another
-   pass; in the other half it says **"everything is as it should be" while the cells are empty**, in the server's
-   world and in the client's (the checker logs both, so these are not ghost blocks): its final check misses cells.
+1. **Schematic builds end with blocks missing** (first run: schem_build 45 % pass, combo_build 39 %). Usually 1-10
+   of 50-239 cells. In about half the cases Manhattan said "N blocks still wrong"; in the other half it said
+   **"everything is as it should be" while the cells were empty** on the server and the client.
+   *Partly fixed (SchemProcess, after the run):* the build now waits 2 s after its last phase and counts again
+   before it finishes (and goes up to 3 more rounds for blocks that came back); under the load of 32 games the last
+   placements had not reached the server when the script ended. Rerun: **no false "everything is as it should be"
+   left** (0 of 292), schem_build 73 %, combo_build 46 %. The dirt-clutter cases now build with `"fix"` (the
+   default `"add"` leaves foreign blocks alone by design). *Still open:* 1-3 blocks per build that the builder
+   reports as "not reached (no way to it or no progress)", mostly in huts and bridges; whole small builds (walls,
+   bridges) not started in combo_build with hunger and mobs (the script never reached them in time).
 2. **Descending a 30-block tower without a water bucket** (nav_descend, 20 of 21 with height 30 fail): the planner
    runs into its 4096-node limit, digs into the tower, bridges out at y=-41 straight over the target and then
    alternates between two 1-node partial paths until `goto` gives up, and **`goto` still reports success** 19

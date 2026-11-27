@@ -251,6 +251,7 @@ public final class SchemProcess {
         Schem.Counts c = Schem.count(p, mode, mc.level, activeChunkBounds);
         choosePhases(c, mode);
         round = 0;
+        settleUntil = 0;
         plan = p;
         planWorld = Minecraft.getInstance().level;
         this.mode = mode;
@@ -278,6 +279,9 @@ public final class SchemProcess {
     }
 
     private int round;   // 0: the first time through the phases, 1: once more for what the later phases left (scaffolding ...)
+    private int settleUntil;   // > 0: all phases ended; wait until since reaches it, then count again before finishing
+    private int leftAtEnd;     // blocks still to do when the last phase ended (before the settle wait)
+    private static final int SETTLE_TICKS = 40;   // the server's answer to the last placements arrives within this under lag
 
     private void choosePhases(Schem.Counts c, Mode mode) {
         phases.clear();
@@ -424,6 +428,12 @@ public final class SchemProcess {
         if (!working) return;
         Minecraft mc = Minecraft.getInstance();
         if (mc.level == null || mc.player == null) return;
+        if (settleUntil > 0) {
+            if (++since < settleUntil) return;
+            settleUntil = 0;
+            afterLastPhase();
+            return;
+        }
         if (++since < FIRST_CHECK) return;
         Phase ph = phases.get(pi);
         if (ph == Phase.ORIENTED || ph == Phase.CLEAR) {
@@ -453,21 +463,38 @@ public final class SchemProcess {
         if (left > 0) stuck.add(ph.label + ": " + left + " left" + (why != null ? " - " + why : ""));
         Util.msg("Phase " + ph.label + ": " + phaseResult.get(ph) + ".");
         if (++pi >= phases.size()) {
+            // The client shows a placed block at once, but under lag the server may still turn it down and send the
+            // old block back a moment later; counting right now would call such a cell done. So wait, then count.
+            leftAtEnd = c.todoTotal();
+            settleUntil = since + SETTLE_TICKS;
+        } else {
+            since = 0;
+            startPhase();
+        }
+    }
+
+    /** All phases ended and the world had time to settle: count again, then go once more or finish. */
+    private void afterLastPhase() {
+        Schem.Counts c = Schem.count(plan, mode, Minecraft.getInstance().level, activeChunkBounds);
+        {
             // Once more: a block a later phase was in the way of (water, scaffolding Baritone put into a cell of the
             // schematic) can be done now. Only when the first round got something done, so a hopeless rest ends quickly.
+            // Also when blocks came back while settling (placements the server turned down): those are not hopeless.
             int done = 0;
             for (var e : phaseResult.entrySet()) if ("done".equals(e.getValue())) done++;
-            if (round == 0 && c.todoTotal() > 0 && (done > 0 || !giveUp.isEmpty())) {
+            boolean reverted = c.todoTotal() > leftAtEnd;
+            if (reverted) Util.msg((c.todoTotal() - leftAtEnd) + " blocks the server did not take (lag): building them again.");
+            if (c.todoTotal() > 0 && ((round == 0 && (done > 0 || !giveUp.isEmpty())) || (reverted && round < 3))) {
                 List<Phase> before = new ArrayList<>(phases);
                 choosePhases(c, mode);
                 if (!phases.isEmpty()) {
-                    round = 1;
+                    round++;
                     giveUp = java.util.Set.of();   // the cells given up on get one more try
                     stallsInRow = 0;
                     pi = 0;
                     stuck.clear();
                     phaseResult.clear();
-                    Util.msg("Once more for " + c.todoTotal() + " blocks left after the first round.");
+                    Util.msg("Once more for " + c.todoTotal() + " blocks left after round " + round + ".");
                     since = 0;
                     startPhase();
                     return;
@@ -476,9 +503,6 @@ public final class SchemProcess {
                 phases.addAll(before);
             }
             finish(c);
-        } else {
-            since = 0;
-            startPhase();
         }
     }
 
