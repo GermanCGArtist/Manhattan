@@ -182,6 +182,7 @@ def main():
     print("%d cases, %d at once -> %s" % (len(cases), a.j, run_dir), flush=True)
 
     failed = []
+    by_id = {}
     t0 = time.time()
     done = 0
     for n in range(0, len(cases), a.chunk):
@@ -189,6 +190,7 @@ def main():
         res = run_chunk(chunk, run_dir, 1, a, base, ver, cfg, "c%03d" % (n // a.chunk))
         for r, cp in zip(res, chunk):
             out.write(json.dumps(r) + "\n")
+            by_id.setdefault(r["id"], []).append(r)
             if not r["pass"]:
                 failed.append(cp)
         out.flush()
@@ -201,6 +203,21 @@ def main():
             res = run_chunk(failed[n:n + a.chunk], run_dir, 2, a, base, ver, cfg, "r%03d" % (n // a.chunk))
             for r in res:
                 out.write(json.dumps(r) + "\n")
+                by_id.setdefault(r["id"], []).append(r)
+            out.flush()
+    # games that never started (network, Deming copying mods) have no result yet: launch them up to twice more
+    for attempt in (3, 4):
+        if a.no_retry:
+            break
+        todo = [cp for cp in cases if all(report.is_infra(r) for r in by_id.get(cp[0]["id"], []))]
+        if not todo:
+            break
+        print("relaunching %d cases whose game never started" % len(todo), flush=True)
+        for n in range(0, len(todo), a.chunk):
+            res = run_chunk(todo[n:n + a.chunk], run_dir, attempt, a, base, ver, cfg, "s%d%02d" % (attempt, n // a.chunk))
+            for r in res:
+                out.write(json.dumps(r) + "\n")
+                by_id.setdefault(r["id"], []).append(r)
             out.flush()
     out.close()
     meta["finished"] = time.strftime("%Y-%m-%d %H:%M:%S")

@@ -142,7 +142,9 @@ public final class HotbarController {
      * @return {@code true} if an expendable block is now selected
      */
     public static boolean selectExpendableBlock(Minecraft mc, LocalPlayer player) {
-        return selectItem(mc, player, CalculationContext::isExpendableBlockItem, reservedSlotMask);
+        if (player == null) return false;
+        var inv = player.getInventory();
+        return selectItem(mc, player, st -> CalculationContext.isSpareExpendable(inv, st), reservedSlotMask);
     }
 
     /**

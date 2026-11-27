@@ -133,6 +133,9 @@ final class SchemPlacer {
         badSpots.clear();
         deferred.clear();
         retriedLayers.clear();
+        supportTodo.clear();
+        supportGone.clear();
+        supportTried.clear();
         Level level = Minecraft.getInstance().level;
         for (int y = 0; y < plan.sy; y++) for (int z = 0; z < plan.sz; z++) for (int x = 0; x < plan.sx; x++) {
             BlockState d = plan.st[plan.idx(x, y, z)];
@@ -160,6 +163,8 @@ final class SchemPlacer {
         materialWaitTicks = 0;
         deferred.clear();
         queue.clear();
+        supportTodo.clear();
+        supportGone.clear();   // what is still standing is recorded scaffolding
     }
 
     private void stopBreaking() {
@@ -419,6 +424,27 @@ final class SchemPlacer {
             if (stuck != null) {
                 cur = stuck;
                 want = plan.at(cur.getX() - plan.min.getX(), cur.getY() - plan.min.getY(), cur.getZ() - plan.min.getZ());
+                // A log standing upright in a ceiling has nothing above or below it to click: put a short column of
+                // throwaway blocks under it, place it on that, and take the column away again.
+                List<BlockPos> col = clearing || supportTried.contains(cur) ? null : supportColumn(level);
+                if (col != null) {
+                    supportTried.add(cur);
+                    System.out.println("[Queue] schem: " + what() + " at " + cur.toShortString() + ": nothing to click, putting " + col.size() + " support block(s) under it");
+                    supportTodo.clear();
+                    supportTodo.addAll(col);
+                    supportTicks = 0;
+                    supportWait = 0;
+                    Object[] cost = Schem.cost(want);
+                    item = cost != null ? (Item) cost[0] : Items.AIR;
+                    aimState = want;
+                    attempts = clicks = ticks = stageTicks = turned = walkCooldown = 0;
+                    cands = null;
+                    chosen = null;
+                    lastSpot = null;
+                    breakPos = null;
+                    stage = Stage.APPROACH;
+                    return;
+                }
                 fail(clearing ? "enclosed, no side to dig from" : "no block next to it to click against, or no way to orient it");
             }
             return;
@@ -483,6 +509,8 @@ final class SchemPlacer {
         LocalPlayer p = mc.player;
         Level level = mc.level;
         if (p == null || level == null || mc.gameMode == null) return false;
+        if (cur != null && !supportTodo.isEmpty()) { supportTick(mc, p, level); return false; }
+        if (cur == null && !supportGone.isEmpty()) { removeSupportTick(mc, p, level); return false; }
         if (cur == null) {
             if (queue.isEmpty()) {
                 BodyController.INSTANCE.releaseIfOwner(mc, MOTOR_OWNER);
@@ -677,6 +705,133 @@ final class SchemPlacer {
             }
         }
         return false;
+    }
+
+    // ------------------------------------------------------------------ temporary support under a block
+
+    private static final int MAX_SUPPORT = 5;
+    private final List<BlockPos> supportTodo = new ArrayList<>();   // still to place, bottom first
+    private final List<BlockPos> supportGone = new ArrayList<>();   // placed, to take away again (last = top)
+    private final java.util.Set<BlockPos> supportTried = new java.util.HashSet<>();
+    private int supportTicks, supportWait;
+
+    private static boolean solidAt(Level level, BlockPos pos) {
+        BlockState s = level.getBlockState(pos);
+        return !s.isAir() && !Schem.replaceable(s) && !s.getCollisionShape(level, pos).isEmpty();
+    }
+
+    /** Open cells from under {@code cur} down to the first one that has a block next to it (bottom first), or null. */
+    private List<BlockPos> supportColumn(Level level) {
+        LinkedList<BlockPos> col = new LinkedList<>();
+        BlockPos c = cur.below();
+        for (int i = 0; i < MAX_SUPPORT; i++) {
+            BlockState s = level.getBlockState(c);
+            if (!s.isAir() && !Schem.replaceable(s)) return null;
+            if (!level.getFluidState(c).isEmpty() || dev.buildtools.Api.protectedAt(c) || !level.hasChunkAt(c)) return null;
+            BlockState w = plan.at(c.getX() - plan.min.getX(), c.getY() - plan.min.getY(), c.getZ() - plan.min.getZ());
+            if (w != null && !w.isAir()) return null;   // a cell the build wants filled: not ours to block
+            col.addFirst(c);
+            for (Direction d : Direction.values()) {
+                BlockPos n = c.relative(d);
+                if (!n.equals(c.above()) && solidAt(level, n)) return col;
+            }
+            c = c.below();
+        }
+        return null;
+    }
+
+    /** A free spot with a floor from which {@code target} is in reach, nearest to the player; not in the column. */
+    private BlockPos spotNear(Level level, LocalPlayer p, BlockPos target) {
+        BlockPos best = null;
+        double bestD = Double.MAX_VALUE;
+        for (int dx = -3; dx <= 3; dx++) for (int dz = -3; dz <= 3; dz++) for (int dy = -3; dy <= 1; dy++) {
+            BlockPos s = target.offset(dx, dy, dz);
+            if (supportTodo.contains(s) || supportTodo.contains(s.above()) || s.equals(cur) || s.above().equals(cur)) continue;
+            if (Math.abs(s.getX() - target.getX()) + Math.abs(s.getZ() - target.getZ()) == 0) continue;
+            if (!level.getBlockState(s).getCollisionShape(level, s).isEmpty()
+                    || !level.getBlockState(s.above()).getCollisionShape(level, s.above()).isEmpty()) continue;
+            if (!solidAt(level, s.below()) || !level.getFluidState(s.above()).isEmpty() || badSpots.contains(s)) continue;
+            Vec3 eye = new Vec3(s.getX() + 0.5, s.getY() + 1.62, s.getZ() + 0.5);
+            if (eye.distanceTo(Vec3.atCenterOf(target)) > REACH - 0.6) continue;
+            double d = s.distSqr(p.blockPosition());
+            if (d < bestD) { bestD = d; best = s; }
+        }
+        return best;
+    }
+
+    private void walkNear(Minecraft mc, LocalPlayer p, Level level, BlockPos target) {
+        if (walkCooldown > 0) { walkCooldown--; return; }
+        if (dev.midtown.api.EngineSelector.current().isBusy()) return;
+        walkCooldown = 10;
+        if (lastSpot != null && p.blockPosition().equals(lastSpot)) badSpots.add(lastSpot);
+        BlockPos spot = spotNear(level, p, target);
+        lastSpot = spot;
+        BodyController.INSTANCE.releaseIfOwner(mc, MOTOR_OWNER);
+        dev.midtown.api.EngineSelector.current().goTo(spot != null ? dev.midtown.api.GoalSpec.exact(spot) : dev.midtown.api.GoalSpec.near(target, 3));
+    }
+
+    private void supportTick(Minecraft mc, LocalPlayer p, Level level) {
+        BlockPos s = supportTodo.get(0);
+        if (++supportTicks > 20 * 40) { giveUpSupport("could not put a support block under it"); return; }
+        if (solidAt(level, s)) {
+            supportTodo.remove(0);
+            supportGone.add(s);
+            supportWait = 0;
+            if (supportTodo.isEmpty()) { cands = null; chosen = null; stage = Stage.APPROACH; stageTicks = ticks = supportTicks = 0; badSpots.clear(); }
+            return;
+        }
+        if (supportWait > 0) { supportWait--; return; }
+        if (p.getBoundingBox().intersects(new net.minecraft.world.phys.AABB(s))) { walkNear(mc, p, level, s); return; }
+        Vec3 eye = p.getEyePosition();
+        Cand hit = null;
+        for (Direction d : Direction.values()) {
+            BlockPos n = s.relative(d);
+            if (n.equals(s.above()) || !solidAt(level, n)) continue;
+            Direction face = d.getOpposite();
+            Cand c = new Cand(n, face, faceCenter(level, n, face), 0, 0, false);
+            if (sees(level, p, eye, c)) { hit = c; break; }
+        }
+        if (hit == null) { walkNear(mc, p, level, s); return; }
+        dev.midtown.api.EngineSelector.current().cancel();
+        if (!HotbarController.selectExpendableBlock(mc, p)) { giveUpSupport("no spare throwaway block for a support under it"); return; }
+        BodyController.INSTANCE.acquire(mc, MOTOR_OWNER);
+        Vec3 at = hit.hit();
+        if (!aim(p, BodyController.yawTo(at.x - eye.x, at.z - eye.z), BodyController.pitchTo(at.x - eye.x, at.y - eye.y, at.z - eye.z))) return;
+        Block placedBlock = p.getMainHandItem().getItem() instanceof net.minecraft.world.item.BlockItem bi ? bi.getBlock() : null;
+        mc.gameMode.useItemOn(p, InteractionHand.MAIN_HAND, new BlockHitResult(at, hit.face(), hit.against(), false));
+        p.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+        if (placedBlock != null) dev.buildtools.Api.addScaffold(s, placedBlock);   // collect_scaffold() finds it if we leave it
+        supportWait = 4;
+    }
+
+    private void giveUpSupport(String why) {
+        supportTodo.clear();
+        fail(why);   // what is already placed is in supportGone and gets taken away
+    }
+
+    private void removeSupportTick(Minecraft mc, LocalPlayer p, Level level) {
+        BlockPos s = supportGone.get(supportGone.size() - 1);
+        if (++supportTicks > 20 * 60) { supportGone.clear(); stopBreaking(); return; }   // left as recorded scaffolding
+        if (level.getBlockState(s).isAir() || Schem.replaceable(level.getBlockState(s))) {
+            stopBreaking();
+            supportGone.remove(supportGone.size() - 1);
+            supportTicks = 0;
+            return;
+        }
+        Vec3 eye = p.getEyePosition();
+        Vec3 at = Vec3.atCenterOf(s);
+        BlockHitResult r = level.clip(new ClipContext(eye, at, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, p));
+        boolean clear = r.getType() != HitResult.Type.BLOCK || r.getBlockPos().equals(s);
+        if (eye.distanceTo(at) > REACH - 0.3 || !clear || p.getBoundingBox().intersects(new net.minecraft.world.phys.AABB(s.above()))) {
+            stopBreaking();
+            walkNear(mc, p, level, s);
+            return;
+        }
+        dev.midtown.api.EngineSelector.current().cancel();
+        BodyController.INSTANCE.acquire(mc, MOTOR_OWNER);
+        aim(p, BodyController.yawTo(at.x - eye.x, at.z - eye.z), BodyController.pitchTo(at.x - eye.x, at.y - eye.y, at.z - eye.z));
+        if (!breaking) ClearProcess.equipFor(mc, p, level.getBlockState(s));
+        breaking = BodyController.INSTANCE.breakBlockTick(mc, s);
     }
 
     /** The second slab of a double slab is clicked onto the first one: there is a block, and that is fine. */

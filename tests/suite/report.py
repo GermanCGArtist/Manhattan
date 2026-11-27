@@ -24,18 +24,27 @@ def load(run_dir):
         attempts[r["id"]].append(r)
     for cid, rs in attempts.items():
         rs.sort(key=lambda r: r["attempt"])
-        last = rs[-1]
-        if rs[0]["pass"]:
-            last["verdict"] = "pass"
-        elif last["pass"]:
-            last["verdict"] = "flaky"
-        elif all("no game log" in r["reason"] or "setup failed" in r["reason"] for r in rs):
-            last["verdict"] = "infra"     # the game never started (Deming) or the case's setup broke: not a Manhattan result
+        # an attempt whose game never started (Deming) or whose setup broke says nothing about Manhattan: judge the
+        # case by the attempts that really ran
+        ran = [r for r in rs if not is_infra(r)]
+        if not ran:
+            last = rs[-1]
+            last["verdict"] = "infra"
         else:
-            last["verdict"] = "fail"
-        last["first_reason"] = rs[0]["reason"]
+            last = ran[-1]
+            if ran[0]["pass"]:
+                last["verdict"] = "pass"
+            elif any(r["pass"] for r in ran):
+                last["verdict"] = "flaky"
+            else:
+                last["verdict"] = "fail"
+        last["first_reason"] = (ran or rs)[0]["reason"]
         final[cid] = last
     return final, attempts
+
+
+def is_infra(r):
+    return "no game log" in r["reason"] or "setup failed" in r["reason"]
 
 
 def signature(reason):
