@@ -15,10 +15,10 @@
           }
         },
         {
-          "local_path": "build/libs/manhattan-2.16.2.jar"
+          "local_path": "build/libs/manhattan-2.16.9.jar"
         },
         {
-          "local_path": "build/libs/manhattan-testbridge-2.16.2.jar"
+          "local_path": "build/libs/manhattan-testbridge-2.16.9.jar"
         }
       ],
       "account": {
@@ -58,10 +58,10 @@
           }
         },
         {
-          "local_path": "build/libs/manhattan-2.16.2.jar"
+          "local_path": "build/libs/manhattan-2.16.9.jar"
         },
         {
-          "local_path": "build/libs/manhattan-testbridge-2.16.2.jar"
+          "local_path": "build/libs/manhattan-testbridge-2.16.9.jar"
         }
       ],
       "account": {
@@ -101,10 +101,10 @@
           }
         },
         {
-          "local_path": "build/libs/manhattan-2.16.2.jar"
+          "local_path": "build/libs/manhattan-2.16.9.jar"
         },
         {
-          "local_path": "build/libs/manhattan-testbridge-2.16.2.jar"
+          "local_path": "build/libs/manhattan-testbridge-2.16.9.jar"
         }
       ],
       "account": {
@@ -144,10 +144,10 @@
           }
         },
         {
-          "local_path": "build/libs/manhattan-2.16.2.jar"
+          "local_path": "build/libs/manhattan-2.16.9.jar"
         },
         {
-          "local_path": "build/libs/manhattan-testbridge-2.16.2.jar"
+          "local_path": "build/libs/manhattan-testbridge-2.16.9.jar"
         }
       ],
       "account": {

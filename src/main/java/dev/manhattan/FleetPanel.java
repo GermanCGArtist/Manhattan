@@ -226,6 +226,9 @@ final class FleetPanel {
                 if (job.activeWorkers != null && !job.activeWorkers.isEmpty()) {
                     UiTheme.textColored(DIM, "Workers: " + String.join(", ", job.activeWorkers));
                 }
+                if (fc.isEditorAllowed() && ("ACTIVE".equals(job.status) || "PAUSED".equals(job.status))) {
+                    drawJobScaling(fc, snap, job, s);
+                }
                 if (fc.isEditorAllowed()) {
                     if ("ACTIVE".equals(job.status)) {
                         if (Widgets.button("Pause", 0)) fc.controlJob(job.jobId, "pause");
@@ -242,5 +245,63 @@ final class FleetPanel {
                 ImGui.popID();
             }
         }
+    }
+
+    /** Scale a running job: change its bot limit, add or remove single workers. */
+    private static void drawJobScaling(FleetClient fc, FleetProtocol.FleetSnapshot snap,
+                                       FleetProtocol.JobSummary job, float s) {
+        FleetProtocol.AssignmentPolicy a = job.assignment;
+        boolean explicit = a != null && a.mode == FleetProtocol.AssignmentMode.EXPLICIT;
+        if (a != null && !explicit) {
+            ImGui.alignTextToFramePadding();
+            UiTheme.textColored(DIM, "Max bots: " + a.maxBots);
+            ImGui.sameLine(0f, 6f * s);
+            if (ImGui.smallButton("-##scaleDown") && a.maxBots > 1) fc.scaleJob(job.jobId, a.maxBots - 1);
+            ImGui.sameLine(0f, 4f * s);
+            if (ImGui.smallButton("+##scaleUp")) fc.scaleJob(job.jobId, a.maxBots + 1);
+            if (ImGui.isItemHovered()) {
+                ImGui.setTooltip("Lowering the limit lets the extra bots finish their current chunk first.");
+            }
+            ImGui.sameLine(0f, 10f * s);
+        }
+
+        // Bots that can be added: workers not already working on this job.
+        List<FleetProtocol.BotInfo> addable = new ArrayList<>();
+        List<String> removable = new ArrayList<>();
+        if (job.activeWorkers != null) removable.addAll(job.activeWorkers);
+        if (explicit && a.explicitBots != null) {
+            for (String b : a.explicitBots) if (b != null && !containsIgnoreCase(removable, b)) removable.add(b);
+        }
+        for (FleetProtocol.BotInfo bot : snap.bots) {
+            boolean isWorker = "WORKER".equalsIgnoreCase(bot.mode) || "BOTH".equalsIgnoreCase(bot.mode);
+            if (!isWorker || bot.name == null || bot.name.isBlank()) continue;
+            if (containsIgnoreCase(removable, bot.name)) continue;
+            addable.add(bot);
+        }
+
+        ImGui.setNextItemWidth(130f * s);
+        if (ImGui.beginCombo("##jobAddWorker", "Add worker...")) {
+            if (addable.isEmpty()) UiTheme.textColored(DIM, "No free workers");
+            for (FleetProtocol.BotInfo bot : addable) {
+                String lbl = bot.name + (bot.online ? "" : " (offline)") + (bot.held ? " (held)" : "");
+                if (ImGui.selectable(lbl + "##add_" + bot.name)) fc.addWorkerToJob(job.jobId, bot.name);
+            }
+            ImGui.endCombo();
+        }
+        if (!removable.isEmpty()) {
+            ImGui.sameLine(0f, 6f * s);
+            ImGui.setNextItemWidth(140f * s);
+            if (ImGui.beginCombo("##jobRemoveWorker", "Remove worker...")) {
+                for (String name : removable) {
+                    if (ImGui.selectable(name + "##rem_" + name)) fc.removeWorkerFromJob(job.jobId, name);
+                }
+                ImGui.endCombo();
+            }
+        }
+    }
+
+    private static boolean containsIgnoreCase(List<String> list, String v) {
+        for (String x : list) if (x != null && x.equalsIgnoreCase(v)) return true;
+        return false;
     }
 }

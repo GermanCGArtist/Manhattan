@@ -2,6 +2,12 @@
 
 Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
 
+## 2.16.9 – scale fleet jobs while they run (2026-11-27)
+- New: the Server Job Queue in the Fleet panel can change a running job's worker count (*Max bots* `-` / `+`) and
+  add or remove single workers (**Add worker...**, **Remove worker...**) without resubmitting it. Needs fleet
+  server 0.2.2+; an older server ignores these buttons. See [FLEET.md](FLEET.md).
+- Untested in game (no Deming run for this release); unit tests pass.
+
 ## 2.16.4 – fewer pointless chest visits, honest pillar count (2026-11-25)
 - Fixed: with one wanted item that no supply chest has (e.g. a `diamond_hoe`), the restock opened every chest in the
   supply area on every trip ("Nothing to take from the supply chest ... trying the next supply chest" about 18 times

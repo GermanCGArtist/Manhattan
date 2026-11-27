@@ -20,6 +20,25 @@ Manhattan stays a solo bot and nothing here applies.
 The Fleet panel shows what each worker does, the chunks on the map, and on a worker how many reports are still
 waiting for the server.
 
+## Adding and removing workers while a job runs
+
+The queue scales on the fly; nothing has to be resubmitted (needs fleet server 0.2.2+ and Manhattan 2.16.9+).
+
+- **New bots join by themselves.** A bot that connects in Worker mode picks up chunks of every job it is allowed
+  on, as long as the job has room (pool jobs: fewer than *max bots* working on it).
+- **Max bots `-` / `+`** under a pool job in the Server Job Queue changes how many bots may work on it at once.
+  Raising it lets waiting bots start at once. Lowering it is graceful: the extra bots finish the chunk they are on
+  and then get no new one from that job.
+- **Add worker...** puts a bot on the job: explicit jobs add it to their list; pool jobs let it in even without the
+  pool tag and raise *max bots* when the pool is full. A held bot is released. A bot busy on another job finishes
+  its chunk there first.
+- **Remove worker...** takes a bot off the job at once: its chunk goes back to the queue for the others and it gets
+  no more chunks of that job (it stays free for other jobs).
+- Per bot in the roster: **Stop / Hold** takes a bot off all work until **Resume**; **Assign to job...** moves it.
+
+Server admins can do the same from the console: `/fleet workers`, `/fleet scale <jobId> <maxBots>`,
+`/fleet add <jobId> <bot>`, `/fleet remove <jobId> <bot>`, `/fleet hold <bot>`, `/fleet unhold <bot>`.
+
 ## What the fleet guarantees
 
 - **A chunk is finished once.** Every lease carries an *epoch*. When a worker's lease runs out (no heartbeat for

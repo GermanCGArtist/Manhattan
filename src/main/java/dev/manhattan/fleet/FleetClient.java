@@ -421,6 +421,35 @@ public final class FleetClient {
         send(FleetWire.WORKER_CONTROL, body);
     }
 
+    /** Sets how many bots may work on a running pool job (server 0.2.2+). Lowering it drains gracefully. */
+    public void scaleJob(String jobId, int maxBots) {
+        if (!isEditorAllowed() || jobId == null || jobId.isBlank() || maxBots < 1) return;
+        JsonObject body = new JsonObject();
+        body.addProperty("jobId", jobId);
+        body.addProperty("action", "scale");
+        body.addProperty("maxBots", maxBots);
+        send(FleetWire.JOB_CONTROL, body);
+    }
+
+    /** Adds a bot (name or uuid) to a running job (server 0.2.2+). */
+    public void addWorkerToJob(String jobId, String bot) {
+        jobWorkerAction(jobId, bot, "add_worker");
+    }
+
+    /** Takes a bot off a running job at once; its chunk goes back to the queue (server 0.2.2+). */
+    public void removeWorkerFromJob(String jobId, String bot) {
+        jobWorkerAction(jobId, bot, "remove_worker");
+    }
+
+    private void jobWorkerAction(String jobId, String bot, String action) {
+        if (!isEditorAllowed() || jobId == null || jobId.isBlank() || bot == null || bot.isBlank()) return;
+        JsonObject body = new JsonObject();
+        body.addProperty("jobId", jobId);
+        body.addProperty("action", action);
+        body.addProperty("bot", bot);
+        send(FleetWire.JOB_CONTROL, body);
+    }
+
     public void reassignJob(String jobId, AssignmentPolicy policy) {
         if (!isEditorAllowed() || jobId == null || jobId.isBlank() || policy == null) return;
         JsonObject body = new JsonObject();

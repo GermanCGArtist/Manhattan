@@ -77,6 +77,10 @@ public final class FleetProtocol {
         public int maxBots = 2;
         public int maxDistance = 500;
         public int priority = 0;
+        /** AUTO_POOL: bots (name or uuid) allowed on the job even without the pool tag (server 0.2.2+). */
+        public List<String> extraBots = new ArrayList<>();
+        /** AUTO_POOL: bots (name or uuid) kept off the job even with the pool tag (server 0.2.2+). */
+        public List<String> excludedBots = new ArrayList<>();
     }
 
     public static final class ChunkSpec {
