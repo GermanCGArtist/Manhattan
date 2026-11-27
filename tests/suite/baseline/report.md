@@ -1,12 +1,11 @@
-# Manhattan test suite: run final1
+# Manhattan test suite: run final2
 
 Manhattan 2.16.8 (git e65ef83), 32 games at once, started 2026-11-27 00:09:15, finished 2026-11-27 04:24:39 (255 min).
 
-**2477 cases: 2089 pass, 355 fail, 29 flaky, 4 never started or broke in setup** (84% of the started ones pass).
+**2477 cases: 2168 pass, 274 fail, 31 flaky, 4 never started or broke in setup** (88% of the started ones pass).
 
 | family | area | cases | pass | fail | flaky | pass % | median s (passing) | median stuck | deaths |
 |---|---|---|---|---|---|---|---|---|---|
-| drain_flowing | water | 83 | 0 | 83 | 0 | 0 | None | 0 | 0 |
 | combo_build | combination | 125 | 49 | 76 | 0 | 39 | 14.0 | 0 | 1 |
 | schem_build | building | 167 | 75 | 91 | 1 | 45 | 11.9 | 0.0 | 1 |
 | clear_wet | digging | 83 | 54 | 29 | 0 | 65 | 39.0 | 0.0 | 0 |
@@ -15,6 +14,7 @@ Manhattan 2.16.8 (git e65ef83), 32 games at once, started 2026-11-27 00:09:15, f
 | clear_box | digging | 167 | 138 | 29 | 0 | 83 | 111.4 | 0 | 0 |
 | terrain_nav | navigation | 125 | 109 | 1 | 14 | 87 | 20.4 | 0 | 0 |
 | clear_falling | digging | 83 | 79 | 4 | 0 | 95 | 66.7 | 0 | 0 |
+| drain_flowing | water | 83 | 79 | 2 | 2 | 95 | 13.4 | 0 | 0 |
 | combo_clear | combination | 167 | 159 | 5 | 3 | 95 | 118.8 | 0 | 0 |
 | drown_escape | survival | 65 | 62 | 3 | 0 | 95 | 45.1 | 0.0 | 2 |
 | defend_work | survival | 125 | 123 | 2 | 0 | 98 | 47.1 | 0 | 2 |
@@ -53,22 +53,6 @@ Manhattan said: "Respawned at N, N, -N (N blocks away with no bed set) — likel
 - `schem_build/107ff129c2` {"shape":"floor","size":"l","palette":"mixed","supply":"exact","clutter":1}: schematic built: 5/121 cells wrong (first 104,-60,98 want minecraft:bricks got minecraft:dirt, client sees minecraft:dirt)  
   repro: `python tests/suite/run.py --cases tmp/suite/runs/full1-fix/cases --only 107ff129c2 -j 1 --no-retry`
 - ... and 85 more
-
-### drain_flowing: pit dry: N wet cells (81)
-
-- `drain_flowing/16ad3e9753` {"size":7,"sources":1,"block":"cobblestone"}: pit dry: 42 wet cells (first 103,-62,97)  
-  repro: `python tests/suite/run.py --cases tmp/suite/runs/full1-fix/cases --only 16ad3e9753 -j 1 --no-retry`
-- `drain_flowing/1d31c4458c` {"size":7,"sources":1,"block":"dirt"}: pit dry: 54 wet cells (first 103,-62,97)  
-  repro: `python tests/suite/run.py --cases tmp/suite/runs/full1-fix/cases --only 1d31c4458c -j 1 --no-retry`
-- `drain_flowing/29e9a1d5fb` {"size":7,"sources":4,"block":"dirt"}: pit dry: 62 wet cells (first 103,-62,97)  
-  repro: `python tests/suite/run.py --cases tmp/suite/runs/full1-fix/cases --only 29e9a1d5fb -j 1 --no-retry`
-- `drain_flowing/3491ca25e7` {"size":7,"sources":2,"block":"dirt"}: pit dry: 55 wet cells (first 104,-62,97)  
-  repro: `python tests/suite/run.py --cases tmp/suite/runs/full1-fix/cases --only 3491ca25e7 -j 1 --no-retry`
-- `drain_flowing/4026824c23` {"size":7,"sources":2,"block":"dirt"}: pit dry: 59 wet cells (first 103,-62,97)  
-  repro: `python tests/suite/run.py --cases tmp/suite/runs/full1-fix/cases --only 4026824c23 -j 1 --no-retry`
-- `drain_flowing/48b5dc98d7` {"size":7,"sources":4,"block":"dirt"}: pit dry: 66 wet cells (first 103,-62,97)  
-  repro: `python tests/suite/run.py --cases tmp/suite/runs/full1-fix/cases --only 48b5dc98d7 -j 1 --no-retry`
-- ... and 75 more
 
 ### combo_build: schematic built: N/N cells wrong (76)
 
@@ -242,6 +226,13 @@ Manhattan said: "You died at N, -N, N. Respawning; the Baritone task is gone and
 - `defend_work/7306a70eea` {"mob":"husk","count":5,"armor":"none","sword":"iron","task":"idle"}: died 1 time(s)  
   repro: `python tests/suite/run.py --cases tmp/suite/runs/full1-fix/cases --only 7306a70eea -j 1 --no-retry`
 
+### drain_flowing: pit dry: N wet cells (2)
+
+- `drain_flowing/4838a38eaa` {"size":5,"sources":4,"block":"dirt"}: pit dry: 17 wet cells (first 105,-62,98)  
+  repro: `python tests/suite/run.py --cases tmp/suite/runs/drain3/cases --only 4838a38eaa -j 1 --no-retry`
+- `drain_flowing/89f5c5f6a8` {"size":5,"sources":1,"block":"cobblestone"}: pit dry: 16 wet cells (first 105,-62,98)  
+  repro: `python tests/suite/run.py --cases tmp/suite/runs/drain3/cases --only 89f5c5f6a8 -j 1 --no-retry`
+
 ### clear_falling: script did not pass (2)
 
 Manhattan said: "'clear_area' took longer than N s, so I stopped it and go on." (2)
@@ -293,15 +284,10 @@ Manhattan said: "Respawned at N, N, -N (N blocks away with no bed set) — likel
 - `nav_fluids/0ff2cd82f0` {"fluid":"lava","width":5,"depth":1,"blocks":64,"dist":50}: reached target: player 198,7 blocks from target (at -3,5 4,0 -7,5)  
   repro: `python tests/suite/run.py --cases tmp/suite/runs/full1-fix/cases --only 0ff2cd82f0 -j 1 --no-retry`
 
-### drain_flowing: no game log (the game never started?) (deming: Mod error: I/O error: The system cannot find the file specified (1)
+### drain_flowing: no game log (the game never started?) (deming: Mod error: I/O error: Access is denied. (os error N)) (1)
 
-- `drain_flowing/600f8a6965` {"size":5,"sources":1,"block":"cobblestone"}: no game log (the game never started?) (deming: Mod error: I/O error: The system cannot find the file specified. (os error 2))  
-  repro: `python tests/suite/run.py --cases tmp/suite/runs/full1-fix/cases --only 600f8a6965 -j 1 --no-retry`
-
-### drain_flowing: no SUITE_RESULT: com.mojang.realmsclient.exception.RealmsServiceException: Realms authentication error with me (1)
-
-- `drain_flowing/95aa30191b` {"size":5,"sources":2,"block":"dirt"}: no SUITE_RESULT: com.mojang.realmsclient.exception.RealmsServiceException: Realms authentication error with message 'java.lang.RuntimeException: Failed to parse into SignedJWT: 0' (deming: failure_regex 'SUITE_RESULT id=  
-  repro: `python tests/suite/run.py --cases tmp/suite/runs/full1-fix/cases --only 95aa30191b -j 1 --no-retry`
+- `drain_flowing/5de2b37b0f` {"size":5,"sources":2,"block":"dirt"} (flaky): no game log (the game never started?) (deming: Mod error: I/O error: Access is denied. (os error 5))  
+  repro: `python tests/suite/run.py --cases tmp/suite/runs/drain3/cases --only 5de2b37b0f -j 1 --no-retry`
 
 ### eat_work: ate something: minecraft:golden_carrot in inventory N > N (1)
 
@@ -312,6 +298,11 @@ Manhattan said: "Respawned at N, N, -N (N blocks away with no bed set) — likel
 
 - `terrain_clear/3905f9642a` {"seed":1,"size":3,"depth":1} (flaky): no SUITE_RESULT: com.mojang.realmsclient.exception.RealmsServiceException: Realms authentication error with message 'java.lang.RuntimeException: Failed to parse into SignedJWT: 0' (deming: success_regex 'SUITE_RESULT id=  
   repro: `python tests/suite/run.py --cases tmp/suite/runs/terrain4/cases --only 3905f9642a -j 1 --no-retry`
+
+### drain_flowing: no game log (the game never started?) (deming: Mod error: I/O error: The system cannot find the file specified (1)
+
+- `drain_flowing/bcc45477a3` {"size":3,"sources":4,"block":"dirt"} (flaky): no game log (the game never started?) (deming: Mod error: I/O error: The system cannot find the file specified. (os error 2))  
+  repro: `python tests/suite/run.py --cases tmp/suite/runs/drain3/cases --only bcc45477a3 -j 1 --no-retry`
 
 ### schem_build: no game log (the game never started?) (deming: Mod error: I/O error: The system cannot find the file specified (1)
 

@@ -391,11 +391,13 @@ def drain_flowing(p, rng):
     a = [O[0] + 3, GROUND - 1, O[2] - s // 2]
     b = [a[0] + s - 1, GROUND, a[2] + s - 1]
     setup = base_setup() + tools("diamond") + give(p["block"], 128)
-    setup += fill(a[0] - 1, GROUND - 1, a[2] - 1, b[0] + 1, GROUND + 1, b[2] + 1, "stone", "keep")
+    # the pit is dug into the ground (dirt and grass around it); a stone ring up to GROUND + 1 would also have put a
+    # stone lid over the pit and sealed the water in
     setup += fill(*a, *b, "air")
     for _ in range(p["sources"]):
         setup.append("setblock %d %d %d water" % (rng.randint(a[0], b[0]), GROUND, rng.randint(a[2], b[2])))
-    return dict(setup=setup, script=["select(%s, %s)" % (P(a), P(b)), "fill_water(\"%s\")" % p["block"]],
+    # "wait 3": the water needs a few seconds to spread through the pit before the job looks at it
+    return dict(setup=setup, script=["wait 3", "select(%s, %s)" % (P(a), P(b)), "fill_water(\"%s\")" % p["block"]],
                 checks=[ALIVE, {"type": "dry", "from": a, "to": b, "label": "pit dry"}], est=40 + s * s * 2)
 
 

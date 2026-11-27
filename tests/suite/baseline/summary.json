@@ -13,7 +13,8 @@
    "full1b",
    "full1-fix",
    "t3climb",
-   "terrain4"
+   "terrain4",
+   "drain3"
   ]
  },
  "families": {
@@ -130,10 +131,10 @@
   "drain_flowing": {
    "area": "water",
    "cases": 83,
-   "pass": 0,
-   "flaky": 0,
-   "fail": 83,
-   "median_elapsed_s": null,
+   "pass": 79,
+   "flaky": 2,
+   "fail": 2,
+   "median_elapsed_s": 13.4,
    "median_stuck": 0,
    "deaths": 0
   },
@@ -3609,137 +3610,137 @@
    "reason": "-"
   },
   "drain_flowing/16ad3e9753": {
-   "verdict": "fail",
-   "elapsed_ms": 86247,
+   "verdict": "pass",
+   "elapsed_ms": 8560,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 42 wet cells (first 103,-62,97)"
+   "reason": "-"
   },
   "drain_flowing/1d31c4458c": {
-   "verdict": "fail",
-   "elapsed_ms": 442,
+   "verdict": "pass",
+   "elapsed_ms": 9680,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 54 wet cells (first 103,-62,97)"
+   "reason": "-"
   },
   "drain_flowing/29e9a1d5fb": {
-   "verdict": "fail",
-   "elapsed_ms": 483,
+   "verdict": "pass",
+   "elapsed_ms": 18964,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 62 wet cells (first 103,-62,97)"
+   "reason": "-"
   },
   "drain_flowing/3491ca25e7": {
-   "verdict": "fail",
-   "elapsed_ms": 10027,
+   "verdict": "pass",
+   "elapsed_ms": 21842,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 55 wet cells (first 104,-62,97)"
+   "reason": "-"
   },
   "drain_flowing/4026824c23": {
-   "verdict": "fail",
-   "elapsed_ms": 456,
+   "verdict": "pass",
+   "elapsed_ms": 48575,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 59 wet cells (first 103,-62,97)"
+   "reason": "-"
   },
   "drain_flowing/48b5dc98d7": {
-   "verdict": "fail",
-   "elapsed_ms": 418,
+   "verdict": "pass",
+   "elapsed_ms": 22416,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 66 wet cells (first 103,-62,97)"
+   "reason": "-"
   },
   "drain_flowing/56c0258d6d": {
-   "verdict": "fail",
-   "elapsed_ms": 838,
+   "verdict": "pass",
+   "elapsed_ms": 14538,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 58 wet cells (first 103,-62,97)"
+   "reason": "-"
   },
   "drain_flowing/570ea597b2": {
-   "verdict": "fail",
-   "elapsed_ms": 823,
+   "verdict": "pass",
+   "elapsed_ms": 19977,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 58 wet cells (first 103,-62,97)"
+   "reason": "-"
   },
   "drain_flowing/5b41db5ac6": {
-   "verdict": "fail",
-   "elapsed_ms": 759,
+   "verdict": "pass",
+   "elapsed_ms": 25980,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 66 wet cells (first 103,-62,97)"
+   "reason": "-"
   },
   "drain_flowing/5e8d7f2679": {
-   "verdict": "fail",
-   "elapsed_ms": 493,
+   "verdict": "pass",
+   "elapsed_ms": 3466,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 64 wet cells (first 103,-62,97)"
+   "reason": "-"
   },
   "drain_flowing/7ea3271f16": {
-   "verdict": "fail",
-   "elapsed_ms": 435,
+   "verdict": "pass",
+   "elapsed_ms": 16471,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 54 wet cells (first 103,-62,97)"
+   "reason": "-"
   },
   "drain_flowing/8ec0369e12": {
-   "verdict": "fail",
-   "elapsed_ms": 469,
+   "verdict": "pass",
+   "elapsed_ms": 19300,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 58 wet cells (first 103,-62,97)"
+   "reason": "-"
   },
   "drain_flowing/a0b75c8fa9": {
-   "verdict": "fail",
-   "elapsed_ms": -1,
-   "stuck": -1,
-   "deaths": -1,
-   "reason": "no SUITE_RESULT: com.mojang.realmsclient.exception.RealmsServiceException: Realms authentication error with message 'java.lang.RuntimeException: Failed to parse into SignedJWT: 0' (deming: failure_regex 'SUITE_RESULT id=drain_flowing/a0b75c8fa9 pass=false|FATAL' matched log line: [12:36:50] [Render thread/INFO]: [STDOUT]: SUITE_RESULT id=drain_flowing/a0b75c8fa9 pass=false script_pass=true checks=failed elapsed_ms=507 blocks_moved=0 stuck_count=0 interrupts_handled=0 deaths=0 reason=pit dry: 67 wet cells (first 103,-62,97))"
+   "verdict": "pass",
+   "elapsed_ms": 18314,
+   "stuck": 0,
+   "deaths": 0,
+   "reason": "-"
   },
   "drain_flowing/a5d843fff1": {
-   "verdict": "fail",
-   "elapsed_ms": 26040,
+   "verdict": "pass",
+   "elapsed_ms": 17974,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 51 wet cells (first 105,-62,97)"
+   "reason": "-"
   },
   "drain_flowing/b5ca1a8bc0": {
-   "verdict": "fail",
-   "elapsed_ms": 458,
+   "verdict": "pass",
+   "elapsed_ms": 18203,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 56 wet cells (first 103,-62,97)"
+   "reason": "-"
   },
   "drain_flowing/caf886fe19": {
-   "verdict": "fail",
-   "elapsed_ms": 471,
+   "verdict": "pass",
+   "elapsed_ms": 19287,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 57 wet cells (first 103,-62,97)"
+   "reason": "-"
   },
   "drain_flowing/cccfac5403": {
-   "verdict": "fail",
-   "elapsed_ms": 9706,
+   "verdict": "pass",
+   "elapsed_ms": 25374,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 53 wet cells (first 104,-62,97)"
+   "reason": "-"
   },
   "drain_flowing/d6dbba0599": {
-   "verdict": "fail",
-   "elapsed_ms": 594,
+   "verdict": "pass",
+   "elapsed_ms": 21708,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 66 wet cells (first 103,-62,97)"
+   "reason": "-"
   },
   "drain_flowing/fefe1b91be": {
-   "verdict": "fail",
-   "elapsed_ms": 10459,
+   "verdict": "pass",
+   "elapsed_ms": 23304,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 54 wet cells (first 103,-62,97)"
+   "reason": "-"
   },
   "fill_pool/12c4887e36": {
    "verdict": "pass",
@@ -7144,298 +7145,298 @@
    "reason": "area cleared: 750/1200 cells wrong (first 104,-60,88 minecraft:gravel, client sees minecraft:gravel)"
   },
   "drain_flowing/08a09b3882": {
-   "verdict": "fail",
-   "elapsed_ms": 3335,
+   "verdict": "pass",
+   "elapsed_ms": 9432,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 28 wet cells (first 103,-62,98)"
+   "reason": "-"
   },
   "drain_flowing/0a8d00f37e": {
-   "verdict": "fail",
-   "elapsed_ms": 420,
+   "verdict": "pass",
+   "elapsed_ms": 13272,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 34 wet cells (first 103,-62,98)"
+   "reason": "-"
   },
   "drain_flowing/0a9d303db0": {
-   "verdict": "fail",
-   "elapsed_ms": 535,
+   "verdict": "pass",
+   "elapsed_ms": 11640,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 30 wet cells (first 103,-62,98)"
+   "reason": "-"
   },
   "drain_flowing/0c0433642e": {
-   "verdict": "fail",
-   "elapsed_ms": 410,
+   "verdict": "pass",
+   "elapsed_ms": 14965,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 34 wet cells (first 103,-62,98)"
+   "reason": "-"
   },
   "drain_flowing/0c2f7a66e3": {
-   "verdict": "fail",
-   "elapsed_ms": 528,
+   "verdict": "pass",
+   "elapsed_ms": 16713,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 33 wet cells (first 103,-62,98)"
+   "reason": "-"
   },
   "drain_flowing/0c5f284f94": {
-   "verdict": "fail",
-   "elapsed_ms": 483,
+   "verdict": "pass",
+   "elapsed_ms": 9353,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 28 wet cells (first 103,-62,98)"
+   "reason": "-"
   },
   "drain_flowing/0dcc1f6f2b": {
-   "verdict": "fail",
-   "elapsed_ms": 1112,
+   "verdict": "pass",
+   "elapsed_ms": 14824,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 32 wet cells (first 103,-62,98)"
+   "reason": "-"
   },
   "drain_flowing/138ccd655c": {
-   "verdict": "fail",
-   "elapsed_ms": 427,
+   "verdict": "pass",
+   "elapsed_ms": 9421,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 28 wet cells (first 103,-62,98)"
+   "reason": "-"
   },
   "drain_flowing/21643c0da5": {
-   "verdict": "fail",
-   "elapsed_ms": 416,
+   "verdict": "pass",
+   "elapsed_ms": 11695,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 33 wet cells (first 103,-62,98)"
+   "reason": "-"
   },
   "drain_flowing/24bd32418a": {
-   "verdict": "fail",
-   "elapsed_ms": 587,
+   "verdict": "pass",
+   "elapsed_ms": 16463,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 32 wet cells (first 103,-62,98)"
+   "reason": "-"
   },
   "drain_flowing/2e91959118": {
-   "verdict": "fail",
-   "elapsed_ms": 432,
+   "verdict": "pass",
+   "elapsed_ms": 13461,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 40 wet cells (first 103,-62,98)"
+   "reason": "-"
   },
   "drain_flowing/2eddb7e23f": {
-   "verdict": "fail",
-   "elapsed_ms": 462,
+   "verdict": "pass",
+   "elapsed_ms": 14742,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 31 wet cells (first 103,-62,98)"
+   "reason": "-"
   },
   "drain_flowing/39d7438ca2": {
-   "verdict": "fail",
-   "elapsed_ms": 511,
+   "verdict": "pass",
+   "elapsed_ms": 12682,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 32 wet cells (first 103,-62,98)"
+   "reason": "-"
   },
   "drain_flowing/45d1f12069": {
-   "verdict": "fail",
-   "elapsed_ms": 487,
+   "verdict": "pass",
+   "elapsed_ms": 14371,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 30 wet cells (first 103,-62,98)"
+   "reason": "-"
   },
   "drain_flowing/4838a38eaa": {
    "verdict": "fail",
-   "elapsed_ms": 370,
+   "elapsed_ms": 18390,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 40 wet cells (first 103,-62,98)"
+   "reason": "pit dry: 17 wet cells (first 105,-62,98)"
   },
   "drain_flowing/4d09b07c49": {
-   "verdict": "fail",
-   "elapsed_ms": 625,
+   "verdict": "pass",
+   "elapsed_ms": 15377,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 38 wet cells (first 103,-62,98)"
+   "reason": "-"
   },
   "drain_flowing/5dcff159fd": {
-   "verdict": "fail",
-   "elapsed_ms": 385,
+   "verdict": "pass",
+   "elapsed_ms": 14171,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 30 wet cells (first 103,-62,98)"
+   "reason": "-"
   },
   "drain_flowing/5de2b37b0f": {
-   "verdict": "fail",
-   "elapsed_ms": 431,
+   "verdict": "flaky",
+   "elapsed_ms": 15907,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 34 wet cells (first 103,-62,98)"
+   "reason": "-"
   },
   "drain_flowing/600f8a6965": {
-   "verdict": "fail",
-   "elapsed_ms": -1,
-   "stuck": -1,
-   "deaths": -1,
-   "reason": "no SUITE_RESULT: com.mojang.realmsclient.exception.RealmsServiceException: Realms authentication error with message 'java.lang.RuntimeException: Failed to parse into SignedJWT: 0' (deming: failure_regex 'SUITE_RESULT id=drain_flowing/600f8a6965 pass=false|FATAL' matched log line: [12:34:03] [Render thread/INFO]: [STDOUT]: SUITE_RESULT id=drain_flowing/600f8a6965 pass=false script_pass=true checks=failed elapsed_ms=418 blocks_moved=0 stuck_count=0 interrupts_handled=0 deaths=0 reason=pit dry: 28 wet cells (first 103,-62,98))"
+   "verdict": "pass",
+   "elapsed_ms": 13770,
+   "stuck": 0,
+   "deaths": 0,
+   "reason": "-"
   },
   "drain_flowing/658ef73a68": {
-   "verdict": "fail",
-   "elapsed_ms": 502,
+   "verdict": "pass",
+   "elapsed_ms": 13441,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 28 wet cells (first 103,-62,98)"
+   "reason": "-"
   },
   "drain_flowing/754f40630a": {
-   "verdict": "fail",
-   "elapsed_ms": 887,
+   "verdict": "pass",
+   "elapsed_ms": 14055,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 39 wet cells (first 103,-62,98)"
+   "reason": "-"
   },
   "drain_flowing/7c3f2c4e69": {
-   "verdict": "fail",
-   "elapsed_ms": 461,
+   "verdict": "pass",
+   "elapsed_ms": 13482,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 29 wet cells (first 103,-62,98)"
+   "reason": "-"
   },
   "drain_flowing/7c4214e7e4": {
-   "verdict": "fail",
-   "elapsed_ms": 446,
+   "verdict": "pass",
+   "elapsed_ms": 15095,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 34 wet cells (first 103,-62,98)"
+   "reason": "-"
   },
   "drain_flowing/84018e0eeb": {
-   "verdict": "fail",
-   "elapsed_ms": 380,
+   "verdict": "pass",
+   "elapsed_ms": 13208,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 32 wet cells (first 103,-62,98)"
+   "reason": "-"
   },
   "drain_flowing/8829e63b98": {
-   "verdict": "fail",
-   "elapsed_ms": 394,
+   "verdict": "pass",
+   "elapsed_ms": 12938,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 41 wet cells (first 103,-62,98)"
+   "reason": "-"
   },
   "drain_flowing/89f5c5f6a8": {
    "verdict": "fail",
-   "elapsed_ms": 610,
+   "elapsed_ms": 16873,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 30 wet cells (first 103,-62,98)"
+   "reason": "pit dry: 16 wet cells (first 105,-62,98)"
   },
   "drain_flowing/8f19e901d5": {
-   "verdict": "fail",
-   "elapsed_ms": 635,
+   "verdict": "pass",
+   "elapsed_ms": 14654,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 30 wet cells (first 103,-62,98)"
+   "reason": "-"
   },
   "drain_flowing/95aa30191b": {
-   "verdict": "fail",
-   "elapsed_ms": 409,
+   "verdict": "pass",
+   "elapsed_ms": 12930,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 32 wet cells (first 103,-62,98)"
+   "reason": "-"
   },
   "drain_flowing/ac016a16c2": {
-   "verdict": "fail",
-   "elapsed_ms": 454,
+   "verdict": "pass",
+   "elapsed_ms": 15282,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 30 wet cells (first 103,-62,98)"
+   "reason": "-"
   },
   "drain_flowing/ac252eb2ee": {
-   "verdict": "fail",
-   "elapsed_ms": -1,
-   "stuck": -1,
-   "deaths": -1,
-   "reason": "no SUITE_RESULT: com.mojang.realmsclient.exception.RealmsServiceException: Realms authentication error with message 'java.lang.RuntimeException: Failed to parse into SignedJWT: 0' (deming: failure_regex 'SUITE_RESULT id=drain_flowing/ac252eb2ee pass=false|FATAL' matched log line: [12:51:49] [Render thread/INFO]: [STDOUT]: SUITE_RESULT id=drain_flowing/ac252eb2ee pass=false script_pass=true checks=failed elapsed_ms=397 blocks_moved=0 stuck_count=0 interrupts_handled=0 deaths=0 reason=pit dry: 28 wet cells (first 103,-62,98))"
+   "verdict": "pass",
+   "elapsed_ms": 9131,
+   "stuck": 0,
+   "deaths": 0,
+   "reason": "-"
   },
   "drain_flowing/ac2f1f528b": {
-   "verdict": "fail",
-   "elapsed_ms": 520,
+   "verdict": "pass",
+   "elapsed_ms": 13851,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 29 wet cells (first 103,-62,98)"
+   "reason": "-"
   },
   "drain_flowing/b00d8454d4": {
-   "verdict": "fail",
-   "elapsed_ms": 460,
+   "verdict": "pass",
+   "elapsed_ms": 14335,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 32 wet cells (first 103,-62,98)"
+   "reason": "-"
   },
   "drain_flowing/b9c335d085": {
-   "verdict": "fail",
-   "elapsed_ms": 788,
+   "verdict": "pass",
+   "elapsed_ms": 13701,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 39 wet cells (first 103,-62,98)"
+   "reason": "-"
   },
   "drain_flowing/bd57c84462": {
-   "verdict": "fail",
-   "elapsed_ms": 668,
+   "verdict": "pass",
+   "elapsed_ms": 10534,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 30 wet cells (first 103,-62,98)"
+   "reason": "-"
   },
   "drain_flowing/bdbc0c6992": {
-   "verdict": "fail",
-   "elapsed_ms": 376,
+   "verdict": "pass",
+   "elapsed_ms": 9738,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 32 wet cells (first 103,-62,98)"
+   "reason": "-"
   },
   "drain_flowing/c55ebf818c": {
-   "verdict": "fail",
-   "elapsed_ms": -1,
-   "stuck": -1,
-   "deaths": -1,
-   "reason": "no SUITE_RESULT: com.mojang.realmsclient.exception.RealmsServiceException: Realms authentication error with message 'java.lang.RuntimeException: Failed to parse into SignedJWT: 0' (deming: failure_regex 'SUITE_RESULT id=drain_flowing/c55ebf818c pass=false|FATAL' matched log line: [12:36:04] [Render thread/INFO]: [STDOUT]: SUITE_RESULT id=drain_flowing/c55ebf818c pass=false script_pass=true checks=failed elapsed_ms=703 blocks_moved=0 stuck_count=0 interrupts_handled=0 deaths=0 reason=pit dry: 37 wet cells (first 103,-62,98))"
+   "verdict": "pass",
+   "elapsed_ms": 15878,
+   "stuck": 0,
+   "deaths": 0,
+   "reason": "-"
   },
   "drain_flowing/cc177b974e": {
-   "verdict": "fail",
-   "elapsed_ms": 807,
+   "verdict": "pass",
+   "elapsed_ms": 13164,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 39 wet cells (first 103,-62,98)"
+   "reason": "-"
   },
   "drain_flowing/cf61856c77": {
-   "verdict": "fail",
-   "elapsed_ms": 483,
+   "verdict": "pass",
+   "elapsed_ms": 14927,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 32 wet cells (first 103,-62,98)"
+   "reason": "-"
   },
   "drain_flowing/e33097b773": {
-   "verdict": "fail",
-   "elapsed_ms": 690,
+   "verdict": "pass",
+   "elapsed_ms": 13910,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 34 wet cells (first 103,-62,98)"
+   "reason": "-"
   },
   "drain_flowing/f0f7c09f45": {
-   "verdict": "fail",
-   "elapsed_ms": 488,
+   "verdict": "pass",
+   "elapsed_ms": 15054,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 32 wet cells (first 103,-62,98)"
+   "reason": "-"
   },
   "drain_flowing/f2da7042fa": {
-   "verdict": "fail",
-   "elapsed_ms": 496,
+   "verdict": "pass",
+   "elapsed_ms": 13837,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 29 wet cells (first 103,-62,98)"
+   "reason": "-"
   },
   "drain_flowing/f834262713": {
-   "verdict": "fail",
-   "elapsed_ms": 576,
+   "verdict": "pass",
+   "elapsed_ms": 12828,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 38 wet cells (first 103,-62,98)"
+   "reason": "-"
   },
   "eat_work/076034b1cf": {
    "verdict": "pass",
@@ -12828,158 +12829,158 @@
    "reason": "-"
   },
   "drain_flowing/0d23266713": {
-   "verdict": "fail",
-   "elapsed_ms": 465,
+   "verdict": "pass",
+   "elapsed_ms": 9780,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 14 wet cells (first 103,-62,99)"
+   "reason": "-"
   },
   "drain_flowing/0f6564aa50": {
-   "verdict": "fail",
-   "elapsed_ms": 964,
+   "verdict": "pass",
+   "elapsed_ms": 9909,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 16 wet cells (first 103,-62,99)"
+   "reason": "-"
   },
   "drain_flowing/2727d4adec": {
-   "verdict": "fail",
-   "elapsed_ms": 570,
+   "verdict": "pass",
+   "elapsed_ms": 9856,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 16 wet cells (first 103,-62,99)"
+   "reason": "-"
   },
   "drain_flowing/2f3ffcd781": {
-   "verdict": "fail",
-   "elapsed_ms": 438,
+   "verdict": "pass",
+   "elapsed_ms": 6305,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 13 wet cells (first 103,-62,99)"
+   "reason": "-"
   },
   "drain_flowing/4707754200": {
-   "verdict": "fail",
-   "elapsed_ms": 728,
+   "verdict": "pass",
+   "elapsed_ms": 9654,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 16 wet cells (first 103,-62,99)"
+   "reason": "-"
   },
   "drain_flowing/5ad9661546": {
-   "verdict": "fail",
-   "elapsed_ms": 357,
+   "verdict": "pass",
+   "elapsed_ms": 6333,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 15 wet cells (first 103,-62,99)"
+   "reason": "-"
   },
   "drain_flowing/5e24923af1": {
-   "verdict": "fail",
-   "elapsed_ms": 409,
+   "verdict": "pass",
+   "elapsed_ms": 6713,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 12 wet cells (first 103,-62,99)"
+   "reason": "-"
   },
   "drain_flowing/616ae427ca": {
-   "verdict": "fail",
-   "elapsed_ms": 1308,
+   "verdict": "pass",
+   "elapsed_ms": 7486,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 16 wet cells (first 103,-62,99)"
+   "reason": "-"
   },
   "drain_flowing/6bb88f3613": {
-   "verdict": "fail",
-   "elapsed_ms": 455,
+   "verdict": "pass",
+   "elapsed_ms": 6441,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 16 wet cells (first 103,-62,99)"
+   "reason": "-"
   },
   "drain_flowing/6d8c2dfea2": {
-   "verdict": "fail",
-   "elapsed_ms": 894,
+   "verdict": "pass",
+   "elapsed_ms": 9244,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 17 wet cells (first 103,-62,99)"
+   "reason": "-"
   },
   "drain_flowing/7a38f6e985": {
-   "verdict": "fail",
-   "elapsed_ms": 606,
+   "verdict": "pass",
+   "elapsed_ms": 9780,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 18 wet cells (first 103,-62,99)"
+   "reason": "-"
   },
   "drain_flowing/9b6653ec7a": {
-   "verdict": "fail",
-   "elapsed_ms": 458,
+   "verdict": "pass",
+   "elapsed_ms": 9871,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 17 wet cells (first 103,-62,99)"
+   "reason": "-"
   },
   "drain_flowing/a84e7028b0": {
-   "verdict": "fail",
-   "elapsed_ms": 393,
+   "verdict": "pass",
+   "elapsed_ms": 9838,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 17 wet cells (first 103,-62,99)"
+   "reason": "-"
   },
   "drain_flowing/a8893adba6": {
-   "verdict": "fail",
-   "elapsed_ms": 347,
+   "verdict": "pass",
+   "elapsed_ms": 6906,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 16 wet cells (first 103,-62,99)"
+   "reason": "-"
   },
   "drain_flowing/b54a6866d8": {
-   "verdict": "fail",
-   "elapsed_ms": 424,
+   "verdict": "pass",
+   "elapsed_ms": 8545,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 14 wet cells (first 103,-62,99)"
+   "reason": "-"
   },
   "drain_flowing/bcc45477a3": {
-   "verdict": "fail",
-   "elapsed_ms": 473,
+   "verdict": "flaky",
+   "elapsed_ms": 7943,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 16 wet cells (first 103,-62,99)"
+   "reason": "-"
   },
   "drain_flowing/be16aff3c5": {
-   "verdict": "fail",
-   "elapsed_ms": 429,
+   "verdict": "pass",
+   "elapsed_ms": 6835,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 12 wet cells (first 103,-62,99)"
+   "reason": "-"
   },
   "drain_flowing/c1f44f928b": {
-   "verdict": "fail",
-   "elapsed_ms": 467,
+   "verdict": "pass",
+   "elapsed_ms": 9427,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 18 wet cells (first 103,-62,99)"
+   "reason": "-"
   },
   "drain_flowing/e476f31cb9": {
-   "verdict": "fail",
-   "elapsed_ms": 406,
+   "verdict": "pass",
+   "elapsed_ms": 6431,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 13 wet cells (first 103,-62,99)"
+   "reason": "-"
   },
   "drain_flowing/ed68f2a8b8": {
-   "verdict": "fail",
-   "elapsed_ms": 430,
+   "verdict": "pass",
+   "elapsed_ms": 9510,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 14 wet cells (first 103,-62,99)"
+   "reason": "-"
   },
   "drain_flowing/f9128e1af9": {
-   "verdict": "fail",
-   "elapsed_ms": 861,
+   "verdict": "pass",
+   "elapsed_ms": 7490,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 12 wet cells (first 103,-62,99)"
+   "reason": "-"
   },
   "drain_flowing/fcf194ae7a": {
-   "verdict": "fail",
-   "elapsed_ms": 362,
+   "verdict": "pass",
+   "elapsed_ms": 9462,
    "stuck": 0,
    "deaths": 0,
-   "reason": "pit dry: 15 wet cells (first 103,-62,99)"
+   "reason": "-"
   },
   "clear_box/16c211f1ea": {
    "verdict": "fail",
