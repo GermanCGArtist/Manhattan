@@ -98,7 +98,9 @@ def run_chunk(cases, run_dir, attempt, a, base, ver, cfg, tag):
         inst.append(instance(case, path, gd, k, base, ver, a.ram_mb))
         games.append(gd)
     spec = {"name": "suite-%s" % tag, "instances": inst, "server": None,
-            "timeout_secs": max(c["limit_s"] for c, _ in cases) + 180}
+            # Deming counts from launch; booting 32 games together takes over 2 min, so leave room for that
+            # or the case's own limit (counted from its start) never fires and Deming kills the game silently
+            "timeout_secs": max(c["limit_s"] for c, _ in cases) + 480}
     spec_path = os.path.join(run_dir, "jobs", "%s.json" % tag)
     os.makedirs(os.path.dirname(spec_path), exist_ok=True)
     json.dump(spec, open(spec_path, "w"), indent=1)

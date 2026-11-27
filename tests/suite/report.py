@@ -29,8 +29,8 @@ def load(run_dir):
             last["verdict"] = "pass"
         elif last["pass"]:
             last["verdict"] = "flaky"
-        elif all("no game log" in r["reason"] for r in rs):
-            last["verdict"] = "infra"     # the game never started (Deming), not a Manhattan result
+        elif all("no game log" in r["reason"] or r["reason"].startswith("setup failed") for r in rs):
+            last["verdict"] = "infra"     # the game never started (Deming) or the case's setup broke: not a Manhattan result
         else:
             last["verdict"] = "fail"
         last["first_reason"] = rs[0]["reason"]
@@ -81,7 +81,7 @@ def write(run_dir, baseline=None):
         meta.get("mod_version"), meta.get("git"), meta.get("j"), meta.get("started"), meta.get("finished", "-"),
         meta.get("wall_min", "-")))
     L.append("")
-    L.append("**%d cases: %d pass, %d fail, %d flaky, %d never started** (%.0f%% of the started ones pass)." % (
+    L.append("**%d cases: %d pass, %d fail, %d flaky, %d never started or broke in setup** (%.0f%% of the started ones pass)." % (
         n, tot["pass"], tot["fail"], tot["flaky"], tot["infra"], 100.0 * tot["pass"] / max(1, n - tot["infra"])))
     L.append("")
     L.append("| family | area | cases | pass | fail | flaky | pass % | median s (passing) | median stuck | deaths |")

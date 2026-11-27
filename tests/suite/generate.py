@@ -262,11 +262,11 @@ def terrain_nav(p, rng):
     tx, tz = sx + dx * p["dist"], sz + dz * p["dist"]
     setup = ["forceload add %d %d %d %d" % (min(sx, tx) - 24, min(sz, tz) - 24, max(sx, tx) + 24, max(sz, tz) + 24),
              "kill @e[type=!player]", "difficulty easy", "time set noon", "weather clear", "tick rate 20",
-             "effect give @p resistance 10 255 true", "spreadplayers %d %d 0 1 false @p" % (sx, sz),
+             "effect give @p resistance 10 255 true", "spreadplayers %d %d 0 24 false @p" % (sx, sz),
              "gamemode survival @p", "clear @p"] + tools("diamond") + give("dirt", 64) + give("bread", 8)
     return dict(setup=setup, script=["goto(%d, %d)" % (tx, tz)],
                 checks=[ALIVE, near((tx, 0, tz), 2.5, ignore_y=True)], est=40 + p["dist"] * 1.2,
-                world_seed=REAL_SEEDS[p["seed"]])
+                world_seed=REAL_SEEDS[p["seed"]], min_start_y=-40)
 
 
 # --- digging ----------------------------------------------------------------
@@ -338,6 +338,8 @@ def clear_tunnel(p, rng):
     a = [O[0] + 3, Y, O[2] - 3]
     b = [a[0] + p["length"] + 3, Y + 5, a[2] + 6]
     setup = base_setup() + tools("haste") + fill_material(a, b, p["material"], rng)
+    # a solid roof: with "mixed", sand and gravel columns would otherwise fall into the tunnel and leave the roof open
+    setup += fill(a[0], Y + 5, a[2], b[0], Y + 5, b[2], "stone")
     t1 = [a[0], Y, O[2] - p["w"] // 2]
     t2 = [a[0] + p["length"] - 1, Y + p["h"] - 1, t1[2] + p["w"] - 1]
     if p["ores"]:
@@ -537,6 +539,8 @@ def defend_work(p, rng):
                                      "tool": ["diamond", "none"]})
 def drown_escape(p, rng):
     d = p["depth"]
+    if p["tool"] == "none" and p["material"] == "stone":
+        return None   # stone by hand under water takes about 37 s a block, longer than the air lasts
     setup = base_setup()
     if p["tool"] != "none":
         setup += tools("diamond")
@@ -719,7 +723,7 @@ def terrain_clear(p, rng):
     sx, sz = rng.randint(-30, 30), rng.randint(-30, 30)
     setup = ["forceload add %d %d %d %d" % (sx - 32, sz - 32, sx + 32, sz + 32), "kill @e[type=!player]",
              "difficulty easy", "time set noon", "weather clear", "tick rate 20",
-             "effect give @p resistance 10 255 true", "spreadplayers %d %d 0 1 false @p" % (sx, sz),
+             "effect give @p resistance 10 255 true", "spreadplayers %d %d 0 24 false @p" % (sx, sz),
              "gamemode survival @p", "clear @p"] + tools("haste") + give("dirt", 64)
     s, d = p["size"], p["depth"]
     # relative to where the player stands when the script starts: a box beside them, d deep into the ground
@@ -729,7 +733,7 @@ def terrain_clear(p, rng):
     chk = check_air(a, b, wet_ok=True, tol=2)
     chk["rel"] = True
     return dict(setup=setup, script=script, checks=[ALIVE, chk], est=60 + vol(a, b) * 0.3,
-                world_seed=REAL_SEEDS[p["seed"]])
+                world_seed=REAL_SEEDS[p["seed"]], min_start_y=-40)
 
 
 # ------------------------------------------------------------------ pairwise generation
@@ -785,7 +789,7 @@ def make_case(fam, params, seed):
     script = ["timeout(%d)" % (limit - 15)] + ([] if c.pop("no_disable", False) else ["disable()"]) + c["script"]
     return {"id": cid, "family": fam["name"], "area": fam["area"], "params": params, "seed": seed,
             "est_s": int(est), "limit_s": limit, "max_deaths": c.get("max_deaths", 0), "world_seed": c.get("world_seed"),
-            "setup": c["setup"], "script": script, "checks": c["checks"], "files": c.get("files")}
+            "min_start_y": c.get("min_start_y"), "setup": c["setup"], "script": script, "checks": c["checks"], "files": c.get("files")}
 
 
 def write_case(case, out):

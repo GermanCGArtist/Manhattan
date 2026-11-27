@@ -124,12 +124,20 @@ final class SuiteCase {
         boolean scriptPass = runnerLine != null && runnerLine.contains(" pass=true");
         String reason;
         MinecraftServer s = mc.getSingleplayerServer();
+        JsonElement msy = spec().get("min_start_y");
+        if (!setupFailed && msy != null && !msy.isJsonNull() && start.getY() < msy.getAsInt()) {
+            // e.g. spreadplayers found no spot and left the player at the bootstrap position underground
+            setupFailed = true;
+            setupError = "the player started at " + start.toShortString() + ", below y=" + msy.getAsInt();
+        }
         if (setupFailed) {
             reason = "setup failed: " + setupError;
         } else if (s == null) {
             reason = "no integrated server";
         } else {
             try {
+                // let the last block-place / break packets reach the server before looking at its world
+                Thread.sleep(1500);
                 reason = s.submit(() -> check(s)).get(20, TimeUnit.SECONDS);
             } catch (Exception e) {
                 reason = "check failed: " + e;
@@ -243,12 +251,20 @@ final class SuiteCase {
             if (!ok && skipWet && touchesFluid(level, q)) ok = true;
             if (!ok) {
                 bad++;
-                if (first == null) first = q.getX() + "," + q.getY() + "," + q.getZ() + " " + id;
+                if (first == null) first = q.getX() + "," + q.getY() + "," + q.getZ() + " " + id + clientSees(q);
             }
         }
         JsonElement tol = c.get("tolerance");
         int allowed = tol == null ? 0 : tol.getAsInt();
         return bad > allowed ? bad + "/" + total + " cells wrong (first " + first + ")" : null;
+    }
+
+    /** What the client's world holds at q, when it differs from the server's (a ghost block the bot believes in). */
+    private static String clientSees(BlockPos q) {
+        var cl = Minecraft.getInstance().level;
+        if (cl == null) return "";
+        String c = id(cl.getBlockState(q));
+        return ", client sees " + c;
     }
 
     private static boolean touchesFluid(ServerLevel level, BlockPos q) {
@@ -283,7 +299,8 @@ final class SuiteCase {
             String got = id(level.getBlockState(new BlockPos(a.get(0).getAsInt(), a.get(1).getAsInt(), a.get(2).getAsInt())));
             if (!want.equals(got)) {
                 bad++;
-                if (first == null) first = a.get(0) + "," + a.get(1) + "," + a.get(2) + " want " + want + " got " + got;
+                if (first == null) first = a.get(0) + "," + a.get(1) + "," + a.get(2) + " want " + want + " got " + got
+                        + clientSees(new BlockPos(a.get(0).getAsInt(), a.get(1).getAsInt(), a.get(2).getAsInt()));
             }
         }
         JsonElement tol = c.get("tolerance");
