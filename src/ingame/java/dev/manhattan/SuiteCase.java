@@ -100,6 +100,10 @@ final class SuiteCase {
             try {
                 var src = s.createCommandSourceStack();
                 for (String c : cmds) {
+                    if (c.startsWith("suite:surface ")) {
+                        surface(s, c.substring(14).trim().split("\s+"));
+                        continue;
+                    }
                     s.getCommands().performPrefixedCommand(src, c.startsWith("/") ? c.substring(1) : c);
                 }
             } catch (Throwable t) {
@@ -108,6 +112,40 @@ final class SuiteCase {
             }
             setupDone = true;
         });
+    }
+
+    /**
+     * "suite:surface X Z [R]": puts the player on dry ground at the surface near X Z (searching outwards up to 256
+     * blocks) and force-loads R blocks around that spot. Replaces spreadplayers, which gives up over oceans and
+     * rivers and leaves the player where it was. Checks with "rel": true are relative to where the player ends up.
+     */
+    private static void surface(MinecraftServer s, String[] a) {
+        int x0 = Integer.parseInt(a[0]), z0 = Integer.parseInt(a[1]);
+        ServerLevel level = s.overworld();
+        ServerPlayer p = s.getPlayerList().getPlayers().isEmpty() ? null : s.getPlayerList().getPlayers().get(0);
+        if (p == null) throw new IllegalStateException("suite:surface: no player");
+        BlockPos best = null;
+        for (int r = 0; r <= 256 && best == null; r += 8) {
+            for (int dx = -r; dx <= r && best == null; dx += 8) {
+                for (int dz = -r; dz <= r && best == null; dz += 8) {
+                    if (Math.max(Math.abs(dx), Math.abs(dz)) != r) continue;
+                    int x = x0 + dx, z = z0 + dz;
+                    // generate the chunk first: on a chunk that is not there yet the heightmap answers the world's bottom
+                    level.getChunk(x >> 4, z >> 4);
+                    int y = level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z);
+                    if (y <= level.getMinY() + 1) continue;
+                    BlockPos ground = new BlockPos(x, y - 1, z);
+                    if (level.getFluidState(ground).isEmpty() && level.getFluidState(ground.above()).isEmpty()) best = ground.above();
+                }
+            }
+        }
+        if (best == null) throw new IllegalStateException("suite:surface: no dry ground within 256 blocks of " + x0 + " " + z0);
+        p.teleportTo(level, best.getX() + 0.5, best.getY(), best.getZ() + 0.5, java.util.Set.of(), p.getYRot(), p.getXRot(), true);
+        if (a.length > 2) {
+            int r = Integer.parseInt(a[2]);
+            s.getCommands().performPrefixedCommand(s.createCommandSourceStack(), String.format("forceload add %d %d %d %d",
+                    best.getX() - r, best.getZ() - r, best.getX() + r, best.getZ() + r));
+        }
     }
 
     static boolean synced() {

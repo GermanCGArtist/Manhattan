@@ -1,7 +1,8 @@
 # Manhattan test suite (design)
 
-Status: **design agreed 2026-11-26; first version built the same night** (25 families, generator, checker,
-runner and report in `tests/suite/`; fleet cases and the endurance suite are not built yet). This is the plan for a large generated test suite run through
+Status: **design agreed 2026-11-26; first version built the same night; first full run 2026-11-27** (25 families,
+generator, checker, runner and report in `tests/suite/`; fleet cases and the endurance suite are not built yet).
+Results of the first run: [First run](#first-run-2026-11-27). This is the plan for a large generated test suite run through
 Deming. The existing levels (`build.bat`, `tests\ingame\run.bat`, `tests\deming\waves.py`) stay as they are; see
 [TESTING.md](TESTING.md) and [DEMING_BENCHMARKS.md](DEMING_BENCHMARKS.md).
 
@@ -16,6 +17,7 @@ python tests/suite/run.py -j 25                         # smoke gate
 python tests/suite/generate.py                          # about 2500 cases
 python tests/suite/run.py -j 32                         # full run, 3-4 h
 python tests/suite/report.py tmp/suite/runs/<run> tests/suite/baseline/summary.json   # compare
+python tests/suite/merge.py --cases tmp/suite/cases tmp/suite/runs/<out> <run> <rerun>   # join a partial rerun
 python tests/suite/generate.py --list                   # families and parameters
 ```
 
@@ -175,3 +177,65 @@ Results of the measurements go in the section below.
   `pass=false` when any action was stopped by `timeout(...)`, so these benchmarks fail until they finish in time.
 - **The benchmark world's ground is not classic flat** (and has village buildings); every scenario has to rebuild
   its ground, which the generated cases do.
+
+## First run (2026-11-27)
+
+2495 generated cases, 32 games at once, Manhattan 2.16.8. The full run took 4 h 15 min. The internet dropped at
+about 04:00 and Deming could not fetch the Fabric loader profile, so 1019 games never started; they were rerun,
+and every case the run's harness bugs had spoiled was rerun after the fix (`tests/suite/merge.py` joins the runs).
+The merged result is in [`tests/suite/baseline/`](../tests/suite/baseline/) (`summary.json` is the baseline for
+the next run, `report.md` the grouped failures).
+
+**2477 cases: 2089 pass, 355 fail, 29 flaky, 4 broke in setup (84 % of the started ones pass).** Twelve
+families pass 99-100 %: walls, gaps, mazes, fluids, climbing, tall and tunnel clears, eating, chests,
+combined navigation + work and job chains.
+
+### What it found in Manhattan
+
+Ordered by how much they cost. Each has repro commands in the baseline report.
+
+1. **`fill_water` does nothing on flowing water** (drain_flowing, 83 of 83 fail). A 2-deep pit filled from 1-4
+   sources: "0 cells filled ... nothing to build against", although every cell has a solid block below or beside
+   it. Only source blocks seem to count as cells to fill.
+2. **Schematic builds end with blocks missing** (schem_build 45 % pass, combo_build 39 %). Usually 1-10 of
+   50-239 cells, most often in the upper wall rows the bot walked through while building, and dirt clutter in the
+   footprint left in place. In about half the cases Manhattan says "N blocks still wrong" and stops without another
+   pass; in the other half it says **"everything is as it should be" while the cells are empty**, in the server's
+   world and in the client's (the checker logs both, so these are not ghost blocks): its final check misses cells.
+3. **Descending a 30-block tower without a water bucket** (nav_descend, 20 of 21 with height 30 fail): the planner
+   runs into its 4096-node limit, digs into the tower, bridges out at y=-41 straight over the target and then
+   alternates between two 1-node partial paths until `goto` gives up, and **`goto` still reports success** 19
+   blocks above the target.
+4. **Large clears are slower than the estimate** (clear_box 83 %, clear_wet 65 %): 16x16x5 and 24x16x5 boxes of
+   sand, gravel or mixed blocks with iron or diamond tools do not finish within 15 min (passing clears take a median
+   1.5x the generator's estimate). clear_wet fails mostly with lava or water pockets inside a 12x12x3 box.
+5. **Real terrain clears leave single blocks** (terrain_clear 73 %): leaf litter, grass, dirt or sand at the edge
+   of the box, with "0 left" from Manhattan.
+6. Smaller: deaths against 3 skeletons without armour while idle (defend_work), 2 drowning deaths in a 1-wide
+   shaft (drown_escape), a corner cell left by combo_clear at size 14.
+
+### What it found in the harness (fixed)
+
+- Deming counts its timeout from launch, and booting 32 games together takes over 2 minutes, so slow cases were
+  killed before their own limit fired; the job timeout now adds 8 minutes.
+- `spreadplayers` with a range of 1 fails silently over water or leaves, and with a larger range over oceans; the
+  player then stayed underground at the bootstrap position. Real-seed cases now use `suite:surface X Z R` (dry
+  ground nearest to X Z, generating the chunk first, see `SuiteCase.java`), the navigation target is relative to
+  the real start, and a case whose player starts below `min_start_y` counts as a setup failure, not a Manhattan
+  failure.
+- clear_tunnel with mixed material: sand and gravel columns fell into the tunnel, so "roof untouched" could not
+  hold; the roof is now solid stone. drown_escape without a tool in stone could not be escaped (about 37 s a
+  block by hand under water) and is no longer generated. nav_climb's staircase met the tower only diagonally.
+- Peaceful refills the food bar, so hunger cases never got hungry; cases run on easy (mob spawning stays off).
+- The script started before the client had the setup's blocks; it now waits 2 s after setup, and the checker
+  waits 1.5 s after the script so the last placements reach the server.
+
+### Still open in the harness
+
+- Deming downloads the Fabric loader profile for every game; without internet no game starts. A cached profile
+  would make runs independent of the network.
+- About 1 % of games fail before starting with Deming's "Mod error: I/O error" while copying mods; the retry
+  covers them.
+- Fleet cases (several cases per server) and the endurance suite are not built. Faster than real time needs the
+  client timer sped up in the test bridge (`/tick rate` does not speed up the bot).
+- `build/libs/manhattan-*-2.16.8.jar` were rebuilt from this branch for the run.

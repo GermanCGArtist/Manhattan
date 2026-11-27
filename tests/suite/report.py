@@ -29,7 +29,7 @@ def load(run_dir):
             last["verdict"] = "pass"
         elif last["pass"]:
             last["verdict"] = "flaky"
-        elif all("no game log" in r["reason"] or r["reason"].startswith("setup failed") for r in rs):
+        elif all("no game log" in r["reason"] or "setup failed" in r["reason"] for r in rs):
             last["verdict"] = "infra"     # the game never started (Deming) or the case's setup broke: not a Manhattan result
         else:
             last["verdict"] = "fail"

@@ -196,7 +196,8 @@ def nav_climb(p, rng):
     setup += fill(tx - 1, Y, O[2] - 1, tx + 1, top - 1, O[2] + 1, "stone")
     if p["approach"] == "steps":
         for i in range(1, h):
-            setup += fill(tx - 1 - i, Y, O[2] - 3, tx - 1 - i, top - 1 - i, O[2] - 2, "cobblestone")
+            # two wide, against the tower's west face (beside it, the last step up would only touch it diagonally)
+            setup += fill(tx - 1 - i, Y, O[2] - 1, tx - 1 - i, top - 1 - i, O[2], "cobblestone")
     elif p["approach"] == "overhang":
         setup += fill(tx - 2, top - 1, O[2] - 2, tx + 2, top - 1, O[2] + 2, "stone")
     return dict(setup=setup, script=["goto(%s)" % P((tx, top, O[2]))], checks=[ALIVE, near((tx, top, O[2]), 1.8)],
@@ -259,13 +260,13 @@ def nav_maze(p, rng):
 def terrain_nav(p, rng):
     dx, dz = {"n": (0, -1), "e": (1, 0), "s": (0, 1), "w": (-1, 0)}[p["dir"]]
     sx, sz = rng.randint(-20, 20), rng.randint(-20, 20)
-    tx, tz = sx + dx * p["dist"], sz + dz * p["dist"]
-    setup = ["forceload add %d %d %d %d" % (min(sx, tx) - 24, min(sz, tz) - 24, max(sx, tx) + 24, max(sz, tz) + 24),
-             "kill @e[type=!player]", "difficulty easy", "time set noon", "weather clear", "tick rate 20",
-             "effect give @p resistance 10 255 true", "spreadplayers %d %d 0 24 false @p" % (sx, sz),
+    ox, oz = dx * p["dist"], dz * p["dist"]
+    # the start is the nearest dry ground to sx sz, so the target is relative to where the player really starts
+    setup = ["kill @e[type=!player]", "difficulty easy", "time set noon", "weather clear", "tick rate 20",
+             "effect give @p resistance 10 255 true", "suite:surface %d %d %d" % (sx, sz, p["dist"] + 24),
              "gamemode survival @p", "clear @p"] + tools("diamond") + give("dirt", 64) + give("bread", 8)
-    return dict(setup=setup, script=["goto(%d, %d)" % (tx, tz)],
-                checks=[ALIVE, near((tx, 0, tz), 2.5, ignore_y=True)], est=40 + p["dist"] * 1.2,
+    return dict(setup=setup, script=["let p = here", "goto(p.x + %d, p.z + %d)" % (ox, oz)],
+                checks=[ALIVE, near((ox, 0, oz), 2.5, ignore_y=True, rel=True)], est=40 + p["dist"] * 1.2,
                 world_seed=REAL_SEEDS[p["seed"]], min_start_y=-40)
 
 
@@ -721,9 +722,9 @@ def chain_jobs(p, rng):
 @family("terrain_clear", "digging", {"seed": list(range(len(REAL_SEEDS))), "size": [3, 5, 8], "depth": [1, 2, 3]})
 def terrain_clear(p, rng):
     sx, sz = rng.randint(-30, 30), rng.randint(-30, 30)
-    setup = ["forceload add %d %d %d %d" % (sx - 32, sz - 32, sx + 32, sz + 32), "kill @e[type=!player]",
+    setup = ["kill @e[type=!player]",
              "difficulty easy", "time set noon", "weather clear", "tick rate 20",
-             "effect give @p resistance 10 255 true", "spreadplayers %d %d 0 24 false @p" % (sx, sz),
+             "effect give @p resistance 10 255 true", "suite:surface %d %d 32" % (sx, sz),
              "gamemode survival @p", "clear @p"] + tools("haste") + give("dirt", 64)
     s, d = p["size"], p["depth"]
     # relative to where the player stands when the script starts: a box beside them, d deep into the ground
