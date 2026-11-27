@@ -2,6 +2,14 @@
 
 Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
 
+## 2.16.10 – no false "beds are missing" halt after a respawn (2026-11-27)
+- Fixed: a fleet worker that died and respawned at its bed halted 2 s later with "All 7 configured beds are
+  missing" and stayed off fleet work until the halt was cleared by hand (seen on manhat_01). The client had not
+  received the bed's chunk data yet, so the bed spot read as air. The bed check now waits 10 s after a respawn,
+  a world change or a teleport, and needs the bed gone in 5 checks in a row (5 s) before it halts.
+- A missing-bed halt now clears itself as soon as a configured bed is seen again nearby.
+- Untested in game (no Deming run for this release); unit tests pass.
+
 ## 2.16.9 – scale fleet jobs while they run (2026-11-27)
 - New: the Server Job Queue in the Fleet panel can change a running job's worker count (*Max bots* `-` / `+`) and
   add or remove single workers (**Add worker...**, **Remove worker...**) without resubmitting it. Needs fleet

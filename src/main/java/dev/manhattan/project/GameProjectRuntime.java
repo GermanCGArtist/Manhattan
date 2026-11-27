@@ -58,12 +58,27 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
     private int baseTripFailStreak;
     private int emergencyCooldownTicks;
     private int bedCheckTicks;
+    /** Bed checks in a row that found the bed spot empty; a halt needs {@link #BED_MISS_CONFIRM_CHECKS}. */
+    private int bedMissStreak;
+    /** Ticks left in which the bed check trusts nothing (after a respawn, a world change or a teleport). */
+    private int bedCheckGraceTicks;
+    private Object bedCheckLevel;
+    private Object bedCheckPlayer;
+    private BlockPos bedCheckLastPos;
     private volatile String safetyHaltReason;
     /** A disk reload arrived while a queue ran; {@link #tick} applies it once the run has ended. */
     private boolean reloadPendingAfterRun;
 
     private static final int BED_CHECK_INTERVAL_TICKS = 20;
     private static final int BED_TRUST_RADIUS = 48;
+    /** A bed must read as gone this many checks in a row (one a second) before the bot halts. */
+    private static final int BED_MISS_CONFIRM_CHECKS = 5;
+    /**
+     * After a respawn, a world change or a teleport the client still waits for the chunks around it, and an
+     * unfilled chunk reads as air: no bed verdict for 10 s (a respawn right next to the bed once halted a bot
+     * with "All 7 configured beds are missing").
+     */
+    private static final int BED_CHECK_GRACE_TICKS = 200;
     /** Minutes a supply chest seen without an item is skipped when fetching that item. */
     private static final double EMPTY_CHEST_RECHECK_MIN = 10.0;
 
@@ -97,6 +112,14 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
         if (halt != null) {
             haltForSafety(halt);
             return;
+        }
+
+        trackBedCheckGrace(mc);
+        if (!running()) {
+            if (++bedCheckTicks >= BED_CHECK_INTERVAL_TICKS) {
+                bedCheckTicks = 0;
+                clearBedHaltIfBedIsBack(mc);
+            }
         }
 
         dev.manhattan.fleet.FleetWorker.instance().tick(this, running() || QueueMod.projectRunnerRunning());
@@ -220,14 +243,57 @@ public final class GameProjectRuntime implements PriorityScheduler.Env {
         out.add(new int[]{p[0], p[1], p[2]});
     }
 
+    /** Starts the bed-check grace period on a respawn (new player object), a new level, death or a teleport. */
+    private void trackBedCheckGrace(Minecraft mc) {
+        BlockPos pos = mc.player.blockPosition();
+        boolean jumped = bedCheckLastPos != null && bedCheckLastPos.distSqr(pos) > 32 * 32;
+        if (mc.player.isDeadOrDying() || mc.level != bedCheckLevel || mc.player != bedCheckPlayer || jumped) {
+            bedCheckGraceTicks = BED_CHECK_GRACE_TICKS;
+            bedMissStreak = 0;
+        } else if (bedCheckGraceTicks > 0) {
+            bedCheckGraceTicks--;
+        }
+        bedCheckLevel = mc.level;
+        bedCheckPlayer = mc.player;
+        bedCheckLastPos = pos;
+    }
+
+    private static boolean isMissingBedHalt(String reason) {
+        return reason != null && (reason.contains("configured beds are missing") || reason.startsWith("Bed missing at"));
+    }
+
+    /** A missing-bed halt clears itself once a configured bed is seen again (loaded, nearby, really a bed). */
+    private void clearBedHaltIfBedIsBack(Minecraft mc) {
+        if (!isMissingBedHalt(safetyHaltReason) || bedCheckGraceTicks > 0) return;
+        if (mc.level.dimension() != Level.OVERWORLD) return;
+        for (int[] b : resolveAllBedPositions()) {
+            BlockPos bp = new BlockPos(b[0], b[1], b[2]);
+            if (!mc.level.hasChunkAt(bp)) continue;
+            if (bp.distSqr(mc.player.blockPosition()) > (long) BED_TRUST_RADIUS * BED_TRUST_RADIUS) continue;
+            if (mc.level.getBlockState(bp).getBlock() instanceof net.minecraft.world.level.block.BedBlock) {
+                QueueMod.projectLog("The bed at " + bp.toShortString() + " is there after all - cleared the missing-bed halt.");
+                safetyHaltReason = null;
+                bedMissStreak = 0;
+                dev.manhattan.fleet.FleetClient.instance().clearSafetyHalt();
+                return;
+            }
+        }
+    }
+
     private boolean checkAssignedBedMissing(Minecraft mc) {
+        if (bedCheckGraceTicks > 0 || mc.player.isDeadOrDying()) return false;
         if (mc.level.dimension() != Level.OVERWORLD) return false;
         int[] bed = resolveActiveBedPos();
         if (bed == null || bed.length < 3) return false;
         BlockPos bedPos = new BlockPos(bed[0], bed[1], bed[2]);
-        if (!mc.level.hasChunkAt(bedPos)) return false;
-        if (bedPos.distSqr(mc.player.blockPosition()) > (long) BED_TRUST_RADIUS * BED_TRUST_RADIUS) return false;
-        if (mc.level.getBlockState(bedPos).getBlock() instanceof net.minecraft.world.level.block.BedBlock) return false;
+        if (!mc.level.hasChunkAt(bedPos)
+                || bedPos.distSqr(mc.player.blockPosition()) > (long) BED_TRUST_RADIUS * BED_TRUST_RADIUS
+                || mc.level.getBlockState(bedPos).getBlock() instanceof net.minecraft.world.level.block.BedBlock) {
+            bedMissStreak = 0;
+            return false;
+        }
+        if (++bedMissStreak < BED_MISS_CONFIRM_CHECKS) return false;
+        bedMissStreak = 0;
 
         // Check backup beds before halting: if another configured bed is present (or unloaded), fail over to it.
         List<int[]> allBeds = resolveAllBedPositions();

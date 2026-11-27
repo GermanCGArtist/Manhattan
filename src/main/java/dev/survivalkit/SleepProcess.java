@@ -121,6 +121,9 @@ final class SleepProcess extends Feature {
 
     private static boolean bedGoneAt(Minecraft mc, LocalPlayer p, BlockPos pos) {
         if (pos == null || mc == null || mc.level == null || p == null) return false;
+        // Just respawned (a new player starts at tickCount 0): the chunks around it may not have arrived yet and
+        // an unfilled chunk reads as air, so give no "bed gone" verdict for the first 10 s.
+        if (p.tickCount < 200 || p.isDeadOrDying()) return false;
         if (!mc.level.hasChunkAt(pos)) return false;
         if (pos.distSqr(p.blockPosition()) > TRUST_BED_WITHIN * TRUST_BED_WITHIN) return false;
         return !(mc.level.getBlockState(pos).getBlock() instanceof BedBlock);
