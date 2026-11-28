@@ -58,7 +58,7 @@ def P(p):
     return "pos(%d, %d, %d)" % tuple(p)
 
 
-def base_setup(difficulty="easy", time="noon"):
+def base_setup(difficulty="easy", time="noon", saturation=True):
     # The benchmark world is a test preset whose ground is not the classic flat layout (and it has village
     # buildings), so every flat case rebuilds its area: bedrock -64, dirt -63..-62, grass -61, air -60..-40.
     reset = (fill(84, -63, 84, 196, -62, 196, "dirt") + fill(84, -61, 84, 196, -61, 196, "grass_block")
@@ -69,7 +69,9 @@ def base_setup(difficulty="easy", time="noon"):
     return (["effect give @p slow_falling 30 0 true", "tp @p 100 -30 100 0 0", "kill @e[type=!player]"] + reset +
             ["kill @e[type=item]", "gamemode survival @p", "difficulty %s" % difficulty, "tick rate 20",
              "clear @p", "time set %s" % time, "weather clear", "tp @p 100 -60 100 0 0",
-             "effect clear @p", "effect give @p instant_health 1 10 true", "effect give @p saturation 1 10 true"])
+             "effect clear @p", "effect give @p instant_health 1 10 true"]
+            # a full saturation buffer keeps a hunger case's bar from dropping at all, so those cases skip it
+            + (["effect give @p saturation 1 10 true"] if saturation else []))
 
 
 def give(item, n=1):
@@ -507,13 +509,14 @@ FOODS = ["bread", "cooked_beef", "golden_carrot", "baked_potato"]
 @family("eat_work", "survival", {"hunger": [20, 50, 120], "food": FOODS + ["offhand_bread"], "task": ["clear", "walk", "idle"],
                                  "food_count": [2, 16]})
 def eat_work(p, rng):
-    setup = base_setup() + tools("haste")
+    setup = base_setup(saturation=False) + tools("haste")
     if p["food"] == "offhand_bread":
         setup.append("item replace entity @p weapon.offhand with bread %d" % p["food_count"])
     else:
         setup += give(p["food"], p["food_count"])
-    # strong hunger for 25 s drains the bar below 14 early in every task; the script then runs at least 60 s more
-    setup.append("effect give @p hunger 25 %d true" % p["hunger"])
+    # strong hunger drains the bar below 14 early in every task; the script then runs at least 60 s more. Level 20 only
+    # takes about 13 points in 25 s, which left the bar at 14 or more when the player started with some saturation.
+    setup.append("effect give @p hunger %d %d true" % (40 if p["hunger"] <= 20 else 25, p["hunger"]))
     script = ["on food < 14", "  eat()", "end"]
     checks = [ALIVE]
     if p["task"] == "clear":

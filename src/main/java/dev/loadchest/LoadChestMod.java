@@ -94,7 +94,8 @@ public class LoadChestMod implements ClientModInitializer {
     private static final int SEARCH_RADIUS = 48;
     private static final int PATH_TIMEOUT = 20 * 180;  // 3 min (auto trips can be long)
     private static final int OPEN_TIMEOUT = 20 * 5;    // 5 s
-    private static final int PICKUP_TIMEOUT = 20 * 6;  // give up on one item after 6 s
+    private static final int PICKUP_TIMEOUT = 20 * 6;  // give up on one item after 6 s without getting closer
+    private static final int PICKUP_ITEM_LIMIT = 20 * 30;   // and after 30 s on one item in all
     private static final int PICKUP_MIN_AGE = 20 * 3;  // ...that are at least 3 s old (the miner may pass them anyway)
 
     static LoadChestMod INSTANCE;
@@ -933,7 +934,12 @@ public class LoadChestMod implements ClientModInitializer {
     private class PickupProcess {
         private ItemEntity targetItem;
         private BlockPos lastGoalPos;
-        private int pathTicks;    // ticks spent on this item
+        private int pathTicks;    // ticks on this item since it last got closer
+        private int itemTicks;    // ticks on this item in all
+        private double itemBest = Double.MAX_VALUE;   // closest distance to it so far
+        private int directTicks;      // ticks walking straight at it without getting closer
+        private double directBest = Double.MAX_VALUE;
+        private boolean noDirect;     // walking straight at it got stuck (a block between): path to it instead
         private int touchTimer;   // ticks spent within reach without the item being picked up
         private final Set<Integer> ignored = new HashSet<>();   // items we gave up on
         private boolean collecting;   // a batch run is in progress
@@ -955,6 +961,11 @@ public class LoadChestMod implements ClientModInitializer {
             collecting = true;
             targetItem = null;
             pathTicks = 0;
+            itemTicks = 0;
+            itemBest = Double.MAX_VALUE;
+            directTicks = 0;
+            directBest = Double.MAX_VALUE;
+            noDirect = false;
             touchTimer = 0;
             triedExact = false;
             triedNear = false;
@@ -970,6 +981,11 @@ public class LoadChestMod implements ClientModInitializer {
         private void resetTarget() {
             targetItem = null;
             pathTicks = 0;
+            itemTicks = 0;
+            itemBest = Double.MAX_VALUE;
+            directTicks = 0;
+            directBest = Double.MAX_VALUE;
+            noDirect = false;
             touchTimer = 0;
             triedExact = false;
             triedNear = false;
@@ -1036,6 +1052,11 @@ public class LoadChestMod implements ClientModInitializer {
                     debug("all drops collected");
                 }
                 pathTicks = 0;
+            itemTicks = 0;
+            itemBest = Double.MAX_VALUE;
+            directTicks = 0;
+            directBest = Double.MAX_VALUE;
+            noDirect = false;
                 touchTimer = 0;
                 triedExact = false;
                 triedNear = false;
@@ -1068,7 +1089,13 @@ public class LoadChestMod implements ClientModInitializer {
             } else {
                 touchTimer = 0;
             }
-            if (targetItem != null && ++pathTicks > PICKUP_TIMEOUT) giveUp(mc, "took too long to reach");
+            // A drop down in a mined tunnel can need a climb and some digging: only give up after 6 s without getting
+            // closer, or after 30 s on one item in all.
+            if (targetItem != null) {
+                double dist = Math.sqrt(targetItem.distanceToSqr(p));
+                if (dist < itemBest - 0.5) { itemBest = dist; pathTicks = 0; }
+                if (++pathTicks > PICKUP_TIMEOUT || ++itemTicks > PICKUP_ITEM_LIMIT) giveUp(mc, "took too long to reach");
+            }
             if (targetItem == null) {
                 releaseDirectWalk(mc);
                 owningPath = false;
@@ -1079,10 +1106,21 @@ public class LoadChestMod implements ClientModInitializer {
             double dz = targetItem.getZ() - p.getZ();
             double horizDist = Math.hypot(dx, dz);
             double dy = Math.abs(targetItem.getY() - p.getY());
-            if (horizDist <= 2.2 && dy <= 1.2) {
+            // Walk straight at it only once our own path has ended: a drop down in a mined cell needs the path to
+            // dig the step down first, and walking at it from the ledge above gets nowhere.
+            if (horizDist <= 2.2 && dy <= 1.2 && !noDirect && !(owningPath && EngineSelector.current().isBusy())) {
                 if (owningPath || EngineSelector.current().isBusy()) {
                     EngineSelector.current().cancel();
                     owningPath = false;
+                }
+                if (horizDist < directBest - 0.2) { directBest = horizDist; directTicks = 0; }
+                else if (++directTicks > 20) {   // 1 s without getting closer: something is in the way
+                    noDirect = true;
+                    triedExact = false;
+                    triedNear = false;
+                    releaseDirectWalk(mc);
+                    debug("walking straight at it got stuck, finding a path");
+                    return;
                 }
                 float yaw = (float) (Math.toDegrees(Math.atan2(dz, dx)) - 90.0);
                 float err = Mth.wrapDegrees(yaw - p.getYRot());
@@ -1098,21 +1136,21 @@ public class LoadChestMod implements ClientModInitializer {
                 EngineStatus st = EngineSelector.current().status();
                 if (!triedExact) {
                     triedExact = true;
-                    lastGoalPos = targetItem.blockPosition();
+                    lastGoalPos = itemCell(mc, targetItem);
                     EngineSelector.current().goTo(GoalSpec.exact(lastGoalPos));
                     owningPath = true;
                 } else if (!triedNear && (st == EngineStatus.FAILED || st == EngineStatus.DONE)) {
                     triedNear = true;
-                    lastGoalPos = targetItem.blockPosition();
+                    lastGoalPos = itemCell(mc, targetItem);
                     EngineSelector.current().goTo(GoalSpec.near(lastGoalPos, 1));
                     owningPath = true;
                 } else if (triedNear && st == EngineStatus.FAILED) {
                     giveUp(mc, "path failed to item");
                 } else if (triedNear && st == EngineStatus.DONE) {
-                    if (lastGoalPos == null || targetItem.blockPosition().distSqr(lastGoalPos) > 4) {
+                    if (lastGoalPos == null || itemCell(mc, targetItem).distSqr(lastGoalPos) > 4) {
                         triedExact = true;
                         triedNear = false;
-                        lastGoalPos = targetItem.blockPosition();
+                        lastGoalPos = itemCell(mc, targetItem);
                         EngineSelector.current().goTo(GoalSpec.exact(lastGoalPos));
                         owningPath = true;
                     } else {
@@ -1120,6 +1158,23 @@ public class LoadChestMod implements ClientModInitializer {
                     }
                 }
             }
+        }
+
+        /** The cell the item lies in: an item on the edge of a hole can poke over into the open cell beside it, and
+         *  blockPosition() then names a cell nothing can stand in. Prefers an open cell with a floor under it. */
+        private BlockPos itemCell(Minecraft mc, ItemEntity e) {
+            BlockPos own = e.blockPosition();
+            if (mc.level == null) return own;
+            int y = Mth.floor(e.getY() + 0.01);
+            net.minecraft.world.phys.AABB bb = e.getBoundingBox();
+            for (double x : new double[] {e.getX(), bb.minX + 0.01, bb.maxX - 0.01}) {
+                for (double z : new double[] {e.getZ(), bb.minZ + 0.01, bb.maxZ - 0.01}) {
+                    BlockPos c = new BlockPos(Mth.floor(x), y, Mth.floor(z));
+                    if (!mc.level.getBlockState(c).getCollisionShape(mc.level, c).isEmpty()) continue;
+                    if (!mc.level.getBlockState(c.below()).getCollisionShape(mc.level, c.below()).isEmpty()) return c;
+                }
+            }
+            return own;
         }
 
         private void giveUp(Minecraft mc, String why) {

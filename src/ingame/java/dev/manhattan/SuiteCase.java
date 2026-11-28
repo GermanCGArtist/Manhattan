@@ -44,8 +44,13 @@ final class SuiteCase {
 
     private static JsonObject spec;
     private static volatile boolean setupDone;
+    private static volatile long setupDoneAt;
     private static volatile boolean setupFailed;
     private static String setupError = "";
+    // blocks the setup placed, as the server has them right after it: the script only starts once the client sees
+    // them too (under load a fixed wait was not always enough, and mine() then found no ore and was done at once)
+    private static final java.util.Map<BlockPos, net.minecraft.world.level.block.state.BlockState> expected =
+            new java.util.concurrent.ConcurrentHashMap<>();
 
     private SuiteCase() {}
 
@@ -86,6 +91,7 @@ final class SuiteCase {
     static void setup(Minecraft mc) {
         setupDone = false;
         setupFailed = false;
+        expected.clear();
         MinecraftServer s = mc.getSingleplayerServer();
         if (s == null) {
             setupFailed = true;
@@ -96,6 +102,7 @@ final class SuiteCase {
         JsonElement e = spec().get("setup");
         List<String> cmds = new ArrayList<>();
         if (e != null) for (JsonElement l : e.getAsJsonArray()) cmds.add(l.getAsString());
+        List<BlockPos> samples = new ArrayList<>();
         s.execute(() -> {
             try {
                 var src = s.createCommandSourceStack();
@@ -105,7 +112,11 @@ final class SuiteCase {
                         continue;
                     }
                     s.getCommands().performPrefixedCommand(src, c.startsWith("/") ? c.substring(1) : c);
+                    sample(c, samples);
                 }
+                ServerLevel lv = s.overworld();
+                for (BlockPos q : samples) expected.put(q, lv.getBlockState(q));
+                setupDoneAt = System.currentTimeMillis();
             } catch (Throwable t) {
                 setupFailed = true;
                 setupError = String.valueOf(t);
@@ -159,8 +170,36 @@ final class SuiteCase {
         return true;
     }
 
+    /** Remembers where a setblock or fill command put blocks (each setblock, a fill's corners and centre). */
+    private static void sample(String c, List<BlockPos> out) {
+        if (out.size() >= 300) return;
+        String[] t = c.trim().replaceFirst("^/", "").split("\s+");
+        try {
+            if (t[0].equals("setblock") && t.length >= 5) {
+                out.add(new BlockPos(Integer.parseInt(t[1]), Integer.parseInt(t[2]), Integer.parseInt(t[3])));
+            } else if (t[0].equals("fill") && t.length >= 8) {
+                int[] v = new int[6];
+                for (int i = 0; i < 6; i++) v[i] = Integer.parseInt(t[i + 1]);
+                out.add(new BlockPos(v[0], v[1], v[2]));
+                out.add(new BlockPos(v[3], v[4], v[5]));
+                out.add(new BlockPos((v[0] + v[3]) / 2, (v[1] + v[4]) / 2, (v[2] + v[5]) / 2));
+            }
+        } catch (NumberFormatException ignored) {
+            // relative (~) coordinates: not sampled
+        }
+    }
+
+    /** The setup ran and the client sees the blocks it placed. */
     static boolean synced() {
-        return setupDone;
+        if (!setupDone) return false;
+        // blocks that change by themselves (falling sand, spreading water) never match: give up waiting after 10 s
+        if (setupFailed || expected.isEmpty() || System.currentTimeMillis() - setupDoneAt > 10_000) return true;
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.level == null) return false;
+        for (var en : expected.entrySet()) {
+            if (mc.level.getBlockState(en.getKey()) != en.getValue()) return false;
+        }
+        return true;
     }
 
     static void failSetup(String why) {
