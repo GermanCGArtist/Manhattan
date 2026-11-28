@@ -115,7 +115,7 @@ final class SuiteCase {
     }
 
     /**
-     * "suite:surface X Z [R]": puts the player on dry ground at the surface near X Z (searching outwards up to 256
+     * "suite:surface X Z [R [D]]": puts the player on dry ground (with no fluid within D blocks, when given) at the surface near X Z (searching outwards up to 256
      * blocks) and force-loads R blocks around that spot. Replaces spreadplayers, which gives up over oceans and
      * rivers and leaves the player where it was. Checks with "rel": true are relative to where the player ends up.
      */
@@ -124,6 +124,7 @@ final class SuiteCase {
         ServerLevel level = s.overworld();
         ServerPlayer p = s.getPlayerList().getPlayers().isEmpty() ? null : s.getPlayerList().getPlayers().get(0);
         if (p == null) throw new IllegalStateException("suite:surface: no player");
+        int dry = a.length > 3 ? Integer.parseInt(a[3]) : 0;
         BlockPos best = null;
         for (int r = 0; r <= 256 && best == null; r += 8) {
             for (int dx = -r; dx <= r && best == null; dx += 8) {
@@ -135,7 +136,8 @@ final class SuiteCase {
                     int y = level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z);
                     if (y <= level.getMinY() + 1) continue;
                     BlockPos ground = new BlockPos(x, y - 1, z);
-                    if (level.getFluidState(ground).isEmpty() && level.getFluidState(ground.above()).isEmpty()) best = ground.above();
+                    if (level.getFluidState(ground).isEmpty() && level.getFluidState(ground.above()).isEmpty()
+                            && (dry <= 0 || dryAround(level, ground, dry))) best = ground.above();
                 }
             }
         }
@@ -148,8 +150,22 @@ final class SuiteCase {
         }
     }
 
+    /** No water or lava within d blocks sideways of the spot, from 6 below to 2 above it. */
+    private static boolean dryAround(ServerLevel level, BlockPos at, int d) {
+        for (int dx = -d; dx <= d; dx++)
+            for (int dz = -d; dz <= d; dz++)
+                for (int dy = -6; dy <= 2; dy++)
+                    if (!level.getFluidState(at.offset(dx, dy, dz)).isEmpty()) return false;
+        return true;
+    }
+
     static boolean synced() {
         return setupDone;
+    }
+
+    static void failSetup(String why) {
+        setupFailed = true;
+        setupError = why;
     }
 
     static boolean setupFailed() {
@@ -248,7 +264,11 @@ final class SuiteCase {
     private static volatile BlockPos start = BlockPos.ZERO;
 
     static void markStart(Minecraft mc) {
-        if (mc.player != null) start = mc.player.blockPosition();
+        if (mc.player != null) {
+            start = mc.player.blockPosition();
+            System.out.println("[Suite] start at " + start.toShortString() + ", health " + mc.player.getHealth()
+                    + ", food " + mc.player.getFoodData().getFoodLevel());
+        }
     }
 
     private static BlockPos pos(JsonObject c, String key) {
@@ -286,7 +306,8 @@ final class SuiteCase {
             BlockState st = level.getBlockState(q);
             String id = id(st);
             boolean ok = (is.isEmpty() || is.contains(id)) && !not.contains(id);
-            if (!ok && skipWet && touchesFluid(level, q)) ok = true;
+            // the fluid itself and the cells around it are the seal Manhattan leaves on purpose
+            if (!ok && skipWet && (touchesFluid(level, q) || !level.getFluidState(q).isEmpty())) ok = true;
             if (!ok) {
                 bad++;
                 if (first == null) first = q.getX() + "," + q.getY() + "," + q.getZ() + " " + id + clientSees(q);

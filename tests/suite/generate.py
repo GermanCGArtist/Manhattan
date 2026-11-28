@@ -13,7 +13,7 @@ family gets its share of the total. Case ids are stable: the same family, parame
 Coordinates: the flat benchmark world has bedrock at y -64, dirt -63..-62, grass -61; the player stands at
 100 -60 100. The test bridge force-loads x/z 80..200, so flat cases stay inside 84..196.
 """
-import argparse, hashlib, itertools, json, os, random, sys
+import argparse, hashlib, itertools, json, math, os, random, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
@@ -63,9 +63,13 @@ def base_setup(difficulty="easy", time="noon"):
     # buildings), so every flat case rebuilds its area: bedrock -64, dirt -63..-62, grass -61, air -60..-40.
     reset = (fill(84, -63, 84, 196, -62, 196, "dirt") + fill(84, -61, 84, 196, -61, 196, "grass_block")
              + fill(84, -60, 84, 196, -40, 196, "air"))
-    return (["tp @p 100 -30 100 0 0", "kill @e[type=!player]"] + reset +
+    # The player waits in the air at -30 while the area is filled. Slow falling keeps the fall from counting (tp puts
+    # the player "on the ground", and a fall of a second or two then took up to half the hearts before the script ran);
+    # the effects are cleared after the last tp and health and food are topped up.
+    return (["effect give @p slow_falling 30 0 true", "tp @p 100 -30 100 0 0", "kill @e[type=!player]"] + reset +
             ["kill @e[type=item]", "gamemode survival @p", "difficulty %s" % difficulty, "tick rate 20",
-             "effect clear @p", "clear @p", "time set %s" % time, "weather clear", "tp @p 100 -60 100 0 0"])
+             "clear @p", "time set %s" % time, "weather clear", "tp @p 100 -60 100 0 0",
+             "effect clear @p", "effect give @p instant_health 1 10 true", "effect give @p saturation 1 10 true"])
 
 
 def give(item, n=1):
@@ -130,8 +134,25 @@ def near(p, r=1.5, label="reached target", ignore_y=False, rel=False):
 ALIVE = {"type": "alive", "label": "alive"}
 
 
+HARDNESS = {"stone": 1.5, "cobblestone": 2.0, "dirt": 0.5, "sand": 0.5, "gravel": 0.6, "oak_planks": 2.0,
+            "deepslate": 3.0, "andesite": 1.5, "netherrack": 0.4, "glass": 0.3}
+TIER_SPEED = {"haste": 8 * 1.6, "diamond": 8, "iron": 6, "stone": 4}   # haste: diamond tools with Haste III
+
+
+def block_seconds(mat, tool):
+    """Vanilla break time with the right tool, plus the game's 5-tick pause after each block and about 0.2 s for
+    turning, picking up and stepping (measured on the first full run: 0.5-0.7 s a block, whatever the material)."""
+    if mat == "mixed":
+        return sum(block_seconds(m, tool) for m in MIXED) / len(MIXED)
+    per_tick = TIER_SPEED[tool] / HARDNESS.get(mat, 1.5) / 30.0
+    if per_tick >= 1.0:
+        return 0.25   # breaks at once: no pause
+    ticks = math.ceil(1.0 / per_tick)
+    return 0.2 + (ticks + 5) / 20.0
+
+
 def clear_seconds(n, mat, tool):
-    return n * 0.28 * MAT_SPEED.get(mat, 1.0) * TOOL_SPEED[tool]
+    return n * block_seconds(mat, tool)
 
 
 # ------------------------------------------------------------------ families
@@ -279,7 +300,7 @@ def clear_box(p, rng):
     a = [O[0] + 4, Y, O[2] - p["sz"] // 2]
     b = [a[0] + p["sx"] - 1, Y + p["sy"] - 1, a[2] + p["sz"] - 1]
     est = 20 + clear_seconds(vol(a, b), p["material"], p["tool"])
-    if est > 700:
+    if est > 560:   # the limit is at most 900 s: keep 1.6x headroom
         return None
     setup = base_setup() + tools(p["tool"]) + fill_material(a, b, p["material"], rng)
     return dict(setup=setup, script=clear_job(a, b), checks=[ALIVE, check_air(a, b)], est=est)
@@ -309,7 +330,7 @@ def clear_wet(p, rng):
               {"type": "dry", "from": [a[0] + 1, a[1], a[2] + 1], "to": [b[0] - 1, b[1], b[2] - 1],
                "label": "no fluid inside"} if w != "pocket" else
               {"type": "dry", "from": a, "to": [a[0], b[1], a[2]], "label": "no fluid at the corner"}]
-    return dict(setup=setup, script=clear_job(a, b), checks=checks, est=30 + vol(a, b) * 0.12)
+    return dict(setup=setup, script=clear_job(a, b), checks=checks, est=30 + clear_seconds(vol(a, b), "stone", "haste") * 1.2)
 
 
 @family("clear_falling", "digging", {"material": ["sand", "gravel"], "layout": ["columns_above", "layer_on_top", "under"],
@@ -727,7 +748,7 @@ def terrain_clear(p, rng):
     sx, sz = rng.randint(-30, 30), rng.randint(-30, 30)
     setup = ["kill @e[type=!player]",
              "difficulty easy", "time set noon", "weather clear", "tick rate 20",
-             "effect give @p resistance 10 255 true", "suite:surface %d %d 32" % (sx, sz),
+             "effect give @p resistance 10 255 true", "suite:surface %d %d 32 %d" % (sx, sz, p["size"] + 4),
              "gamemode survival @p", "clear @p"] + tools("haste") + give("dirt", 64)
     s, d = p["size"], p["depth"]
     # relative to where the player stands when the script starts: a box beside them, d deep into the ground

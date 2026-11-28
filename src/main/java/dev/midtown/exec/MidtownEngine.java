@@ -208,6 +208,9 @@ public final class MidtownEngine implements PathEngine {
         Objects.requireNonNull(goal, "goal");
         clearActiveMine();
         cancelInFlightPlan();
+        stuckAnchor = bigSearchAnchor = null;
+        stuckPartials = 0;
+        bigSearchNext = false;
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer player = mc.player;
         if (player == null) {
@@ -523,6 +526,7 @@ public final class MidtownEngine implements PathEngine {
         LOGGER.info("[MidtownEngine] handleAsyncPlanResult: path found replan={} status={} nodes={} edges={} expanded={} ms={} start={} path={}",
                 isReplan, result.status(), nodes.size(), result.edges().size(), result.nodesExpanded(), result.elapsedMillis(),
                 start.toShortString(), describePath(nodes));
+        noteStuckPartial(result, start);
         if (isReplan) {
             if (nodes.isEmpty() && goal != null
                     && MidtownCoordinator.isGoalSatisfied(goal, start.getX() + 0.5, start.getY(), start.getZ() + 0.5)) {
@@ -534,6 +538,36 @@ public final class MidtownEngine implements PathEngine {
             coordinator.startGoalWithPath(goal, start, nodes);
         }
         checkStatusTransition();
+    }
+
+    // A search that runs out of nodes returns the best partial path. In open air over a drop (dug halfway down a tower
+    // and bridged out over the target) every search spends its nodes on bridging and returns a 1-step path, so the
+    // player walks back and forth until the replan limit. When partial plans keep starting from the same few blocks,
+    // search once with a much larger budget (a few seconds, off the game thread).
+    private static final int STUCK_PARTIALS = 4;
+    private static final int BIG_SEARCH_NODES = 300_000;
+    private static final long BIG_SEARCH_MS = 6_000L;
+    private BlockPos stuckAnchor, bigSearchAnchor;
+    private int stuckPartials;
+    private boolean bigSearchNext;
+
+    private void noteStuckPartial(PlanResult result, BlockPos start) {
+        if (pendingIsMine || result.status() != PlanResult.Status.PARTIAL) {
+            stuckAnchor = null;
+            stuckPartials = 0;
+            return;
+        }
+        if (stuckAnchor != null && stuckAnchor.distManhattan(start) <= 3) {
+            stuckPartials++;
+        } else {
+            stuckAnchor = start;
+            stuckPartials = 0;
+        }
+        if (stuckPartials >= STUCK_PARTIALS && (bigSearchAnchor == null || bigSearchAnchor.distManhattan(start) > 3)) {
+            bigSearchNext = true;
+            bigSearchAnchor = start;
+            stuckPartials = 0;
+        }
     }
 
     private void launchAsyncReplan(Minecraft mc, LocalPlayer player, GoalSpec goal, BlockPos start, String reason) {
@@ -652,6 +686,9 @@ public final class MidtownEngine implements PathEngine {
     }
 
     private CalculationContext buildContext(LocalPlayer player, GoalSpec goal) {
+        boolean big = bigSearchNext && goal != null;
+        bigSearchNext = false;
+        if (big) LOGGER.info("[MidtownEngine] partial paths stuck near {}: searching with a larger budget", bigSearchAnchor.toShortString());
         CalculationContext.Builder builder = CalculationContext.fromPlayer(player, effectiveItemSaverThreshold())
                 .allowBreak(allowBreak)
                 .allowPlace(allowPlace)
@@ -660,6 +697,8 @@ public final class MidtownEngine implements PathEngine {
                 .placeCostTicks(placeCostTicks)
                 .deathField(currentDeathField(goal))
                 .peerField(PeerTraffic.global().field(selfUuid, selfDimension, System.currentTimeMillis()))
+                .maxNodesExpanded(big ? BIG_SEARCH_NODES : CalculationContext.DEFAULT_MAX_NODES)
+                .timeBudgetMs(big ? BIG_SEARCH_MS : CalculationContext.DEFAULT_TIME_BUDGET_MS)
                 .dynamicEdgeBlacklist((fx, fy, fz, tx, ty, tz) ->
                         coordinator.edgeTracker().isBlacklisted(
                                 new BlockPos(fx, fy, fz),

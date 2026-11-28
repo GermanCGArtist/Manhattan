@@ -697,7 +697,9 @@ public class TestBridge implements ClientModInitializer {
                     // the setup runs on the server; give the client 2 s to receive the new blocks and items before
                     // the script looks at them (else it plans against the old world and an empty inventory)
                     if (SuiteCase.synced() && suiteSyncedAt < 0) suiteSyncedAt = benchTicks;
-                    if ((suiteSyncedAt >= 0 && benchTicks >= suiteSyncedAt + 40) || benchTicks >= 20 * 30) {
+                    // generating terrain for suite:surface can take a while with many games at once
+                    if ((suiteSyncedAt >= 0 && benchTicks >= suiteSyncedAt + 40) || benchTicks >= 20 * 180) {
+                        if (!SuiteCase.synced()) SuiteCase.failSetup("the setup did not finish within 3 min");
                         suiteSyncedAt = -1;
                         benchProjectMode = false;
                         benchProject = null;

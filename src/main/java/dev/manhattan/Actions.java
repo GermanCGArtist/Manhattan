@@ -306,7 +306,15 @@ final class Actions {
             int needIdle = (st == dev.midtown.api.EngineStatus.DONE || st == dev.midtown.api.EngineStatus.FAILED)
                     ? terminalSettleTicks()
                     : IDLE_DONE;
-            if (++idle >= needIdle) finish(true);
+            if (++idle >= needIdle) {
+                if (st == dev.midtown.api.EngineStatus.FAILED && command != null && command.startsWith("goto")) {
+                    // the walk gave up short of the goal: goto() returns false instead of reporting success
+                    Util.msg("goto " + command.substring(4).trim() + ": did not get there, Midtown found no way to it.");
+                    finish(false);
+                } else {
+                    finish(true);
+                }
+            }
         }
 
         @Override

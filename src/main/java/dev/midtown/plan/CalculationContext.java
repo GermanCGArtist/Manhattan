@@ -358,10 +358,6 @@ public final class CalculationContext {
         if (!peerField.isEmpty() && peerField.protectsBreak(tx, ty, tz)) {
             return true; // another bot stands on it or is in it
         }
-        CellRule keep = noBreakCell;
-        if (keep != null && world instanceof WorldSnapshot ws0 && keep.test(tx, ty, tz, ws0.blockStateAt(tx, ty, tz))) {
-            return true; // a schematic block that is already right: never dig through the build
-        }
         if (world instanceof WorldSnapshot ws && !disallowedBreakBlocks.isEmpty()) {
             BlockState state = ws.blockStateAt(tx, ty, tz);
             if (disallowedBreakBlocks.contains(state.getBlock())) {
@@ -494,8 +490,22 @@ public final class CalculationContext {
         boolean test(int x, int y, int z, BlockState now);
     }
 
-    /** Set by the schematic builder: true for a cell that already holds its schematic block; paths never break it. */
+    /**
+     * Set by the schematic builder: true for a cell that already holds its schematic block. Breaking one costs
+     * {@link #BUILT_BREAK_PENALTY} extra, so paths go around the build and only dig through it when there is no other
+     * way (down from a tower it stands on); the builder puts such a block back. A hard ban left it stuck up there.
+     */
     public static volatile CellRule noBreakCell;
+    public static final double BUILT_BREAK_PENALTY = 60.0;
+
+    /** Extra cost of breaking (x, y, z): {@link #BUILT_BREAK_PENALTY} for a finished schematic block, else 0. */
+    public static double builtBreakPenalty(int x, int y, int z, BlockView world) {
+        CellRule keep = noBreakCell;
+        if (keep != null && world instanceof WorldSnapshot ws && keep.test(x, y, z, ws.blockStateAt(x, y, z))) {
+            return BUILT_BREAK_PENALTY;
+        }
+        return 0.0;
+    }
 
     /** How many of {@code item} the inventory holds beyond what {@link #reservedBlocks} keeps back. */
     public static int spareCount(Inventory inv, Item item) {
