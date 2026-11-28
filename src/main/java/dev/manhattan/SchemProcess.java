@@ -251,6 +251,8 @@ public final class SchemProcess {
         Schem.Counts c = Schem.count(p, mode, mc.level, activeChunkBounds);
         choosePhases(c, mode);
         round = 0;
+        settleUntil = 0;
+        todoAtRoundStart = c.todoTotal();
         plan = p;
         planWorld = Minecraft.getInstance().level;
         this.mode = mode;
@@ -278,6 +280,10 @@ public final class SchemProcess {
     }
 
     private int round;   // 0: the first time through the phases, 1: once more for what the later phases left (scaffolding ...)
+    private int settleUntil;   // > 0: all phases ended; wait until since reaches it, then count again before finishing
+    private int leftAtEnd;     // blocks still to do when the last phase ended (before the settle wait)
+    private int todoAtRoundStart;   // blocks to do when this round started: a round that got any done earns another
+    private static final int SETTLE_TICKS = 40;   // the server's answer to the last placements arrives within this under lag
 
     private void choosePhases(Schem.Counts c, Mode mode) {
         phases.clear();
@@ -290,11 +296,25 @@ public final class SchemProcess {
 
     private void apply() {
         if (mode != Mode.ADD) breakBefore = dev.buildtools.Api.setOwnBreak(true);
+        // Midtown's pillars and bridges must not use up blocks the build still needs (only the surplus).
+        dev.midtown.plan.CalculationContext.reservedBlocks = it -> mtNeededCounts.getOrDefault(it, 0);
+        // ... and must not dig through blocks already built (a path that breaks one puts dirt back in its place).
+        final Plan pl = plan;
+        dev.midtown.plan.CalculationContext.noBreakCell = (x, y, z, now) -> {
+            int lx = x - pl.min.getX(), ly = y - pl.min.getY(), lz = z - pl.min.getZ();
+            if (lx < 0 || ly < 0 || lz < 0 || lx >= pl.sx || ly >= pl.sy || lz >= pl.sz) return false;
+            int i = pl.idx(lx, ly, lz);
+            BlockState d = pl.st[i];
+            if (d == null || d.isAir() || pl.excluded.get(i) || now == null) return false;
+            return Schem.norm(now).equals(d);
+        };
         changed = true;
     }
 
     private void restore() {
         if (!changed) return;
+        dev.midtown.plan.CalculationContext.reservedBlocks = null;
+        dev.midtown.plan.CalculationContext.noBreakCell = null;
         if (breakBefore != null) dev.buildtools.Api.setOwnBreak(breakBefore);
         breakBefore = null;
         changed = false;
@@ -312,6 +332,11 @@ public final class SchemProcess {
     private final List<BlockPos> mtQueue = new ArrayList<>();
     private final Set<BlockPos> mtDeferred = new HashSet<>();
     private final Set<BlockPos> mtBadSpots = new HashSet<>();
+    /** Cells taken off mtQueue because they looked done; one can turn empty again (a placement the server turned
+     *  down under lag, a block the builder broke or that fell), and is put back when nothing else is left. */
+    private final List<BlockPos> mtTaken = new ArrayList<>();
+    private int mtRequeues;
+    private static final int MT_MAX_REQUEUES = 3;
     private final Set<Integer> mtRetriedLayers = new HashSet<>();
     /** Layers whose set-aside cells already had their extra try before blocks that wall them in (see mtPickNext). */
     private final Set<Integer> mtSealRetryLayers = new HashSet<>();
@@ -424,6 +449,12 @@ public final class SchemProcess {
         if (!working) return;
         Minecraft mc = Minecraft.getInstance();
         if (mc.level == null || mc.player == null) return;
+        if (settleUntil > 0) {
+            if (++since < settleUntil) return;
+            settleUntil = 0;
+            afterLastPhase();
+            return;
+        }
         if (++since < FIRST_CHECK) return;
         Phase ph = phases.get(pi);
         if (ph == Phase.ORIENTED || ph == Phase.CLEAR) {
@@ -453,21 +484,40 @@ public final class SchemProcess {
         if (left > 0) stuck.add(ph.label + ": " + left + " left" + (why != null ? " - " + why : ""));
         Util.msg("Phase " + ph.label + ": " + phaseResult.get(ph) + ".");
         if (++pi >= phases.size()) {
+            // The client shows a placed block at once, but under lag the server may still turn it down and send the
+            // old block back a moment later; counting right now would call such a cell done. So wait, then count.
+            leftAtEnd = c.todoTotal();
+            settleUntil = since + SETTLE_TICKS;
+        } else {
+            since = 0;
+            startPhase();
+        }
+    }
+
+    /** All phases ended and the world had time to settle: count again, then go once more or finish. */
+    private void afterLastPhase() {
+        Schem.Counts c = Schem.count(plan, mode, Minecraft.getInstance().level, activeChunkBounds);
+        {
             // Once more: a block a later phase was in the way of (water, scaffolding Baritone put into a cell of the
             // schematic) can be done now. Only when the first round got something done, so a hopeless rest ends quickly.
+            // Also when blocks came back while settling (placements the server turned down): those are not hopeless.
             int done = 0;
             for (var e : phaseResult.entrySet()) if ("done".equals(e.getValue())) done++;
-            if (round == 0 && c.todoTotal() > 0 && (done > 0 || !giveUp.isEmpty())) {
+            boolean reverted = c.todoTotal() > leftAtEnd;
+            if (reverted) Util.msg((c.todoTotal() - leftAtEnd) + " blocks the server did not take (lag): building them again.");
+            boolean progress = c.todoTotal() < todoAtRoundStart;
+            if (c.todoTotal() > 0 && ((round == 0 && (done > 0 || !giveUp.isEmpty() || progress)) || (reverted && round < 3))) {
                 List<Phase> before = new ArrayList<>(phases);
                 choosePhases(c, mode);
                 if (!phases.isEmpty()) {
-                    round = 1;
+                    round++;
+                    todoAtRoundStart = c.todoTotal();
                     giveUp = java.util.Set.of();   // the cells given up on get one more try
                     stallsInRow = 0;
                     pi = 0;
                     stuck.clear();
                     phaseResult.clear();
-                    Util.msg("Once more for " + c.todoTotal() + " blocks left after the first round.");
+                    Util.msg("Once more for " + c.todoTotal() + " blocks left after round " + round + ".");
                     since = 0;
                     startPhase();
                     return;
@@ -476,9 +526,6 @@ public final class SchemProcess {
                 phases.addAll(before);
             }
             finish(c);
-        } else {
-            since = 0;
-            startPhase();
         }
     }
 
@@ -607,6 +654,8 @@ public final class SchemProcess {
 
     private void mtStartPhase(Phase ph) {
         mtQueue.clear();
+        mtTaken.clear();
+        mtRequeues = 0;
         mtDeferred.clear();
         mtBadSpots.clear();
         mtRetriedLayers.clear();
@@ -1041,6 +1090,7 @@ public final class SchemProcess {
             BlockState d = plan.st[idx];
             BlockState cur = Schem.norm(level.getBlockState(w));
             if (!Schem.todo(plan, idx, mode, d, cur) || Schem.phaseAt(plan, idx, d, cur) != ph) {
+                mtTaken.add(w);
                 it.remove();
                 continue;
             }
@@ -1130,7 +1180,7 @@ public final class SchemProcess {
             }
         }
 
-        if (best == null) return false;
+        if (best == null) return mtRequeueTaken(level, ph) && mtPickNext(level, p, ph);
         // Only blocks that would wall something in are left: first give the cells set aside their second try
         // (the caller clears mtDeferred once), only then close them in.
         if (bestScore >= 1000.0 && sealers > 0 && mtSealRetryLayers.add(best.getY())) {
@@ -1146,6 +1196,25 @@ public final class SchemProcess {
         mtItem = bestItem;
         mtSpotRetries = 0;
         mtPlaceTicks = 0;
+        return true;
+    }
+
+    /** Puts the cells taken off the queue that are to do again back on it; false when there are none (or too often). */
+    private boolean mtRequeueTaken(Level level, Phase ph) {
+        if (mtRequeues >= MT_MAX_REQUEUES || mtTaken.isEmpty()) return false;
+        List<BlockPos> back = new ArrayList<>();
+        for (BlockPos w : mtTaken) {
+            if (!level.hasChunkAt(w)) continue;
+            int idx = plan.idx(w.getX() - plan.min.getX(), w.getY() - plan.min.getY(), w.getZ() - plan.min.getZ());
+            BlockState cur = Schem.norm(level.getBlockState(w));
+            if (Schem.todo(plan, idx, mode, plan.st[idx], cur) && Schem.phaseAt(plan, idx, plan.st[idx], cur) == ph) back.add(w);
+        }
+        if (back.isEmpty()) return false;
+        mtRequeues++;
+        mtTaken.removeAll(back);
+        mtQueue.addAll(back);
+        System.out.println("[Queue] schem: " + back.size() + " blocks that looked done are missing again (first "
+                + back.get(0).toShortString() + "): back in the queue");
         return true;
     }
 

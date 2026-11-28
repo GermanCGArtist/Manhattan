@@ -606,7 +606,11 @@ public final class ClearProcess {
                         ? Double.compare(eye.distanceToSqr(Vec3.atCenterOf(b)), eye.distanceToSqr(Vec3.atCenterOf(a)))
                         : Double.compare(eye.distanceToSqr(Vec3.atCenterOf(a)), eye.distanceToSqr(Vec3.atCenterOf(b)))));
         for (BlockPos b : cand) {
-            BlockHitResult hit = level.clip(new ClipContext(eye, Vec3.atCenterOf(b), ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, p));
+            // aim at the middle of the block's outline, not of its cell: a thin layer (leaf litter, a carpet, snow)
+            // lies at the bottom of its cell, and a ray to the cell's centre passes over it
+            var shape = level.getBlockState(b).getShape(level, b);
+            Vec3 to = shape.isEmpty() ? Vec3.atCenterOf(b) : shape.bounds().getCenter().add(b.getX(), b.getY(), b.getZ());
+            BlockHitResult hit = level.clip(new ClipContext(eye, to, ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, p));
             if (hit.getType() == HitResult.Type.BLOCK && hit.getBlockPos().equals(b)) return hit;
         }
         return null;
@@ -1177,7 +1181,9 @@ public final class ClearProcess {
                         left++;
                         if (protectedOrForbidden(s, pos)) guarded++;
                         else if (nextToFluid(level, pos)) wet++;
-                        else if (left - wet - guarded <= 10) System.out.println("[Queue] clear_area left: " + pos.toShortString());
+                        else if (left - wet - guarded <= 10) System.out.println("[Queue] clear_area left: " + pos.toShortString() + " "
+                                + net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(s.getBlock()).getPath()
+                                + (skipped.contains(pos) ? " skipped" : "") + (pos.getY() < feetY ? " below feet " + feetY : ""));
                         if (left > 200_000) break outer;
                     }
                 }

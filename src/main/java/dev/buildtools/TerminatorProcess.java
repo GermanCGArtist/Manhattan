@@ -178,6 +178,7 @@ public final class TerminatorProcess extends Feature {
         lastReason = "";
         ranOut = false;
         lastHeartbeatTick = 0;
+        ownCellPillars = 0;
         breakBefore = RegionRules.setOwnBreak(false);
         placeBefore = RegionRules.setOwnPlace(false);
         working = true;
@@ -188,6 +189,7 @@ public final class TerminatorProcess extends Feature {
     }
 
     private void giveBackBreak() {
+        escapeWalk = false;
         if (breakBefore != null) {
             RegionRules.setOwnBreak(breakBefore);
             breakBefore = null;
@@ -200,10 +202,35 @@ public final class TerminatorProcess extends Feature {
 
     // walking: the goal, and whether we are getting closer
     private boolean triedNear, triedExact;
+    /** This walk may place blocks: the bot filled the cells around itself and can only pillar out. */
+    private boolean escapeWalk;
+    private int ownCellPillars;   // times this fill swam up out of its own cell to fill it (bounded, no loop)
+
+    /**
+     * Shut in: every block around the head is solid, so there is no walking or stepping out of here without placing
+     * (the bot filled the cells around itself at the bottom of a pit). Water around counts as a way out.
+     */
+    private static boolean boxedIn(Level level, LocalPlayer p) {
+        if (p.isInWater() && p.isUnderWater()) return false;
+        BlockPos head = p.blockPosition().above();
+        for (Direction d : Direction.Plane.HORIZONTAL) {
+            if (open(level, head.relative(d))) return false;
+        }
+        return open(level, head.above());   // something overhead as well: pillaring would not help
+    }
+
+    /** Placing goes back off after an escape walk (it was only for climbing out). */
+    private void endEscape() {
+        if (!escapeWalk) return;
+        escapeWalk = false;
+        RegionRules.setOwnPlace(false);
+        LOGGER.info("[Terminator] escape walk over: placing off again");
+    }
     private double bestGoalDist;
     private int noProgress;
 
     private void startWalk(Level level, BlockPos to) {
+        endEscape();
         releaseKeys();
         goal = to;
         setState(State.WALK);
@@ -664,8 +691,9 @@ public final class TerminatorProcess extends Feature {
         }
         releaseKeys();
 
-        // from where we stand
-        BlockPos target = findInReach(mc, p, level);
+        // from where we stand (not while climbing out of a hole: a cell in reach from down there would cancel the
+        // climb after one block, and the bot would place one block, get shut in again and start over)
+        BlockPos target = escapeWalk ? null : findInReach(mc, p, level);
         if (target != null) { begin(mc, p, level, target); return; }
 
         // walking to a stand already
@@ -707,6 +735,34 @@ public final class TerminatorProcess extends Feature {
                 return;
             }
             if (!arrived && !engFailed && noProgress <= 20 * 15 && ++walkTicks <= WALK_TIMEOUT * 6) return;
+            // shut in by its own fill: the one way out is up, so this walk may place (only if placing was allowed
+            // before the fill switched it off)
+            if (!arrived && engFailed && !escapeWalk && Boolean.TRUE.equals(placeBefore) && diveSpot == null
+                    && boxedIn(level, p) && materialCount(p) > 1) {
+                escapeWalk = true;
+                RegionRules.setOwnPlace(true);
+                noProgress = 0;
+                walkTicks = 0;
+                LOGGER.info("[Terminator] boxed in at {}: climbing out to {} with placing allowed",
+                        p.blockPosition().toShortString(), goal.toShortString());
+                EngineSelector.current().goTo(GoalSpec.near(goal, 1));
+                return;
+            }
+            // standing in a wet cell of the pit with every way out filled or flooded (a corner at the bottom): no
+            // stand can be walked to, but the cell itself can go, by swimming up and placing under the feet
+            BlockPos feetNow = p.blockPosition();
+            if (!arrived && engFailed && !escapeWalk && diveSpot == null && p.isInWater() && ownCellPillars < 4
+                    && fillable(level, feetNow) && surfaceAbove(level, feetNow) != null && materialCount(p) > 0) {
+                ownCellPillars++;
+                EngineSelector.current().cancel();
+                goal = null;
+                LOGGER.info("[Terminator] no way out of {}: swimming up and filling the cell itself", feetNow.toShortString());
+                setState(State.PILLAR);
+                stateTicks = 0;
+                hold(false, true, false);
+                return;
+            }
+            endEscape();
             EngineSelector.current().cancel();
             markBadStand(goal);
             if (!arrived && diveSpot != null) {
@@ -816,6 +872,7 @@ public final class TerminatorProcess extends Feature {
     }
 
     private void begin(Minecraft mc, LocalPlayer p, Level level, BlockPos t) {
+        endEscape();
         if (state == State.WALK) {
             EngineSelector.current().cancel();
             setState(State.WORK);

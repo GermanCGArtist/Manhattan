@@ -205,6 +205,7 @@ public final class CalculationContext {
 
         Inventory inv = player.getInventory();
         int expendable = 0;
+        Set<Item> expendableItems = new HashSet<>();
         List<ToolEntry> capturedTools = new ArrayList<>();
 
         for (int i = 0; i < 36; i++) {
@@ -213,6 +214,7 @@ public final class CalculationContext {
 
             if (isExpendableBlockItem(stack)) {
                 expendable += stack.getCount();
+                expendableItems.add(stack.getItem());
             }
 
             if (stack.isDamageableItem()) {
@@ -223,6 +225,10 @@ public final class CalculationContext {
                 int eff = enchantmentLevel(stack, Enchantments.EFFICIENCY);
                 capturedTools.add(new ToolEntry(stack.copy(), eff));
             }
+        }
+        if (reservedBlocks != null) {
+            expendable = 0;
+            for (Item it : expendableItems) expendable += spareCount(inv, it);
         }
 
         // Compute Haste / Mining Fatigue multiplier.
@@ -470,6 +476,52 @@ public final class CalculationContext {
             }
         }
         return 0;
+    }
+
+    /**
+     * Set by the schematic builder: how many of an item the build still needs. Pillars and bridges only use what the
+     * inventory holds above that, so a build of stone does not stack its own stone under the player. null = no build.
+     */
+    public static volatile java.util.function.ToIntFunction<Item> reservedBlocks;
+
+    /** A test on one cell and the block in it now (called from the planner thread: must only read). */
+    @FunctionalInterface
+    public interface CellRule {
+        boolean test(int x, int y, int z, BlockState now);
+    }
+
+    /**
+     * Set by the schematic builder: true for a cell that already holds its schematic block. Breaking one costs
+     * {@link #BUILT_BREAK_PENALTY} extra, so paths go around the build and only dig through it when there is no other
+     * way (down from a tower it stands on); the builder puts such a block back. A hard ban left it stuck up there.
+     */
+    public static volatile CellRule noBreakCell;
+    public static final double BUILT_BREAK_PENALTY = 60.0;
+
+    /** Extra cost of breaking (x, y, z): {@link #BUILT_BREAK_PENALTY} for a finished schematic block, else 0. */
+    public static double builtBreakPenalty(int x, int y, int z, BlockView world) {
+        CellRule keep = noBreakCell;
+        if (keep != null && world instanceof WorldSnapshot ws && keep.test(x, y, z, ws.blockStateAt(x, y, z))) {
+            return BUILT_BREAK_PENALTY;
+        }
+        return 0.0;
+    }
+
+    /** How many of {@code item} the inventory holds beyond what {@link #reservedBlocks} keeps back. */
+    public static int spareCount(Inventory inv, Item item) {
+        int have = 0;
+        for (int i = 0; i < 36; i++) {
+            ItemStack st = inv.getItem(i);
+            if (!st.isEmpty() && st.getItem() == item) have += st.getCount();
+        }
+        var keep = reservedBlocks;
+        return keep == null ? have : Math.max(0, have - keep.applyAsInt(item));
+    }
+
+    /** An expendable block of which the inventory holds more than the running build still needs. */
+    public static boolean isSpareExpendable(Inventory inv, ItemStack stack) {
+        if (!isExpendableBlockItem(stack)) return false;
+        return reservedBlocks == null || spareCount(inv, stack.getItem()) > 0;
     }
 
     /** Returns true if {@code stack} is one of the 6 standard terrain throwaway building blocks. */

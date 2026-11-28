@@ -1,0 +1,250 @@
+# Manhattan test suite (design)
+
+Status: **design agreed 2026-11-26; first version built the same night; first full run 2026-11-27** (25 families,
+generator, checker, runner and report in `tests/suite/`; fleet cases and the endurance suite are not built yet).
+Results of the first run: [First run](#first-run-2026-11-27). This is the plan for a large generated test suite run through
+Deming. The existing levels (`build.bat`, `tests\ingame\run.bat`, `tests\deming\waves.py`) stay as they are; see
+[TESTING.md](TESTING.md) and [DEMING_BENCHMARKS.md](DEMING_BENCHMARKS.md).
+
+Goal: find where Manhattan is slow, fragile or wrong across many situations, and see whether a change made it
+better or worse. Not a per-commit gate.
+
+## Running it
+
+```
+python tests/suite/generate.py --smoke                  # one case per family -> tmp/suite/cases
+python tests/suite/run.py -j 25                         # smoke gate
+python tests/suite/generate.py                          # about 2500 cases
+python tests/suite/run.py -j 32                         # full run, 3-4 h
+python tests/suite/report.py tmp/suite/runs/<run> tests/suite/baseline/summary.json   # compare
+python tests/suite/merge.py --cases tmp/suite/cases tmp/suite/runs/<out> <run> <rerun>   # join a partial rerun
+python tests/suite/generate.py --list                   # families and parameters
+```
+
+Build first (`build.bat`). A run folder `tmp/suite/runs/<time>/` holds `report.md`, `summary.json`,
+`results.jsonl`, the cases it used, the logs of passing games and the whole game folder (world, log, telemetry) of
+every failing one. Copy a run's `summary.json` to `tests/suite/baseline/` to make it the baseline.
+
+How a case runs: `-Dmanhattan.benchmark=suite -Dmanhattan.suite.case=<case.json>` (and
+`-Dmanhattan.suite.seed=N` for real terrain). The test bridge (`SuiteCase.java`) runs the setup commands on the
+server, starts the script, and when it ends checks the world and logs
+`SUITE_RESULT id=... pass=... script_pass=... checks=... elapsed_ms=... reason=...`.
+
+## Overview
+
+| | suite | endurance |
+|---|---|---|
+| size | about 2500 cases | a handful of runs |
+| length of a case | under 10 min | the equivalent of about 24 h of play |
+| started | on demand | on demand, on its own |
+| where | `tests/suite/` in this repository | `tests/suite/endurance/` |
+
+## Cases are generated, not written
+
+About 25 **families**, each a parameterised scenario. A generator expands each family's parameters into cases.
+
+- Areas covered: navigation and parkour, digging and clearing, schematic building, survival, fleet, and families
+  that **combine** them (e.g. a schematic build with water in the way, hunger, a mob and a nearly empty inventory).
+- Expansion: **pairwise** combinations of each family's parameters (every pair of values appears at least once),
+  plus a hand-picked list of hard combinations. A full cross product would be millions of cases.
+- A case is a family name + a parameter set + a case seed. Its id is stable (`family/hash`), so results can be
+  compared across runs.
+- The generator writes Deming wave files at run time; generated specs are not committed. What is committed: the
+  family definitions, the generator, the checker and the baseline summary.
+
+## Terrain
+
+- **Flat built setups**: the current benchmark world (`manhattan-benchmark`, seed 20261109), with the family
+  building its setup at 100 -60 100. Exact checks.
+- **Real world seeds**: a fixed list of seeds with caves, mountains, oceans, rivers and villages, with fixed
+  coordinates for each. Looser checks (reached the target, area cleared, nothing broken outside it).
+
+## Pass check
+
+One shared **checker** instead of a condition per case. Each family declares the end state it expects:
+
+- blocks match the schematic / the area is empty / the cells are dry, compared block by block;
+- the player is alive and at the target, items are in the named chest, the inventory holds what the want-list says;
+- nothing outside the allowed region changed (where the family names one).
+
+Every case also fails on a death (unless the family allows deaths), on being stuck longer than the family's limit,
+or on running past its timeout. The result line extends today's `BENCHMARK_RESULT` with the case id and the
+checker's verdict.
+
+## Metrics
+
+Per case: pass, elapsed, blocks moved, stuck count, interrupts handled, deaths, plus the checker's reason on a
+failure. The **baseline** is a small per-case results JSON committed in `tests/suite/baseline/`. Raw logs,
+screenshots and snapshots stay under `%LOCALAPPDATA%\deming` and only the last 5 runs are kept.
+
+**Regressions** are judged per family, not per case (single cases are too noisy): a family's median elapsed or
+its stuck rate moving by more than its usual spread across runs is flagged.
+
+## Flaky cases
+
+A failed case is rerun once. A fail followed by a pass is reported as **flaky**, in its own list, never as a pass.
+
+## Reproducing failures
+
+Minecraft is not fully deterministic (mob AI, random ticks, chunk load timing), so a rerun may pass. Therefore:
+
+- world seed, case seed and game rules are fixed; random ticks, mob spawning, weather and the daylight cycle are off
+  unless the family turns them on;
+- on a failure the world is saved as a snapshot and the bot's trace (plans, steps, interrupts) is written next to
+  the logs;
+- the report gives a one-line command to rerun a case on its own.
+
+## Report
+
+After a run: an HTML/markdown report with pass, fail and flaky counts per family, regressions against the baseline,
+and failures **grouped** by family, parameter values and log signature, each with its repro command. Nobody opens
+issues automatically; the report is read and issues are opened by hand.
+
+## Running
+
+1. **Smoke gate**: one case per family (about 25 games, one wave, about 10 min). The full run starts only if every
+   one of them passes. This catches generator and checker mistakes before they spoil a whole run.
+2. **Full run**: all cases in waves. Throughput (games at once, rendering, tick rate) is set from the measurements
+   below.
+3. Report and, when wanted, update the baseline.
+
+Only the current Minecraft release that Manhattan's main targets is tested. The version is a run parameter, so
+another one can be added later.
+
+### Fleet cases
+
+Fleet cases need a dedicated server, and today each one has a server to itself in its own wave. The fleet bench
+bridge will be extended so that **one server runs many fleet cases** in separate regions one after another. Fleet
+should then be about 10 % of the suite without turning the run into a series of small waves.
+
+## Endurance suite
+
+Long runs catch slow memory leaks, state slowly going wrong and failures that only show after many jobs. Their
+length is counted in **ticks and jobs**, not hours: "24 h" means about 1.7 million ticks or a fixed number of jobs
+back to back.
+
+To finish sooner than real time:
+
+- a raised tick rate (`/tick rate`), as far as the client-side bot still keeps up (to be measured);
+- no idle time: nights skipped, short walks between jobs, fast tools;
+- a snapshot of the world and the bot's state every hour, so a failure is replayed from the last snapshot;
+- several endurance runs side by side.
+
+Planner and executor logic can also run for very long in the offline `midtownTest` harness without Minecraft.
+
+## Throughput: measure first
+
+Each game today needs 2.5 to 4 GB and runs both a client and its own built-in server. Before fixing the number of
+games per wave:
+
+1. one game with default and with lean settings (render distance 2, low fps cap, small window): RAM and CPU;
+2. 32, 48 and 64 lean games at once: RAM, CPU, pass rate and how much elapsed times spread;
+3. raised tick rates: does elapsed time drop and do results stay stable.
+
+The chosen setting is the fastest one where timings stay stable. 128 games at once do not fit in 128 GB.
+A fully headless client (graphics stubbed out) would also need Manhattan to skip Dear ImGui in test mode; the UI
+tests stay in the rendered `tests\ingame` harness.
+
+Results of the measurements go in the section below.
+
+## Measurements
+
+2026-11-26, `tests/suite/measure.py`, scenario `chunk_clear_2x2_easy`, other programs using about 50 GB at the time.
+
+| run | physical RAM per game (peak) | committed per game | CPU per game while working | notes |
+|---|---|---|---|---|
+| 1 game, default settings | 1.63 GB | 2.6 GB | 0.5 core | |
+| 1 game, lean (render distance 2, 10 fps, 320x240) | 1.35 GB | 2.3 GB | 0.5 core | heap 2 GB is enough |
+| 32 lean games at once | 1.49 GB (45.6 GB total) | 2.25 GB | 0.67 core (21 of 32 busy) | CPU at 100 % while they boot |
+
+- **Lean settings save about 17 % RAM**, not more: most of a game's memory is the JVM, the client and its own
+  built-in server, not rendering.
+- **32 at once costs 6–10 % speed** while working (a 4-chunk clear took 74–95 s instead of 71 s), but **start-up
+  is the bottleneck**: 32 games started together took 2 min 14 s to reach the title screen (25 s alone).
+  `run.py` therefore streams cases through one Deming job (a new game starts whenever one ends) instead of starting
+  waves together.
+- **48 or 64 at once would saturate the CPU** (0.67 core each while working, more while booting) and spoil the
+  timings, and 128 do not fit in RAM. 32 is the setting.
+- **`/tick rate` does not speed up the bot.** The benchmark world already runs at 50 ticks/s, but Manhattan's
+  bot runs on the client's tick loop, which stays at 20/s (1429 action ticks in 71 s). Faster-than-real-time runs
+  would need the client timer sped up in the test bridge; not done yet.
+
+### Found while measuring
+
+- **Benchmarks passed on timeout.** `timeout(n)` stops an action and the script goes on, and a script that
+  finished counted as `pass=true`. `nav_flat_obstacle` and `chunk_clear_2x2_easy` both "passed" after exactly their
+  timeout with the work unfinished (78 of 80 blocks walked; 3 of 4 chunks cleared). The runner now logs
+  `pass=false` when any action was stopped by `timeout(...)`, so these benchmarks fail until they finish in time.
+- **The benchmark world's ground is not classic flat** (and has village buildings); every scenario has to rebuild
+  its ground, which the generated cases do.
+
+## First run (2026-11-27)
+
+2495 generated cases, 32 games at once, Manhattan 2.16.8. The full run took 4 h 15 min. The internet dropped at
+about 04:00 and Deming could not fetch the Fabric loader profile, so 1019 games never started; they were rerun,
+and every case the run's harness bugs had spoiled was rerun after the fix (`tests/suite/merge.py` joins the runs).
+The merged result is in [`tests/suite/baseline/`](../tests/suite/baseline/) (`summary.json` is the baseline for
+the next run, `report.md` the grouped failures).
+
+**2477 cases: 2168 pass, 274 fail, 31 flaky, 4 broke in setup (88 % of the started ones pass)**, before the
+schematic fix below. Twelve
+families pass 99-100 %: walls, gaps, mazes, fluids, climbing, tall and tunnel clears, eating, chests,
+combined navigation + work and job chains; `fill_water` on flowing water (drain_flowing) passes 95 %.
+
+### What it found in Manhattan
+
+Ordered by how much they cost. Each has repro commands in the baseline report.
+
+1. **Schematic builds end with blocks missing** (first run: schem_build 45 % pass, combo_build 39 %). Usually 1-10
+   of 50-239 cells. In about half the cases Manhattan said "N blocks still wrong"; in the other half it said
+   **"everything is as it should be" while the cells were empty** on the server and the client.
+   *Partly fixed (SchemProcess, after the run):* the build now waits 2 s after its last phase and counts again
+   before it finishes (and goes up to 3 more rounds for blocks that came back); under the load of 32 games the last
+   placements had not reached the server when the script ended. Rerun: **no false "everything is as it should be"
+   left** (0 of 292), schem_build 73 %, combo_build 46 %. The dirt-clutter cases now build with `"fix"` (the
+   default `"add"` leaves foreign blocks alone by design). *Still open:* 1-3 blocks per build that the builder
+   reports as "not reached (no way to it or no progress)", mostly in huts and bridges; whole small builds (walls,
+   bridges) not started in combo_build with hunger and mobs (the script never reached them in time).
+2. **Descending a 30-block tower without a water bucket** (nav_descend, 20 of 21 with height 30 fail): the planner
+   runs into its 4096-node limit, digs into the tower, bridges out at y=-41 straight over the target and then
+   alternates between two 1-node partial paths until `goto` gives up, and **`goto` still reports success** 19
+   blocks above the target.
+3. **Large clears are slower than the estimate** (clear_box 83 %, clear_wet 65 %): 16x16x5 and 24x16x5 boxes of
+   sand, gravel or mixed blocks with iron or diamond tools do not finish within 15 min (passing clears take a median
+   1.5x the generator's estimate). clear_wet fails mostly with lava or water pockets inside a 12x12x3 box.
+4. **Real terrain clears leave single blocks** (terrain_clear 73 %): leaf litter, grass, dirt or sand at the edge
+   of the box, with "0 left" from Manhattan.
+5. Smaller: deaths against 3 skeletons without armour while idle (defend_work), 2 drowning deaths in a 1-wide
+   shaft (drown_escape), a corner cell left by combo_clear at size 14, and two 5x5 flowing-water pits
+   (`drain_flowing/4838a38eaa`, `89f5c5f6a8`) where `fill_water` fills nothing ("nothing to build against") on
+   every try.
+
+### What it found in the harness (fixed)
+
+- Deming counts its timeout from launch, and booting 32 games together takes over 2 minutes, so slow cases were
+  killed before their own limit fired; the job timeout now adds 8 minutes.
+- `spreadplayers` with a range of 1 fails silently over water or leaves, and with a larger range over oceans; the
+  player then stayed underground at the bootstrap position. Real-seed cases now use `suite:surface X Z R` (dry
+  ground nearest to X Z, generating the chunk first, see `SuiteCase.java`), the navigation target is relative to
+  the real start, and a case whose player starts below `min_start_y` counts as a setup failure, not a Manhattan
+  failure.
+- **drain_flowing looked like "`fill_water` does nothing on flowing water" (83 of 83 failed), but the setup was
+  wrong**: the stone ring meant to wall the pit in also laid a stone lid over it, so the water was sealed in and
+  Manhattan's "cut off" was right. Without the lid, and with 3 s for the water to spread before the job starts,
+  79 of 83 pass.
+- clear_tunnel with mixed material: sand and gravel columns fell into the tunnel, so "roof untouched" could not
+  hold; the roof is now solid stone. drown_escape without a tool in stone could not be escaped (about 37 s a
+  block by hand under water) and is no longer generated. nav_climb's staircase met the tower only diagonally.
+- Peaceful refills the food bar, so hunger cases never got hungry; cases run on easy (mob spawning stays off).
+- The script started before the client had the setup's blocks; it now waits 2 s after setup, and the checker
+  waits 1.5 s after the script so the last placements reach the server.
+
+### Still open in the harness
+
+- Deming downloads the Fabric loader profile for every game; without internet no game starts. A cached profile
+  would make runs independent of the network.
+- About 1 % of games fail before starting with Deming's "Mod error: I/O error" while copying mods; the retry
+  covers them.
+- Fleet cases (several cases per server) and the endurance suite are not built. Faster than real time needs the
+  client timer sped up in the test bridge (`/tick rate` does not speed up the bot).
+- `build/libs/manhattan-*-2.16.8.jar` were rebuilt from this branch for the run.

@@ -40,6 +40,8 @@ public final class Runner {
     private final java.util.Set<String> switchedOn = new java.util.LinkedHashSet<>();
     private int blocksMoved;
     private int stuckCount;
+    /** Actions stopped by timeout(...) in this run; a benchmark with any of them did not finish its work. */
+    private int timedOut;
     private int interruptsHandled;
     private int deaths;
     private double lastX, lastY, lastZ;
@@ -268,6 +270,7 @@ public final class Runner {
         actions = 0;
         blocksMoved = 0;
         stuckCount = 0;
+        timedOut = 0;
         interruptsHandled = 0;
         deaths = 0;
         hasLastPos = false;
@@ -484,6 +487,7 @@ public final class Runner {
                 }
                 if (!a.done && stepTimeout > 0 && a.timed() && a.ticks > stepTimeout) {
                     stuckCount++;
+                    timedOut++;
                     Util.warn("queue", "'" + f.actionText + "' took longer than " + stepTimeout / 20 + " s, so I stopped it and go on.");
                     a.cancel();
                     a.finish(false);
@@ -543,7 +547,9 @@ public final class Runner {
             if (!wasSub) {
                 String stamped = summary + "|" + System.currentTimeMillis();
                 RuntimeBus.setFinishedSummary(stamped);
-                emitBenchmark(true, elapsedMs);
+                // a script that "finished" only because timeout(...) stopped an action did not do its job
+                if (timedOut > 0) System.out.println("[benchmark] " + timedOut + " action(s) stopped by timeout -> pass=false");
+                emitBenchmark(timedOut == 0, elapsedMs);
                 if (Config.cfg.logoffOnDone) {
                     dev.survivalkit.Api.disconnect("Script complete.");
                 }
