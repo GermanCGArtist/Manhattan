@@ -2,6 +2,24 @@
 
 Newest first. "Tested" means seen working in game on the 26.1.1 AFK profile.
 
+## 2.16.11 – fixes from the generated test suite (2026-11-28)
+Fixes found by the new generated test suite (about 2900 Deming cases, see [TEST_SUITE.md](TEST_SUITE.md)).
+- Schematic builds: the final count waits for the last placements to settle and goes up to 3 more rounds for
+  blocks that came back, so a build no longer reports "everything is as it should be" with cells still empty.
+  Cells the server turned down are queued again.
+- Schematic builds: pillars and bridges only use throwaway blocks the build does not still need, paths never break
+  a schematic block that is already right, and breaking a placed block costs extra instead of being banned (the
+  builder no longer gets stranded on its own towers).
+- Schematic builds: an upright log in a ceiling gets a short temporary column under it; an oriented block (a log
+  in a tower wall) with no stand on the ground in sight gets a stand on a pillar outside the build.
+- `clear_area` aims at a block's outline centre, so leaf litter, carpets and snow layers get mined too.
+- `fill_water`: a bot that walled itself into a pit climbs out instead of giving up, and one shut into a wet corner
+  swims up and fills its own cell.
+- Midtown: four partial paths stuck near one spot buy one big search; `goto` now reports failure when no way was
+  found instead of success.
+- Benchmarks no longer pass when `timeout(...)` stopped an action.
+- Tested in game through Deming only (suite runs at 98% on the fixed families); not yet on the AFK profile.
+
 ## 2.16.10 – no false "beds are missing" halt after a respawn (2026-11-27)
 - Fixed: a fleet worker that died and respawned at its bed halted 2 s later with "All 7 configured beds are
   missing" and stayed off fleet work until the halt was cleared by hand (seen on manhat_01). The client had not
