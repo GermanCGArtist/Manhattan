@@ -329,7 +329,10 @@ final class SchemPlacer {
             // under water (a flooded trench) has no dry spot near it
             boolean wet = !level.getFluidState(s).isEmpty();
             if (!level.getFluidState(s.above()).isEmpty()) continue;
-            if (level.getBlockState(s.below()).getCollisionShape(level, s.below()).isEmpty() && !wet) continue;
+            int pillar = 0;   // blocks to pillar up to stand here (no floor: an open column outside the build)
+            if (level.getBlockState(s.below()).getCollisionShape(level, s.below()).isEmpty() && !wet) {
+                if (clearing || (pillar = pillarHeight(level, s)) <= 0) continue;
+            }
             if (badSpots.contains(s)) continue;
             int rx = s.getX() - plan.min.getX();
             int rz = s.getZ() - plan.min.getZ();
@@ -349,12 +352,38 @@ final class SchemPlacer {
                 }
                 continue;
             }
+            if (pillar > 0) {
+                // only when no spot with a floor will do (the outside of a tall wall): climbing a pillar costs time
+                // and leaves a column to take down
+                d += 200 + 30.0 * pillar;
+                if (d >= fallbackD) continue;
+                for (Cand c : uniq) {
+                    if (sees(level, p, eye, c)) { fallback = s; fallbackD = d; break; }
+                }
+                continue;
+            }
             if (d >= bestD) continue;
             for (Cand c : uniq) {
                 if (sees(level, p, eye, c)) { best = s; bestD = d; break; }
             }
         }
         return best != null ? best : fallback;
+    }
+
+    /**
+     * Blocks to pillar from the ground up to stand at {@code s}: the open column under it (at most 6), none of it a
+     * cell the build wants filled, standing on solid dry ground; 0 when there is no such column.
+     */
+    private int pillarHeight(Level level, BlockPos s) {
+        BlockPos c = s.below();
+        for (int n = 1; n <= 6; n++, c = c.below()) {
+            BlockState st = level.getBlockState(c);
+            if (!level.getFluidState(c).isEmpty() || dev.buildtools.Api.protectedAt(c) || !level.hasChunkAt(c)) return 0;
+            if (!st.getCollisionShape(level, c).isEmpty()) return solidAt(level, c) ? n - 1 : 0;
+            int lx = c.getX() - plan.min.getX(), ly = c.getY() - plan.min.getY(), lz = c.getZ() - plan.min.getZ();
+            if (lx >= 0 && ly >= 0 && lz >= 0 && lx < plan.sx && ly < plan.sy && lz < plan.sz) return 0;   // inside the build's box: no pillar left there
+        }
+        return 0;
     }
 
     // ------------------------------------------------------------------ items

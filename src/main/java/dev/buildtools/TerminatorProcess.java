@@ -178,6 +178,7 @@ public final class TerminatorProcess extends Feature {
         lastReason = "";
         ranOut = false;
         lastHeartbeatTick = 0;
+        ownCellPillars = 0;
         breakBefore = RegionRules.setOwnBreak(false);
         placeBefore = RegionRules.setOwnPlace(false);
         working = true;
@@ -203,6 +204,7 @@ public final class TerminatorProcess extends Feature {
     private boolean triedNear, triedExact;
     /** This walk may place blocks: the bot filled the cells around itself and can only pillar out. */
     private boolean escapeWalk;
+    private int ownCellPillars;   // times this fill swam up out of its own cell to fill it (bounded, no loop)
 
     /**
      * Shut in: every block around the head is solid, so there is no walking or stepping out of here without placing
@@ -744,6 +746,20 @@ public final class TerminatorProcess extends Feature {
                 LOGGER.info("[Terminator] boxed in at {}: climbing out to {} with placing allowed",
                         p.blockPosition().toShortString(), goal.toShortString());
                 EngineSelector.current().goTo(GoalSpec.near(goal, 1));
+                return;
+            }
+            // standing in a wet cell of the pit with every way out filled or flooded (a corner at the bottom): no
+            // stand can be walked to, but the cell itself can go, by swimming up and placing under the feet
+            BlockPos feetNow = p.blockPosition();
+            if (!arrived && engFailed && !escapeWalk && diveSpot == null && p.isInWater() && ownCellPillars < 4
+                    && fillable(level, feetNow) && surfaceAbove(level, feetNow) != null && materialCount(p) > 0) {
+                ownCellPillars++;
+                EngineSelector.current().cancel();
+                goal = null;
+                LOGGER.info("[Terminator] no way out of {}: swimming up and filling the cell itself", feetNow.toShortString());
+                setState(State.PILLAR);
+                stateTicks = 0;
+                hold(false, true, false);
                 return;
             }
             endEscape();

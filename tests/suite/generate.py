@@ -161,9 +161,11 @@ def clear_seconds(n, mat, tool):
 FAMILIES = {}
 
 
-def family(name, area, params, weight=1.0):
+def family(name, area, params, weight=1.0, base=True):
+    """base=False: a family added after the first suite; it comes on top of the total, so the first families keep
+    their counts (and their case ids) whatever is added."""
     def deco(fn):
-        FAMILIES[name] = {"name": name, "area": area, "params": params, "build": fn, "weight": weight}
+        FAMILIES[name] = {"name": name, "area": area, "params": params, "build": fn, "weight": weight, "base": base}
         return fn
     return deco
 
@@ -351,7 +353,9 @@ def clear_falling(p, rng):
         extra += fill(a[0], a[1], a[2], b[0], a[1], b[2], p["material"])
     # blocks above the selection fall into it; whatever ends up inside must be cleared too
     checks = [ALIVE, check_air(a, b)]
-    return dict(setup=setup + extra, script=clear_job(a, b), checks=checks, est=40 + vol(a, b) * 0.15)
+    # a whole layer on top keeps falling onto the cells just cleared: about a second more for each of its blocks
+    est = 40 + vol(a, b) * 0.15 + (s * s * 1.0 if p["layout"] == "layer_on_top" else 0)
+    return dict(setup=setup + extra, script=clear_job(a, b), checks=checks, est=est)
 
 
 @family("clear_tunnel", "digging", {"length": [8, 16, 32], "w": [1, 2, 3], "h": [2, 3], "material": ["stone", "dirt", "mixed"],
@@ -761,6 +765,114 @@ def terrain_clear(p, rng):
                 world_seed=REAL_SEEDS[p["seed"]], min_start_y=-40)
 
 
+
+# --- added 2026-11-28: verbs the first suite did not touch -----------------------------------------------
+
+TREE_LOGS = ["oak_log", "birch_log", "spruce_log"]
+
+
+@family("clear_trees", "digging", {"trees": [1, 3, 6], "kind": ["oak", "birch", "spruce", "mixed"], "spacing": [4, 6],
+                                   "blocks": ["dirt", "cobblestone"]}, base=False)
+def clear_trees(p, rng):
+    n, sp = p["trees"], p["spacing"]
+    cols = int(math.ceil(math.sqrt(n)))
+    setup = base_setup() + tools("diamond") + give(p["blocks"], 32)
+    spots = []
+    for i in range(n):
+        x, z = O[0] + 6 + (i % cols) * sp, O[2] - sp + (i // cols) * sp
+        kind = rng.choice(["oak", "birch", "spruce"]) if p["kind"] == "mixed" else p["kind"]
+        setup.append("place feature minecraft:%s %d %d %d" % (kind, x, Y, z))
+        spots.append((x, z))
+    a = [O[0] + 3, Y, O[2] - sp - 3]
+    b = [O[0] + 6 + (cols - 1) * sp + 3, Y + 15, O[2] - sp + ((n - 1) // cols) * sp + 3]
+    script = ["select(%s, %s)" % (P(a), P(b)), "clear_trees()"]
+    checks = [ALIVE, {"type": "blocks", "from": a, "to": b, "not": TREE_LOGS, "label": "no log left"},
+              {"type": "blocks", "from": a, "to": b, "not": [p["blocks"]], "label": "scaffolding taken down"}]
+    return dict(setup=setup, script=script, checks=checks, est=60 + 45 * n)
+
+
+@family("protect_clear", "digging", {"size": [5, 8, 12], "sy": [2, 3], "keep": [1, 2, 3],
+                                     "material": ["stone", "glass", "oak_planks"]}, base=False)
+def protect_clear(p, rng):
+    s, k = p["size"], p["keep"]
+    a = [O[0] + 4, Y, O[2] - s // 2]
+    b = [a[0] + s - 1, Y + p["sy"] - 1, a[2] + s - 1]
+    # a safe area in the corner of the box: a column of another block that must still be there afterwards
+    ka, kb = [a[0], a[1], a[2]], [a[0] + k - 1, b[1], a[2] + k - 1]
+    setup = base_setup() + tools("haste") + fill(*a, *b, "stone") + fill(*ka, *kb, p["material"])
+    script = ["protect(\"keep\", %s, %s)" % (P(ka), P(kb)), "select(%s, %s)" % (P(a), P(b)), "clear_area()"]
+    checks = [ALIVE, check_air([a[0] + k, a[1], a[2]], b, "area cleared beside the safe area"),
+              check_air([a[0], a[1], a[2] + k], [a[0] + k - 1, b[1], b[2]], "area cleared behind the safe area"),
+              {"type": "blocks", "from": ka, "to": kb, "is": [p["material"]], "label": "safe area untouched"}]
+    n = vol(a, b) - vol(ka, kb)
+    return dict(setup=setup, script=script, checks=checks, est=40 + clear_seconds(n, "stone", "haste") * 1.3)
+
+
+@family("stairs_pit", "digging", {"size": [5, 7, 9], "depth": [5, 8, 12], "material": ["stone", "dirt"]}, base=False)
+def stairs_pit(p, rng):
+    s, d = p["size"], p["depth"]
+    top = Y + d - 1
+    # a mesa d blocks high to dig the pit into (the flat world has only 3 blocks of ground)
+    a = [O[0] + 4, Y, O[2] - s // 2]
+    b = [a[0] + s - 1, top, a[2] + s - 1]
+    setup = base_setup() + tools("haste") + fill(O[0] - 3, Y, a[2] - 3, b[0] + 3, top, b[2] + 3, p["material"])
+    setup.append("tp @p %d %d %d 0 0" % (O[0], top + 1, O[2]))
+    sa, sb = [a[0], Y, a[2]], [a[0] + 1, top, a[2] + 1]
+    script = ["stairs(\"pit_stairs\", %s, %s)" % (P(sa), P(sb)), "select(%s, %s)" % (P(a), P(b)), "clear_area()"]
+    # the 2 x 2 shaft in the corner keeps its steps; everything else goes
+    checks = [ALIVE, check_air([a[0] + 2, a[1], a[2]], b, "pit dug beside the stairs"),
+              check_air([a[0], a[1], a[2] + 2], [a[0] + 1, b[1], b[2]], "pit dug behind the stairs")]
+    est = 40 + clear_seconds(vol(a, b), p["material"], "haste") * 1.4
+    if est > 700:
+        return None
+    return dict(setup=setup, script=script, checks=checks, est=est)
+
+
+ORE_DROP = {"coal_ore": "coal", "iron_ore": "raw_iron", "diamond_ore": "diamond"}
+
+
+@family("mine_ores", "digging", {"ores": [3, 6, 10], "kind": ["coal_ore", "iron_ore", "diamond_ore"], "exposed": [0, 1]},
+        base=False)
+def mine_ores(p, rng):
+    a, b = [O[0] + 3, Y, O[2] - 7], [O[0] + 16, Y + 4, O[2] + 6]
+    setup = base_setup() + tools("diamond") + fill(*a, *b, "stone")
+    spots = set()
+    while len(spots) < p["ores"]:
+        y = b[1] if p["exposed"] else rng.randint(a[1], b[1] - 1)
+        spots.add((rng.randint(a[0], b[0]), y, rng.randint(a[2], b[2])))
+    for x, y, z in sorted(spots):
+        setup.append("setblock %d %d %d %s" % (x, y, z, p["kind"]))
+    # disable() keeps the pickup helper from acting by itself, so the script picks the drops up
+    script = ["mine(\"%s\")" % p["kind"], "pickup()"]
+    checks = [ALIVE, {"type": "blocks", "from": a, "to": b, "not": [p["kind"]], "label": "every ore mined"},
+              {"type": "item_count", "item": ORE_DROP[p["kind"]], "min": p["ores"], "label": "drops picked up"}]
+    return dict(setup=setup, script=script, checks=checks, est=40 + 15 * p["ores"])
+
+
+@family("pickup_items", "logistics", {"piles": [3, 8, 15], "spread": [3, 6, 10], "item": ["cobblestone", "diamond", "oak_sapling"],
+                                      "pillars": [0, 1]}, base=False)
+def pickup_items(p, rng):
+    setup = base_setup() + tools("diamond")
+    pillars = set()
+    if p["pillars"]:
+        for _ in range(6):
+            x, z = O[0] + rng.randint(-p["spread"], p["spread"]), O[2] + rng.randint(-p["spread"], p["spread"])
+            if abs(x - O[0]) + abs(z - O[2]) > 1:
+                setup += fill(x, Y, z, x, Y + 2, z, "stone")
+                pillars.add((x, z))
+    total = 0
+    for _ in range(p["piles"]):
+        x, z = O[0] + rng.randint(-p["spread"], p["spread"]), O[2] + rng.randint(-p["spread"], p["spread"])
+        while (x, z) in pillars:   # on the ground, not on top of a pillar
+            x, z = O[0] + rng.randint(-p["spread"], p["spread"]), O[2] + rng.randint(-p["spread"], p["spread"])
+        c = rng.randint(1, 4)
+        total += c
+        setup.append("summon item %d.5 %d %d.5 {Item:{id:\"minecraft:%s\",count:%d}}" % (x, Y + 4, z, p["item"], c))
+    script = ["wait 2", "pickup()"]
+    checks = [ALIVE, {"type": "item_count", "item": p["item"], "min": total, "label": "every item picked up"}]
+    return dict(setup=setup, script=script, checks=checks, est=20 + 3 * p["piles"])
+
+
 # ------------------------------------------------------------------ pairwise generation
 
 def pairwise_rows(params, rng, extra=0, valid=lambda r: True):
@@ -833,7 +945,7 @@ def write_case(case, out):
 
 def generate(total, smoke=False, only=None):
     fams = [f for f in FAMILIES.values() if not only or only in f["name"]]
-    wsum = sum(f["weight"] for f in fams)
+    wsum = sum(f["weight"] for f in FAMILIES.values() if f["base"])   # the first families' share of the total
     cases = []
     for fam in fams:
         rng = random.Random("rows|" + fam["name"])
